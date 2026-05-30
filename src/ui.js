@@ -724,7 +724,7 @@ export const appHtml = String.raw`<!doctype html>
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
-              \${reportTable(["Subject", "Contact", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
+              \${reportTable(["Subject", "Contact", "Direction", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.direction || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
             </div>
           </div>\`;
       }
@@ -775,7 +775,7 @@ export const appHtml = String.raw`<!doctype html>
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
-              \${reportTable(["Subject", "Status", "Sequence", "When"], contact.emails.map((email) => [email.subject, email.status, email.sequence_name || "", formatDateTime(email.sent_at || email.created_at)]))}
+              \${reportTable(["Subject", "Direction", "Status", "Sequence", "When"], contact.emails.map((email) => [email.subject, email.direction || "", email.status, email.sequence_name || "", formatDateTime(email.sent_at || email.created_at)]))}
             </div>
           </div>\`;
       }

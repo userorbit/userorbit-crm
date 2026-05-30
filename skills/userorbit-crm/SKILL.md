@@ -239,6 +239,22 @@ Content-Type: application/json
 
 The merge moves contacts, opportunities, tasks, email activity, and account custom fields that do not already exist on the target account, then deletes the source account.
 
+Record a parsed inbound reply from an email provider, Cloudflare Email Worker, automation, or agent:
+
+```http
+POST /api/email/inbound
+Content-Type: application/json
+
+{
+  "fromEmail": "jane@acme.com",
+  "subject": "Re: Quick question",
+  "body": "Happy to take a look next week.",
+  "providerMessageId": "provider-message-id"
+}
+```
+
+You can also pass `contactId` instead of `fromEmail`. UserOrbit stores the inbound email, adds it to timelines, marks the contact `replied`, and pauses active sequence enrollments.
+
 Review or move pipeline opportunities:
 
 ```http

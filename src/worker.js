@@ -239,6 +239,10 @@ async function routeApi(request, env, url, auth) {
     return json(await sendManualEmail(env, await readJson(request)), 201);
   }
 
+  if (request.method === "POST" && path === "email/inbound") {
+    return json(await recordInboundEmail(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "POST" && path === "sequence/run") {
     return json(await processDueSequenceEmails(env, { limit: 20 }));
   }
@@ -1327,6 +1331,70 @@ async function markContactReplied(env, id, workspaceId, auth) {
   return updated;
 }
 
+async function recordInboundEmail(env, input, auth) {
+  requireFields(input, ["subject"]);
+  const contact = await resolveInboundContact(env, input);
+  const now = new Date().toISOString();
+  const wasReplied = contact.status === "replied";
+  const wasUnsubscribed = contact.status === "unsubscribed";
+  const email = await recordEmailEvent(env, {
+    contact,
+    direction: "inbound",
+    status: "received",
+    subject: input.subject,
+    body: input.body || input.text || "",
+    providerMessageId: input.providerMessageId || input.messageId,
+    sentAt: input.receivedAt || now,
+  });
+
+  if (!wasUnsubscribed) {
+    await env.DB.prepare("UPDATE contacts SET status = 'replied', updated_at = ? WHERE id = ?").bind(now, contact.id).run();
+    await env.DB.prepare("UPDATE sequence_enrollments SET status = 'replied', updated_at = ? WHERE contact_id = ? AND status = 'active'").bind(now, contact.id).run();
+  }
+
+  await recordAuditLog(env, {
+    workspaceId: input.workspaceId,
+    userId: auth.user.id,
+    action: "email.inbound",
+    resource: "contact",
+    resourceId: contact.id,
+    metadata: { email: contact.email, subject: input.subject, providerMessageId: input.providerMessageId || input.messageId || null },
+  });
+  await deliverWebhooks(env, input.workspaceId, "email.received", email.id, email);
+
+  const updated = await getContact(env, contact.id, input.workspaceId);
+  if (!wasUnsubscribed && !wasReplied) {
+    await deliverWebhooks(env, input.workspaceId, "contact.replied", contact.id, updated);
+  }
+  return { contact: updated, email };
+}
+
+async function resolveInboundContact(env, input) {
+  if (input.contactId) {
+    return getRequired(
+      env,
+      `SELECT c.*, a.workspace_id
+       FROM contacts c
+       JOIN accounts a ON a.id = c.account_id
+       WHERE c.id = ? AND a.workspace_id = ?`,
+      input.contactId,
+      input.workspaceId,
+    );
+  }
+
+  const fromEmail = cleanEmail(input.fromEmail || input.from || input.sender);
+  if (!fromEmail) throw httpError(400, "fromEmail or contactId is required");
+  return getRequired(
+    env,
+    `SELECT c.*, a.workspace_id
+     FROM contacts c
+     JOIN accounts a ON a.id = c.account_id
+     WHERE c.email = ? AND a.workspace_id = ?`,
+    fromEmail,
+    input.workspaceId,
+  );
+}
+
 async function processScheduledJobs(env) {
   const [sequences, warmup] = await Promise.all([
     processDueSequenceEmails(env, { limit: 20 }),
@@ -2030,7 +2098,7 @@ async function recordEmailEvent(env, input) {
       id, contact_id, account_id, sequence_id, sequence_step_id, direction, status,
       subject, body, provider_message_id, error, sent_at, created_at
     )
-    VALUES (?, ?, ?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       id,
@@ -2038,6 +2106,7 @@ async function recordEmailEvent(env, input) {
       input.contact.account_id,
       cleanNullable(input.sequenceId),
       cleanNullable(input.sequenceStepId),
+      input.direction || "outbound",
       input.status,
       input.subject,
       input.body,

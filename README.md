@@ -11,7 +11,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
 - Pipeline board with workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
-- Manual email sending and scheduled sequence processing.
+- Manual email sending, inbound reply capture, and scheduled sequence processing.
 - Contact unsubscribe handling for manual sends and sequences.
 - Zoho SMTP support through Cloudflare Workers TCP sockets.
 - A token-protected REST API for agents and scripts.
@@ -137,6 +137,22 @@ curl -X POST http://localhost:8787/api/agent/command \
   -H "content-type: application/json" \
   -d '{ "command": "run_sequences", "limit": 20 }'
 ```
+
+### Capture an inbound reply
+
+```sh
+curl -X POST http://localhost:8787/api/email/inbound \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "fromEmail": "jane@acme.com",
+    "subject": "Re: Quick question",
+    "body": "Happy to take a look next week.",
+    "providerMessageId": "message-id-from-your-mail-provider"
+  }'
+```
+
+Inbound emails are matched to contacts by `fromEmail` or `contactId`, recorded on account and contact timelines, and pause active sequence enrollments by marking the contact as replied.
 
 ### Get reports
 
