@@ -19,8 +19,9 @@
 - [x] Add opportunity pipeline board and stage movement.
 - [x] Add workspace token revocation UI and audit logs.
 - [x] Add account CSV import.
+- [x] Add workspace-configurable pipeline stages.
 - [ ] Add invitations, password/OAuth login, workspace membership overrides, and broader audit coverage.
-- [ ] Build the next Close-style CRM gaps: configurable stages, custom-field filtering/reporting, advanced import mapping/dedupe, inbound email sync, forecast reporting, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: custom-field filtering/reporting, advanced import mapping/dedupe, inbound email sync, forecast reporting, integrations, and communication channels.
 
 ## Review
 
@@ -43,3 +44,5 @@ Added pipeline board: `GET /api/opportunities`, `PATCH /api/opportunities/:id`, 
 Added token revocation and audit logs: list/revoke workspace tokens, reject revoked tokens in auth, record audit events for team/workspace/token administration, Settings tables, and agent/docs coverage.
 
 Added account CSV import: UI textarea import, `POST /api/import/accounts.csv`, per-row success/failure reporting, optional first contact creation, and docs/agent coverage.
+
+Added workspace-configurable pipeline stages: D1-backed stage definitions, seeded default stages, API/UI creation, dynamic board columns/selectors, stage-aware reports, and agent/docs coverage.

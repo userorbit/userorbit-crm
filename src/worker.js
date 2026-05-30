@@ -11,7 +11,14 @@ const JSON_HEADERS = {
 const SEGMENTS = new Set(["product", "growth", "success"]);
 const ACCOUNT_STATUSES = new Set(["target", "researching", "contacted", "replied", "qualified", "disqualified"]);
 const CONTACT_STATUSES = new Set(["new", "active", "replied", "bounced", "unsubscribed"]);
-const OPPORTUNITY_STAGES = new Set(["research", "conversation", "demo", "proposal", "won", "lost"]);
+const DEFAULT_OPPORTUNITY_STAGES = [
+  { key: "research", label: "Research", position: 10, is_won: 0, is_lost: 0 },
+  { key: "conversation", label: "Conversation", position: 20, is_won: 0, is_lost: 0 },
+  { key: "demo", label: "Demo", position: 30, is_won: 0, is_lost: 0 },
+  { key: "proposal", label: "Proposal", position: 40, is_won: 0, is_lost: 0 },
+  { key: "won", label: "Won", position: 50, is_won: 1, is_lost: 0 },
+  { key: "lost", label: "Lost", position: 60, is_won: 0, is_lost: 1 },
+];
 const WARMUP_PLAN_STATUSES = new Set(["active", "paused", "cancelled", "completed"]);
 const WARMUP_INTERACTIONS = new Set(["inbox", "spam", "not_spam", "reply", "important"]);
 const CUSTOM_FIELD_ENTITIES = new Set(["account"]);
@@ -163,6 +170,14 @@ async function routeApi(request, env, url, auth) {
     return json(await updateOpportunity(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }));
   }
 
+  if (request.method === "GET" && path === "opportunity-stages") {
+    return json(await listOpportunityStages(env, workspaceId));
+  }
+
+  if (request.method === "POST" && path === "opportunity-stages") {
+    return json(await createOpportunityStage(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "GET" && path === "tasks") {
     return json(await listTasks(env, workspaceId));
   }
@@ -224,33 +239,28 @@ async function routeApi(request, env, url, auth) {
 }
 
 async function getSummary(env, workspaceId) {
+  const closedStages = await getClosedOpportunityStages(env, workspaceId);
   const [accounts, contacts, activeEnrollments, dueTasks, openPipeline] = await Promise.all([
     scalar(env, "SELECT COUNT(*) FROM accounts WHERE workspace_id = ?", workspaceId),
     scalar(env, "SELECT COUNT(*) FROM contacts c JOIN accounts a ON a.id = c.account_id WHERE a.workspace_id = ?", workspaceId),
     scalar(env, "SELECT COUNT(*) FROM sequence_enrollments se JOIN contacts c ON c.id = se.contact_id JOIN accounts a ON a.id = c.account_id WHERE se.status = 'active' AND a.workspace_id = ?", workspaceId),
     scalar(env, "SELECT COUNT(*) FROM tasks WHERE status = 'open' AND workspace_id = ?", workspaceId),
-    scalar(env, "SELECT COALESCE(SUM(value_cents), 0) FROM opportunities WHERE stage NOT IN ('won', 'lost') AND workspace_id = ?", workspaceId),
+    scalar(env, `SELECT COALESCE(SUM(value_cents), 0) FROM opportunities WHERE ${stageNotInClause(closedStages)} AND workspace_id = ?`, ...closedStages, workspaceId),
   ]);
 
   return { accounts, contacts, activeEnrollments, dueTasks, openPipelineCents: openPipeline };
 }
 
 async function getReports(env, workspaceId) {
+  const closedStages = await getClosedOpportunityStages(env, workspaceId);
   const [pipeline, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities] = await Promise.all([
     env.DB.prepare(`
-      SELECT stage, COUNT(*) AS opportunities, COALESCE(SUM(value_cents), 0) AS value_cents, AVG(confidence) AS avg_confidence
-      FROM opportunities
-      WHERE workspace_id = ?
-      GROUP BY stage
-      ORDER BY CASE stage
-        WHEN 'research' THEN 1
-        WHEN 'conversation' THEN 2
-        WHEN 'demo' THEN 3
-        WHEN 'proposal' THEN 4
-        WHEN 'won' THEN 5
-        WHEN 'lost' THEN 6
-        ELSE 7
-      END
+      SELECT o.stage, COALESCE(os.label, o.stage) AS stage_label, COUNT(*) AS opportunities, COALESCE(SUM(o.value_cents), 0) AS value_cents, AVG(o.confidence) AS avg_confidence
+      FROM opportunities o
+      LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+      WHERE o.workspace_id = ?
+      GROUP BY o.stage
+      ORDER BY COALESCE(os.position, 999), o.stage
     `).bind(workspaceId).all(),
     env.DB.prepare(`
       SELECT status, COUNT(*) AS accounts
@@ -303,12 +313,12 @@ async function getReports(env, workspaceId) {
       FROM opportunities o
       JOIN accounts a ON a.id = o.account_id
       LEFT JOIN email_events ee ON ee.account_id = a.id
-      WHERE o.workspace_id = ? AND o.stage NOT IN ('won', 'lost')
+      WHERE o.workspace_id = ? AND ${stageNotInClause(closedStages, "o.stage")}
       GROUP BY o.id
       HAVING last_activity_at IS NULL OR last_activity_at < datetime('now', '-14 days')
       ORDER BY COALESCE(last_activity_at, o.created_at) ASC
       LIMIT 20
-    `).bind(workspaceId).all(),
+    `).bind(workspaceId, ...closedStages).all(),
   ]);
 
   return {
@@ -699,7 +709,7 @@ async function createOpportunity(env, input) {
   const workspaceId = input.workspaceId || (await resolveDefaultWorkspaceId(env));
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
-  const stage = normalizeEnum(input.stage || "research", OPPORTUNITY_STAGES, "stage");
+  const stage = await normalizeOpportunityStage(env, workspaceId, input.stage || "research");
 
   await env.DB.prepare(`
     INSERT INTO opportunities (id, workspace_id, account_id, contact_id, name, stage, value_cents, confidence, close_date, created_at, updated_at)
@@ -732,24 +742,17 @@ async function listOpportunities(env, workspaceId) {
       a.domain AS account_domain,
       c.name AS contact_name,
       c.email AS contact_email,
-      MAX(ee.created_at) AS last_activity_at
+      MAX(ee.created_at) AS last_activity_at,
+      os.label AS stage_label,
+      os.position AS stage_position
     FROM opportunities o
     JOIN accounts a ON a.id = o.account_id
     LEFT JOIN contacts c ON c.id = o.contact_id
     LEFT JOIN email_events ee ON ee.account_id = a.id
+    LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
     WHERE o.workspace_id = ?
     GROUP BY o.id
-    ORDER BY
-      CASE o.stage
-        WHEN 'research' THEN 1
-        WHEN 'conversation' THEN 2
-        WHEN 'demo' THEN 3
-        WHEN 'proposal' THEN 4
-        WHEN 'won' THEN 5
-        WHEN 'lost' THEN 6
-        ELSE 7
-      END,
-      o.updated_at DESC
+    ORDER BY COALESCE(os.position, 999), o.updated_at DESC
   `).bind(workspaceId).all();
   return rows.results;
 }
@@ -758,7 +761,7 @@ async function updateOpportunity(env, id, input) {
   const existing = await getRequired(env, "SELECT * FROM opportunities WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
   const next = {
     name: input.name?.trim() || existing.name,
-    stage: input.stage ? normalizeEnum(input.stage, OPPORTUNITY_STAGES, "stage") : existing.stage,
+    stage: input.stage ? await normalizeOpportunityStage(env, input.workspaceId, input.stage) : existing.stage,
     valueCents: input.valueCents !== undefined ? Number(input.valueCents || 0) : existing.value_cents,
     confidence: input.confidence !== undefined ? Number(input.confidence || 0) : existing.confidence,
     closeDate: input.closeDate !== undefined ? cleanNullable(input.closeDate) : existing.close_date,
@@ -770,6 +773,63 @@ async function updateOpportunity(env, id, input) {
   `).bind(next.name, next.stage, next.valueCents, next.confidence, next.closeDate, new Date().toISOString(), id, input.workspaceId).run();
   await touchAccount(env, existing.account_id);
   return getRequired(env, "SELECT * FROM opportunities WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+}
+
+async function listOpportunityStages(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT * FROM opportunity_stages
+    WHERE workspace_id = ?
+    ORDER BY position, label
+  `).bind(workspaceId).all();
+  return rows.results.length ? rows.results : DEFAULT_OPPORTUNITY_STAGES;
+}
+
+async function createOpportunityStage(env, input, auth) {
+  requireFields(input, ["label"]);
+  const label = input.label.trim();
+  const key = slugify(input.key || label).replaceAll("-", "_");
+  if (!key) throw httpError(400, "Stage key is required");
+  const position = input.position !== undefined ? Number(input.position) : await nextOpportunityStagePosition(env, input.workspaceId);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO opportunity_stages (id, workspace_id, key, label, position, is_won, is_lost, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    key,
+    label,
+    position,
+    input.isWon ? 1 : 0,
+    input.isLost ? 1 : 0,
+    now,
+    now,
+  ).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "created", resource: "opportunity_stage", resourceId: id, metadata: { key, label } });
+  return getRequired(env, "SELECT * FROM opportunity_stages WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+}
+
+async function nextOpportunityStagePosition(env, workspaceId) {
+  const maxPosition = await scalar(env, "SELECT COALESCE(MAX(position), 0) FROM opportunity_stages WHERE workspace_id = ?", workspaceId);
+  return Number(maxPosition || 0) + 10;
+}
+
+async function normalizeOpportunityStage(env, workspaceId, stage) {
+  const key = cleanNullable(stage);
+  if (!key) throw httpError(400, "Missing required field: stage");
+  const exists = await scalar(env, "SELECT COUNT(*) FROM opportunity_stages WHERE workspace_id = ? AND key = ?", workspaceId, key);
+  if (!exists && !DEFAULT_OPPORTUNITY_STAGES.some((item) => item.key === key)) throw httpError(400, `Invalid stage: ${key}`);
+  return key;
+}
+
+async function getClosedOpportunityStages(env, workspaceId) {
+  const rows = await env.DB.prepare("SELECT key FROM opportunity_stages WHERE workspace_id = ? AND (is_won = 1 OR is_lost = 1)").bind(workspaceId).all();
+  return rows.results.length ? rows.results.map((row) => row.key) : ["won", "lost"];
+}
+
+function stageNotInClause(stages, column = "stage") {
+  return stages.length ? `${column} NOT IN (${stages.map(() => "?").join(", ")})` : "1 = 1";
 }
 
 async function listTasks(env, workspaceId) {
@@ -1329,8 +1389,29 @@ async function createWorkspace(env, input, auth) {
   await env.DB.prepare("INSERT INTO workspaces (id, team_id, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, teamId, input.name.trim(), slugify(input.slug || input.name), now, now)
     .run();
+  await seedOpportunityStages(env, id);
   await recordAuditLog(env, { workspaceId: id, userId: auth.user.id, action: "workspace.create", resource: "workspace", resourceId: id, metadata: { name: input.name, teamId } });
   return getRequired(env, "SELECT * FROM workspaces WHERE id = ?", id);
+}
+
+async function seedOpportunityStages(env, workspaceId) {
+  const now = new Date().toISOString();
+  for (const stage of DEFAULT_OPPORTUNITY_STAGES) {
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO opportunity_stages (id, workspace_id, key, label, position, is_won, is_lost, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      workspaceId,
+      stage.key,
+      stage.label,
+      stage.position,
+      stage.is_won,
+      stage.is_lost,
+      now,
+      now,
+    ).run();
+  }
 }
 
 async function listWorkspaceTokens(env, workspaceId, auth) {

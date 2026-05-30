@@ -477,6 +477,7 @@ export const appHtml = String.raw`<!doctype html>
         selectedContact: null,
         reports: null,
         opportunities: [],
+        opportunityStages: [],
         sequences: [],
         warmup: null,
         tasks: [],
@@ -512,20 +513,21 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks, workspaceTokens, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, sequences, warmup, tasks, workspaceTokens, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
           api("custom-fields?entity=account"),
           api("reports"),
           api("opportunities"),
+          api("opportunity-stages"),
           api("sequences"),
           api("warmup"),
           api("tasks"),
           api("workspace-tokens"),
           api("audit-logs"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks, workspaceTokens, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, sequences, warmup, tasks, workspaceTokens, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -794,19 +796,20 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderPipeline() {
-        const stages = ["research", "conversation", "demo", "proposal", "won", "lost"];
+        const stages = pipelineStages();
         return header("Pipeline", "Move opportunities through the sales process.") + \`
-          <div class="grid" style="grid-template-columns:repeat(6,minmax(180px,1fr)); align-items:start; overflow:auto">
+          <div class="grid" style="grid-template-columns:repeat(\${Math.max(1, stages.length)},minmax(180px,1fr)); align-items:start; overflow:auto">
             \${stages.map((stage) => pipelineColumn(stage, state.opportunities.filter((opportunity) => opportunity.stage === stage))).join("")}
           </div>\`;
       }
 
       function pipelineColumn(stage, opportunities) {
         const total = opportunities.reduce((sum, opportunity) => sum + Number(opportunity.value_cents || 0), 0);
+        const stageConfig = stageByKey(stage);
         return \`<div class="panel">
           <div class="panel-header">
             <div>
-              <div class="panel-title">\${escapeHtml(stage)}</div>
+              <div class="panel-title">\${escapeHtml(stageConfig?.label || stage)}</div>
               <div class="subtitle">\${opportunities.length} deal(s) · \${money(total)}</div>
             </div>
           </div>
@@ -822,7 +825,7 @@ export const appHtml = String.raw`<!doctype html>
           <div class="subtitle">\${escapeHtml(opportunity.account_name || "")}</div>
           <div class="subtitle">\${money(opportunity.value_cents)} · \${Number(opportunity.confidence || 0)}% confidence</div>
           <label style="margin-top:8px">Stage<select data-opportunity-stage="\${escapeHtml(opportunity.id)}">
-            \${["research", "conversation", "demo", "proposal", "won", "lost"].map((stage) => '<option value="' + stage + '"' + (stage === opportunity.stage ? " selected" : "") + ">" + stage + "</option>").join("")}
+            \${pipelineStages().map((stage) => '<option value="' + escapeHtml(stage) + '"' + (stage === opportunity.stage ? " selected" : "") + ">" + escapeHtml(stageByKey(stage)?.label || stage) + "</option>").join("")}
           </select></label>
         </div>\`;
       }
@@ -843,7 +846,7 @@ export const appHtml = String.raw`<!doctype html>
           <div class="columns" style="margin-top:14px">
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Pipeline by stage</div></div>
-              \${reportTable(["Stage", "Deals", "Value", "Confidence"], reports.pipeline.map((row) => [row.stage, row.opportunities, money(row.value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
+              \${reportTable(["Stage", "Deals", "Value", "Confidence"], reports.pipeline.map((row) => [row.stage_label || row.stage, row.opportunities, money(row.value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Account status</div></div>
@@ -1082,7 +1085,15 @@ Content-Type: application/json
                   <label>Options<textarea name="options" placeholder="One option per line for select fields"></textarea></label>
                   <button class="button primary">Create account field</button>
                 </form>
+                <form id="stageForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Stage label<input name="label" required placeholder="Security review" /></label>
+                  <label>Position<input name="position" type="number" min="1" step="1" placeholder="70" /></label>
+                  <label><input name="isWon" type="checkbox" /> Closed won</label>
+                  <label><input name="isLost" type="checkbox" /> Closed lost</label>
+                  <button class="button primary">Create pipeline stage</button>
+                </form>
                 \${state.customFields.length ? '<div class="panel-header"><div class="panel-title">Account fields</div></div>' + reportTable(["Name", "Key", "Type"], state.customFields.map((field) => [field.name, field.key, field.type])) : ""}
+                \${state.opportunityStages.length ? '<div class="panel-header"><div class="panel-title">Pipeline stages</div></div>' + reportTable(["Label", "Key", "Position"], state.opportunityStages.map((stage) => [stage.label, stage.key, stage.position])) : ""}
                 \${state.generatedToken ? '<div class="api">' + escapeHtml(state.generatedToken) + '</div>' : ""}
               </div>
             </div>
@@ -1360,6 +1371,22 @@ Content-Type: application/json
           notice("Custom field created.");
           await refresh();
         });
+
+        $("#stageForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("opportunity-stages", {
+            method: "POST",
+            body: JSON.stringify({
+              label: form.get("label"),
+              position: form.get("position") || undefined,
+              isWon: form.get("isWon") === "on",
+              isLost: form.get("isLost") === "on",
+            }),
+          });
+          notice("Pipeline stage created.");
+          await refresh();
+        });
       }
 
       function customFieldsFromForm(form, prefix) {
@@ -1369,6 +1396,21 @@ Content-Type: application/json
           if (value !== null && String(value).trim()) values[field.key] = value;
         }
         return values;
+      }
+
+      function pipelineStages() {
+        return (state.opportunityStages.length ? state.opportunityStages : [
+          { key: "research", label: "Research" },
+          { key: "conversation", label: "Conversation" },
+          { key: "demo", label: "Demo" },
+          { key: "proposal", label: "Proposal" },
+          { key: "won", label: "Won" },
+          { key: "lost", label: "Lost" },
+        ]).map((stage) => stage.key);
+      }
+
+      function stageByKey(key) {
+        return state.opportunityStages.find((stage) => stage.key === key);
       }
 
       function escapeHtml(value) {

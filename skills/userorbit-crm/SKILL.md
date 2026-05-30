@@ -176,6 +176,18 @@ Review or move pipeline opportunities:
 GET /api/opportunities
 ```
 
+List or create workspace pipeline stages:
+
+```http
+GET /api/opportunity-stages
+```
+
+```http
+POST /api/opportunity-stages
+
+{ "label": "Security review", "position": 45 }
+```
+
 ```http
 PATCH /api/opportunities/<opportunity_id>
 
