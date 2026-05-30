@@ -313,6 +313,17 @@ curl -X POST http://localhost:8787/api/accounts/account-id/ai-insights \
 
 Account and contact detail pages include an AI insight panel. The API also supports `POST /api/contacts/<contact_id>/ai-insights` and agent command `generate_ai_insight`. When `OPENAI_API_KEY` is configured, the Worker uses OpenAI's Responses API at `/v1/responses`; otherwise it creates a local deterministic summary from CRM activity.
 
+### Generate AI call and meeting notes
+
+```sh
+curl -X POST http://localhost:8787/api/communications/communication-id/ai-notes \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+The Communications view can turn logged calls, meetings, and notes into a concise follow-up brief with next steps, risks, and a momentum score. The agent command is `generate_ai_notes` with `communicationId`.
+
 ### Create a message channel
 
 ```sh
@@ -400,6 +411,7 @@ Supported commands:
 - `send_email`
 - `send_message`
 - `generate_ai_insight`
+- `generate_ai_notes`
 - `run_sequences`
 - `run_warmup`
 - `create_task`

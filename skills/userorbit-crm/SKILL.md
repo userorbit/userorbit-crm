@@ -457,6 +457,23 @@ POST /api/agent/command
 
 Use `entity: "contact"` for a contact-level insight. Insights summarize recent context, next steps, risks, and a 0-100 score. When `OPENAI_API_KEY` is configured the app uses OpenAI's Responses API; otherwise it returns a deterministic local insight from CRM activity.
 
+Generate AI follow-up notes for a logged call, meeting, or note:
+
+```http
+POST /api/communications/<communication_id>/ai-notes
+```
+
+Equivalent agent command:
+
+```json
+{
+  "command": "generate_ai_notes",
+  "communicationId": "communication_id"
+}
+```
+
+The result is stored as an AI insight on the communication and appears in `GET /api/communications` as `ai_summary`, `aiNextSteps`, and `aiRisks`. Use this after logging discovery calls or meetings to produce concise recaps, concrete follow-up actions, sales risks, and a 0-100 momentum score.
+
 Capture calendar meetings directly or from an ICS export:
 
 ```http

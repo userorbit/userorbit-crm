@@ -1422,14 +1422,18 @@ export const appHtml = String.raw`<!doctype html>
 
       function communicationTable(items) {
         if (!items?.length) return '<div class="empty">No communication activity yet.</div>';
-        return reportTable(["When", "Type", "Subject", "Account", "Contact", "Outcome"], items.map((item) => [
-          formatDateTime(item.occurred_at || item.created_at),
-          item.type,
-          item.subject,
-          item.account_name || "",
-          item.contact_name || item.contact_email || "",
-          [item.direction, item.outcome].filter(Boolean).join(" / "),
-        ]));
+        return \`<table>
+          <thead><tr><th>When</th><th>Type</th><th>Subject</th><th>Account</th><th>AI notes</th><th></th></tr></thead>
+          <tbody>\${items.map((item) => \`
+            <tr>
+              <td>\${escapeHtml(formatDateTime(item.occurred_at || item.created_at))}</td>
+              <td>\${escapeHtml(item.type)}<div class="subtitle">\${escapeHtml([item.direction, item.outcome].filter(Boolean).join(" / "))}</div></td>
+              <td><strong>\${escapeHtml(item.subject)}</strong><div class="subtitle">\${escapeHtml(item.contact_name || item.contact_email || "")}</div></td>
+              <td>\${escapeHtml(item.account_name || "")}</td>
+              <td>\${item.ai_summary ? escapeHtml(item.ai_summary) + '<div class="subtitle">' + escapeHtml((item.aiNextSteps || []).slice(0, 2).join(" · ")) + '</div>' : '<span class="subtitle">No AI notes yet</span>'}</td>
+              <td><button class="button" data-generate-ai-notes-id="\${escapeHtml(item.id)}">Generate</button></td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
       }
 
       function calendarTable(items) {
@@ -1900,6 +1904,12 @@ Content-Type: application/json
           state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
           render();
         });
+
+        document.querySelectorAll("[data-generate-ai-notes-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("communications/" + encodeURIComponent(node.dataset.generateAiNotesId) + "/ai-notes", { method: "POST", body: "{}" });
+          notice("AI notes generated.");
+          await refresh();
+        }));
 
         $("#providerMessageForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();

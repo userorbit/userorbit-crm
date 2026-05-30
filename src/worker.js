@@ -379,6 +379,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listCommunications(env, workspaceId));
   }
 
+  if (request.method === "POST" && path.startsWith("communications/") && path.endsWith("/ai-notes")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createCommunicationAiNotes(env, path.split("/")[1], workspaceId, auth), 201);
+  }
+
   if (request.method === "POST" && path === "communications") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createCommunication(env, { ...(await readJson(request)), workspaceId }, auth), 201);
@@ -1769,16 +1774,23 @@ async function createTask(env, input) {
 
 async function listCommunications(env, workspaceId) {
   const rows = await env.DB.prepare(`
-    SELECT ce.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, u.name AS created_by_name
+    SELECT ce.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, u.name AS created_by_name,
+      ai.summary AS ai_summary, ai.next_steps_json AS ai_next_steps_json, ai.risks_json AS ai_risks_json, ai.created_at AS ai_created_at
     FROM communication_events ce
     JOIN accounts a ON a.id = ce.account_id
     LEFT JOIN contacts c ON c.id = ce.contact_id
     LEFT JOIN users u ON u.id = ce.created_by_user_id
+    LEFT JOIN ai_insights ai ON ai.id = (
+      SELECT id FROM ai_insights
+      WHERE workspace_id = ce.workspace_id AND entity = 'communication' AND entity_id = ce.id
+      ORDER BY created_at DESC
+      LIMIT 1
+    )
     WHERE ce.workspace_id = ?
     ORDER BY ce.occurred_at DESC
     LIMIT 100
   `).bind(workspaceId).all();
-  return rows.results;
+  return rows.results.map(communicationResponse);
 }
 
 async function createCommunication(env, input, auth) {
@@ -1821,6 +1833,38 @@ async function createCommunication(env, input, auth) {
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "communication.create", resource: "communication_event", resourceId: id, metadata: { type, accountId: account.id, contactId } });
   await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
   return event;
+}
+
+async function createCommunicationAiNotes(env, id, workspaceId, auth) {
+  const context = await buildCommunicationNoteContext(env, id, workspaceId);
+  const generated = await generateCommunicationNotes(env, context);
+  const now = new Date().toISOString();
+  const insightId = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO ai_insights (
+      id, workspace_id, entity, entity_id, created_by_user_id, provider, model,
+      summary, next_steps_json, risks_json, score, prompt_json, created_at
+    )
+    VALUES (?, ?, 'communication', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    insightId,
+    workspaceId,
+    id,
+    auth.user.id,
+    generated.provider,
+    generated.model || null,
+    generated.summary,
+    JSON.stringify(generated.nextSteps || []),
+    JSON.stringify(generated.risks || []),
+    generated.score ?? null,
+    JSON.stringify(context),
+    now,
+  ).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "ai_notes.create", resource: "communication_event", resourceId: id, metadata: { provider: generated.provider, model: generated.model || null } });
+  const insight = await getRequired(env, "SELECT * FROM ai_insights WHERE id = ?", insightId);
+  const event = await getRequired(env, "SELECT * FROM communication_events WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  await deliverWebhooks(env, workspaceId, "ai_notes.created", insight.id, { communication: event, insight: aiInsightResponse(insight) });
+  return aiInsightResponse(insight);
 }
 
 async function listMessageChannels(env, workspaceId, revealWebhook = false) {
@@ -2940,12 +2984,82 @@ async function buildContactInsightContext(env, contactId, workspaceId) {
   };
 }
 
+async function buildCommunicationNoteContext(env, id, workspaceId) {
+  const event = await getRequired(env, `
+    SELECT ce.*, a.name AS account_name, a.domain, a.segment, a.status AS account_status,
+      c.name AS contact_name, c.email AS contact_email, c.title AS contact_title, c.status AS contact_status
+    FROM communication_events ce
+    JOIN accounts a ON a.id = ce.account_id
+    LEFT JOIN contacts c ON c.id = ce.contact_id
+    WHERE ce.id = ? AND ce.workspace_id = ?
+  `, id, workspaceId);
+  const [tasks, opportunities, recent] = await Promise.all([
+    env.DB.prepare(`
+      SELECT title, kind, status, due_at
+      FROM tasks
+      WHERE workspace_id = ? AND account_id = ?
+      ORDER BY COALESCE(due_at, created_at) ASC
+      LIMIT 8
+    `).bind(workspaceId, event.account_id).all(),
+    env.DB.prepare(`
+      SELECT name, stage, value_cents, confidence, close_date
+      FROM opportunities
+      WHERE workspace_id = ? AND account_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 8
+    `).bind(workspaceId, event.account_id).all(),
+    env.DB.prepare(`
+      SELECT type, direction, outcome, subject, occurred_at
+      FROM communication_events
+      WHERE workspace_id = ? AND account_id = ? AND id != ?
+      ORDER BY occurred_at DESC
+      LIMIT 8
+    `).bind(workspaceId, event.account_id, id).all(),
+  ]);
+  return {
+    communication: {
+      id: event.id,
+      type: event.type,
+      direction: event.direction,
+      outcome: event.outcome,
+      subject: event.subject,
+      notes: event.body,
+      occurredAt: event.occurred_at,
+    },
+    account: {
+      id: event.account_id,
+      name: event.account_name,
+      domain: event.domain,
+      segment: event.segment,
+      status: event.account_status,
+    },
+    contact: event.contact_id ? {
+      id: event.contact_id,
+      name: event.contact_name,
+      email: event.contact_email,
+      title: event.contact_title,
+      status: event.contact_status,
+    } : null,
+    tasks: tasks.results,
+    opportunities: opportunities.results,
+    recentCommunications: recent.results,
+  };
+}
+
 async function generateAiInsight(env, entity, context) {
   if (cleanNullable(env.OPENAI_API_KEY)) {
     const generated = await generateOpenAiInsight(env, entity, context);
     if (generated) return generated;
   }
   return generateFallbackInsight(entity, context);
+}
+
+async function generateCommunicationNotes(env, context) {
+  if (cleanNullable(env.OPENAI_API_KEY)) {
+    const generated = await generateOpenAiCommunicationNotes(env, context);
+    if (generated) return generated;
+  }
+  return generateFallbackCommunicationNotes(context);
 }
 
 async function generateOpenAiInsight(env, entity, context) {
@@ -2974,6 +3088,38 @@ async function generateOpenAiInsight(env, entity, context) {
     const payload = await response.json();
     const text = extractResponseText(payload);
     const parsed = parseJsonObject(text);
+    if (!cleanNullable(parsed.summary)) return null;
+    return normalizeGeneratedInsight({ ...parsed, provider: "openai", model });
+  } catch {
+    return null;
+  }
+}
+
+async function generateOpenAiCommunicationNotes(env, context) {
+  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const prompt = [
+    "You are turning raw CRM call or meeting notes into a concise sales follow-up brief.",
+    "Return compact JSON only with keys: summary, nextSteps, risks, score.",
+    "summary must capture what happened and the buyer intent in one short paragraph.",
+    "nextSteps must be concrete follow-up actions. risks must be short sales risks or blockers. score must be an integer 0-100 for deal momentum.",
+    JSON.stringify(context),
+  ].join("\n\n");
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        text: { format: { type: "json_object" } },
+      }),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const parsed = parseJsonObject(extractResponseText(payload));
     if (!cleanNullable(parsed.summary)) return null;
     return normalizeGeneratedInsight({ ...parsed, provider: "openai", model });
   } catch {
@@ -3026,6 +3172,31 @@ function generateFallbackInsight(entity, context) {
     provider: "local",
     model: "heuristic",
     summary: `${subject || "This record"} is currently ${status || "unclassified"}. Latest signal: ${lastTouch}.`,
+    nextSteps,
+    risks,
+    score,
+  });
+}
+
+function generateFallbackCommunicationNotes(context) {
+  const event = context.communication || {};
+  const notes = cleanNullable(event.notes) || "";
+  const lower = notes.toLowerCase();
+  const nextSteps = [];
+  if (lower.includes("demo")) nextSteps.push("Send a demo recap and confirm the evaluation criteria.");
+  if (lower.includes("pricing") || lower.includes("budget")) nextSteps.push("Follow up with pricing context and clarify budget ownership.");
+  if (lower.includes("security") || lower.includes("legal")) nextSteps.push("Prepare security or legal materials before the next conversation.");
+  if (lower.includes("next step") || lower.includes("follow")) nextSteps.push("Create a dated follow-up task for the agreed next step.");
+  if (!nextSteps.length) nextSteps.push("Send a concise recap with one explicit question to keep momentum.");
+  const risks = [];
+  if (!notes) risks.push("No notes or transcript were captured, so the brief is low confidence.");
+  if (lower.includes("not now") || lower.includes("no budget") || lower.includes("blocked")) risks.push("The conversation contains a possible blocker that needs direct confirmation.");
+  if (!(context.opportunities || []).length) risks.push("No opportunity is attached to this account yet.");
+  const score = Math.max(15, Math.min(90, 45 + (event.outcome === "positive" ? 20 : 0) + (notes.length > 120 ? 10 : 0) + (context.opportunities || []).length * 5 - risks.length * 8));
+  return normalizeGeneratedInsight({
+    provider: "local",
+    model: "heuristic",
+    summary: `${event.subject || "This activity"} for ${context.account?.name || "the account"} was logged as ${event.type || "activity"}${event.outcome ? ` with a ${event.outcome} outcome` : ""}. ${notes ? `Key context: ${notes.slice(0, 220)}` : "No detailed notes were provided."}`,
     nextSteps,
     risks,
     score,
@@ -3086,6 +3257,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "generate_ai_insight") {
     return { result: await createAiInsight(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "generate_ai_notes") {
+    return { result: await createCommunicationAiNotes(env, cleanNullable(input.communicationId || input.payload?.communicationId || input.payload?.id), input.workspaceId, auth) };
   }
   if (input.command === "import_calendar_ics") {
     return { result: await importCalendarIcs(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
@@ -4198,6 +4372,14 @@ function aiInsightResponse(row) {
     ...row,
     nextSteps: parseJsonArray(row.next_steps_json),
     risks: parseJsonArray(row.risks_json),
+  };
+}
+
+function communicationResponse(row) {
+  return {
+    ...row,
+    aiNextSteps: parseJsonArray(row.ai_next_steps_json),
+    aiRisks: parseJsonArray(row.ai_risks_json),
   };
 }
 
