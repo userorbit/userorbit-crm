@@ -415,6 +415,21 @@ Export accounts for backup or spreadsheet analysis:
 GET /api/export/accounts.csv
 ```
 
+Create or run scheduled account CSV exports:
+
+```http
+POST /api/export-schedules
+
+{
+  "name": "Weekly account backup",
+  "resource": "accounts",
+  "frequency": "weekly",
+  "deliveryUrl": "https://hooks.example.com/userorbit/accounts.csv"
+}
+```
+
+List schedules and recent deliveries with `GET /api/export-schedules`. Run one immediately with `POST /api/export-schedules/<schedule_id>/run`, disable one with `DELETE /api/export-schedules/<schedule_id>`, or use the `run_export_schedule` agent command with `scheduleId`. Supported frequencies are `daily`, `weekly`, and `monthly`.
+
 Import accounts from CSV:
 
 ```http

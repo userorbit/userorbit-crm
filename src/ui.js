@@ -637,6 +637,7 @@ export const appHtml = String.raw`<!doctype html>
         nativeImportSources: [],
         workspaceTokens: [],
         teamInvitations: [],
+        exportSchedules: { schedules: [], deliveries: [] },
         webhooks: { endpoints: [], deliveries: [] },
         auditLogs: [],
         generatedToken: "",
@@ -730,7 +731,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -759,6 +760,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("native-import-sources") : Promise.resolve([]),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
+          canManage ? api("export-schedules") : Promise.resolve({ schedules: [], deliveries: [] }),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
@@ -766,7 +768,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
-        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1703,6 +1705,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Enrichment providers</div></div>' + enrichmentProvidersTable(state.enrichmentProviders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Native imports</div></div>' + nativeImportSourcesTable(state.nativeImportSources) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Scheduled exports</div></div>' + exportSchedulesTable(state.exportSchedules) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
               </div>
@@ -1735,6 +1738,13 @@ Content-Type: application/json
                   <label>URL<input name="url" type="url" required placeholder="https://hooks.example.com/userorbit" /></label>
                   <label>Events<textarea name="events" placeholder="account.created&#10;contact.created&#10;task.created&#10;communication.created&#10;email.created"></textarea></label>
                   <button class="button primary">Create webhook</button>
+                </form>
+                <form id="exportScheduleForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Weekly account export" /></label>
+                  <label>Frequency<select name="frequency"><option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option></select></label>
+                  <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/accounts.csv" /></label>
+                  <label>Next run<input name="nextRunAt" type="datetime-local" /></label>
+                  <button class="button primary">Create export schedule</button>
                 </form>
                 <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Sales alerts" /></label>
@@ -1868,6 +1878,24 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No webhooks yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Webhook deliveries</div></div>' + reportTable(["Event", "Endpoint", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.endpoint_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return endpointTable + deliveryTable;
+      }
+
+      function exportSchedulesTable(exportSchedules) {
+        const schedules = exportSchedules?.schedules || [];
+        const deliveries = exportSchedules?.deliveries || [];
+        const scheduleTable = schedules.length ? \`<table>
+          <thead><tr><th>Name</th><th>Frequency</th><th>Next run</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${schedules.map((schedule) => \`
+            <tr>
+              <td>\${escapeHtml(schedule.name)}<div class="subtitle">\${escapeHtml(schedule.delivery_url)}</div></td>
+              <td>\${escapeHtml(schedule.resource)} · \${escapeHtml(schedule.frequency)}</td>
+              <td>\${escapeHtml(schedule.next_run_at ? formatDateTime(schedule.next_run_at) : "Not scheduled")}<div class="subtitle">\${escapeHtml(schedule.last_error || (schedule.last_run_at ? "Last run " + formatDateTime(schedule.last_run_at) : ""))}</div></td>
+              <td><span class="pill">\${escapeHtml(schedule.status)}</span></td>
+              <td>\${schedule.status === "active" ? '<button class="button" data-run-export-schedule-id="' + escapeHtml(schedule.id) + '">Run</button> <button class="button" data-disable-export-schedule-id="' + escapeHtml(schedule.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\` : '<div class="empty">No scheduled exports yet.</div>';
+        const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Export deliveries</div></div>' + reportTable(["Schedule", "Resource", "Rows", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.schedule_name, delivery.resource, delivery.row_count || 0, delivery.status, delivery.status_code || delivery.error || ""])) : "";
+        return scheduleTable + deliveryTable;
       }
 
       function integrationsTable(integrations) {
@@ -2630,6 +2658,24 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#exportScheduleForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const nextRunAt = form.get("nextRunAt") ? new Date(form.get("nextRunAt")).toISOString() : undefined;
+          await api("export-schedules", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              resource: "accounts",
+              frequency: form.get("frequency"),
+              deliveryUrl: form.get("deliveryUrl"),
+              nextRunAt,
+            }),
+          });
+          notice("Export schedule created.");
+          await refresh();
+        });
+
         $("#enrichmentProviderForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2690,6 +2736,18 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-integration-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("integrations/" + encodeURIComponent(node.dataset.disableIntegrationId), { method: "DELETE" });
           notice("Integration disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-run-export-schedule-id]").forEach((node) => node.addEventListener("click", async () => {
+          const result = await api("export-schedules/" + encodeURIComponent(node.dataset.runExportScheduleId) + "/run", { method: "POST", body: "{}" });
+          notice("Export " + (result.delivery?.status || "finished") + " with " + (result.delivery?.rowCount || 0) + " row(s).");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-export-schedule-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("export-schedules/" + encodeURIComponent(node.dataset.disableExportScheduleId), { method: "DELETE" });
+          notice("Export schedule disabled.");
           await refresh();
         }));
 

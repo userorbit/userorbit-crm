@@ -62,6 +62,7 @@
 - [x] Add drag-and-drop movement to the pipeline board.
 - [x] Add per-user dashboard widget customization.
 - [x] Add saved report section views.
+- [x] Add scheduled account CSV exports.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.

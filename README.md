@@ -524,6 +524,22 @@ curl http://localhost:8787/api/export/accounts.csv \
   -o userorbit-accounts.csv
 ```
 
+### Schedule account exports
+
+```sh
+curl -X POST http://localhost:8787/api/export-schedules \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Weekly account backup",
+    "resource": "accounts",
+    "frequency": "weekly",
+    "deliveryUrl": "https://hooks.example.com/userorbit/accounts.csv"
+  }'
+```
+
+Workspace admins can schedule daily, weekly, or monthly account CSV exports to a webhook-compatible URL. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`; scheduled Worker jobs also process due exports and record delivery status in Settings.
+
 ### Import accounts
 
 ```sh
@@ -591,6 +607,7 @@ Supported commands:
 - `start_call`
 - `run_native_import`
 - `run_email_sync`
+- `run_export_schedule`
 - `create_dialer_session`
 - `complete_dialer_call`
 - `generate_ai_insight`

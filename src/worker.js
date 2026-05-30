@@ -43,6 +43,8 @@ const DASHBOARD_WIDGETS = new Set(["metrics", "priority_accounts", "due_tasks", 
 const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "priority_accounts", "due_tasks"];
 const REPORT_SECTIONS = new Set(["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"]);
 const DEFAULT_REPORT_SECTIONS = ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"];
+const EXPORT_RESOURCES = new Set(["accounts"]);
+const EXPORT_FREQUENCIES = new Set(["daily", "weekly", "monthly"]);
 
 export default {
   async fetch(request, env) {
@@ -162,6 +164,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listWebhooks(env, workspaceId, auth));
   }
 
+  if (request.method === "GET" && path === "export-schedules") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listExportSchedules(env, workspaceId));
+  }
+
   if (request.method === "GET" && path === "integrations") {
     return json(await listIntegrations(env, workspaceId, auth));
   }
@@ -258,8 +265,23 @@ async function routeApi(request, env, url, auth) {
     return json(await createWebhook(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path === "export-schedules") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createExportSchedule(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path.startsWith("export-schedules/") && path.endsWith("/run")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await runExportSchedule(env, path.split("/")[1], workspaceId, auth), 201);
+  }
+
   if (request.method === "DELETE" && path.startsWith("webhooks/")) {
     return json(await disableWebhook(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "DELETE" && path.startsWith("export-schedules/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableExportSchedule(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "integrations") {
@@ -1492,6 +1514,134 @@ function normalizeReportFilters(input) {
   const sectionsInput = Array.isArray(input.sections) ? input.sections : DEFAULT_REPORT_SECTIONS;
   const sections = sectionsInput.map((section) => cleanNullable(section)).filter((section) => REPORT_SECTIONS.has(section));
   return { sections: sections.length ? [...new Set(sections)] : [...DEFAULT_REPORT_SECTIONS] };
+}
+
+async function listExportSchedules(env, workspaceId) {
+  const [schedules, deliveries] = await Promise.all([
+    env.DB.prepare(`
+      SELECT es.*, u.name AS created_by_name
+      FROM export_schedules es
+      LEFT JOIN users u ON u.id = es.created_by_user_id
+      WHERE es.workspace_id = ?
+      ORDER BY es.status ASC, es.created_at DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT ed.*, es.name AS schedule_name
+      FROM export_deliveries ed
+      JOIN export_schedules es ON es.id = ed.schedule_id
+      WHERE ed.workspace_id = ?
+      ORDER BY ed.created_at DESC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+  ]);
+  return { schedules: schedules.results, deliveries: deliveries.results };
+}
+
+async function createExportSchedule(env, input, auth) {
+  requireFields(input, ["name", "deliveryUrl"]);
+  const resource = normalizeEnum(input.resource || "accounts", EXPORT_RESOURCES, "resource");
+  const frequency = normalizeEnum(input.frequency || "weekly", EXPORT_FREQUENCIES, "frequency");
+  const deliveryUrl = normalizeWebhookUrl(input.deliveryUrl || input.delivery_url);
+  const now = new Date().toISOString();
+  const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO export_schedules (
+      id, workspace_id, created_by_user_id, name, resource, frequency, delivery_url,
+      status, last_run_at, next_run_at, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), resource, frequency, deliveryUrl, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "export_schedule.create", resource: "export_schedule", resourceId: id, metadata: { name: input.name, resource, frequency } });
+  return getRequired(env, "SELECT * FROM export_schedules WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+}
+
+async function disableExportSchedule(env, id, workspaceId, auth) {
+  const schedule = await getRequired(env, "SELECT * FROM export_schedules WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE export_schedules SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "export_schedule.disable", resource: "export_schedule", resourceId: id, metadata: { name: schedule.name, resource: schedule.resource } });
+  return { ok: true };
+}
+
+async function runExportSchedule(env, id, workspaceId, auth = null) {
+  const schedule = await getRequired(env, "SELECT * FROM export_schedules WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const result = await deliverExportSchedule(env, schedule);
+  if (auth?.user?.id) {
+    await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "export_schedule.run", resource: "export_schedule", resourceId: id, metadata: { resource: schedule.resource, status: result.status, rowCount: result.rowCount } });
+  }
+  return { schedule: await getRequired(env, "SELECT * FROM export_schedules WHERE id = ? AND workspace_id = ?", id, workspaceId), delivery: result };
+}
+
+async function processDueExportSchedules(env, limit = 5) {
+  const now = new Date().toISOString();
+  const rows = await env.DB.prepare(`
+    SELECT * FROM export_schedules
+    WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= ?
+    ORDER BY next_run_at ASC
+    LIMIT ?
+  `).bind(now, limit).all();
+  const results = [];
+  for (const schedule of rows.results) {
+    try {
+      results.push(await deliverExportSchedule(env, schedule));
+    } catch (error) {
+      results.push({ scheduleId: schedule.id, status: "failed", error: error.message || String(error) });
+    }
+  }
+  return { processed: results.length, results };
+}
+
+async function deliverExportSchedule(env, schedule) {
+  const now = new Date().toISOString();
+  const exported = await buildExportPayload(env, schedule);
+  let status = "failed";
+  let statusCode = null;
+  let error = null;
+  try {
+    const response = await fetch(schedule.delivery_url, {
+      method: "POST",
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "user-agent": "UserOrbit-CRM-Export",
+        "x-userorbit-export-resource": schedule.resource,
+        "x-userorbit-export-schedule-id": schedule.id,
+        "x-userorbit-export-row-count": String(exported.rowCount),
+      },
+      body: exported.body,
+    });
+    statusCode = response.status;
+    status = response.ok ? "sent" : "failed";
+    if (!response.ok) error = `HTTP ${response.status}`;
+  } catch (caught) {
+    error = caught.message || String(caught);
+  }
+  await env.DB.prepare(`
+    INSERT INTO export_deliveries (id, workspace_id, schedule_id, resource, status, status_code, row_count, error, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(crypto.randomUUID(), schedule.workspace_id, schedule.id, schedule.resource, status, statusCode, exported.rowCount, cleanNullable(error), now).run();
+  const nextRunAt = nextExportRunAt(schedule.frequency, now);
+  await env.DB.prepare("UPDATE export_schedules SET last_run_at = ?, next_run_at = ?, last_error = ?, updated_at = ? WHERE id = ?")
+    .bind(now, nextRunAt, cleanNullable(error), now, schedule.id)
+    .run();
+  return { scheduleId: schedule.id, status, statusCode, rowCount: exported.rowCount, error };
+}
+
+async function buildExportPayload(env, schedule) {
+  if (schedule.resource === "accounts") {
+    const body = await exportAccountsCsv(env, schedule.workspace_id);
+    return { body, rowCount: Math.max(0, body.split(/\r?\n/).filter(Boolean).length - 1) };
+  }
+  throw httpError(400, "Unsupported export resource");
+}
+
+function nextExportRunAt(frequency, fromIso) {
+  const date = new Date(fromIso);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString();
+  if (frequency === "daily") date.setUTCDate(date.getUTCDate() + 1);
+  else if (frequency === "monthly") date.setUTCMonth(date.getUTCMonth() + 1);
+  else date.setUTCDate(date.getUTCDate() + 7);
+  return date.toISOString();
 }
 
 async function getDashboardPreferences(env, workspaceId, auth) {
@@ -3699,12 +3849,13 @@ async function resolveInboundContact(env, input) {
 }
 
 async function processScheduledJobs(env) {
-  const [sequences, warmup, calendar] = await Promise.all([
+  const [sequences, warmup, calendar, exports] = await Promise.all([
     processDueSequenceEmails(env, { limit: 20 }),
     processDueWarmupEmails(env, { limit: 1 }),
     syncDueCalendarSources(env, 5),
+    processDueExportSchedules(env, 5),
   ]);
-  return { sequences, warmup, calendar };
+  return { sequences, warmup, calendar, exports };
 }
 
 async function getWarmupOverview(env) {
@@ -4562,6 +4713,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "run_email_sync") {
     return { result: await runEmailSyncSource(env, cleanNullable(input.sourceId || input.payload?.sourceId || input.payload?.id), input.workspaceId, auth) };
+  }
+  if (input.command === "run_export_schedule") {
+    return { result: await runExportSchedule(env, cleanNullable(input.scheduleId || input.payload?.scheduleId || input.payload?.id), input.workspaceId, auth) };
   }
   if (input.command === "create_dialer_session") {
     return { result: await createDialerSession(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
