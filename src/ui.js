@@ -1676,9 +1676,10 @@ Content-Type: application/json
                   <button class="button primary">Create enrichment provider</button>
                 </form>
                 <form id="nativeImportSourceForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
-                  <label>Name<input name="name" required placeholder="HubSpot CRM" /></label>
-                  <label>Provider<select name="provider"><option value="hubspot">HubSpot</option></select></label>
-                  <label>Access token<input name="accessToken" type="password" required placeholder="Private app token" /></label>
+                  <label>Name<input name="name" required placeholder="HubSpot or Pipedrive CRM" /></label>
+                  <label>Provider<select name="provider"><option value="hubspot">HubSpot</option><option value="pipedrive">Pipedrive</option></select></label>
+                  <label>Access token<input name="accessToken" type="password" required placeholder="Private app token or API token" /></label>
+                  <label>Auth mode<select name="authMode"><option value="api_token">API token query</option><option value="bearer">Bearer token</option></select></label>
                   <label>Import limit<input name="limit" type="number" min="1" max="250" value="50" /></label>
                   <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
                   <button class="button primary">Create native import</button>
@@ -2471,6 +2472,7 @@ Content-Type: application/json
               name: form.get("name"),
               provider: form.get("provider"),
               accessToken: form.get("accessToken"),
+              authMode: form.get("authMode"),
               limit: Number(form.get("limit") || 50),
               apiBaseUrl: form.get("apiBaseUrl") || undefined,
             }),

@@ -391,7 +391,7 @@ Content-Type: application/json
 
 CSV import matches existing accounts by normalized domain first, then exact account name. The response includes `imported`, `matched`, `failed`, and per-row `action` values.
 
-Create and run a native HubSpot import source:
+Create and run a native HubSpot or Pipedrive import source:
 
 ```http
 POST /api/native-import-sources
@@ -404,6 +404,8 @@ POST /api/native-import-sources
 }
 ```
 
+For Pipedrive, set `provider` to `pipedrive`; use `authMode: "bearer"` only for OAuth bearer tokens, otherwise the importer sends the token as Pipedrive's `api_token` query parameter.
+
 ```http
 POST /api/agent/command
 
@@ -413,7 +415,7 @@ POST /api/agent/command
 }
 ```
 
-HubSpot imports use CRM search endpoints for companies and contacts, match accounts by domain/name, match contacts by email, and create missing records. Treat imported records as third-party data until reviewed.
+Native imports use provider CRM APIs for companies/organizations and contacts/persons, match accounts by domain/name, match contacts by email, and create missing records. Treat imported records as third-party data until reviewed.
 
 Review possible duplicate accounts:
 

@@ -32,7 +32,7 @@ const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
-const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot"]);
+const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
@@ -1075,7 +1075,9 @@ async function runNativeImportSource(env, id, workspaceId, auth) {
   try {
     const result = source.provider === "hubspot"
       ? await runHubSpotImport(env, source, workspaceId, auth)
-      : (() => { throw httpError(400, "Unsupported native import provider"); })();
+      : source.provider === "pipedrive"
+        ? await runPipedriveImport(env, source, workspaceId, auth)
+        : (() => { throw httpError(400, "Unsupported native import provider"); })();
     await env.DB.prepare("UPDATE workspace_native_import_sources SET last_run_at = ?, last_result_json = ?, last_error = NULL, updated_at = ? WHERE id = ?")
       .bind(now, JSON.stringify(result), now, source.id)
       .run();
@@ -1177,6 +1179,115 @@ async function fetchHubSpotObjects(config, objectType, properties, limit = 50) {
     after = payload.paging?.next?.after || null;
   } while (after && items.length < pageLimit);
   return items.slice(0, pageLimit);
+}
+
+async function runPipedriveImport(env, source, workspaceId, auth) {
+  const config = parseJsonObject(source.config_json);
+  const [organizations, persons] = await Promise.all([
+    fetchPipedriveCollection(config, "organizations", config.limit),
+    fetchPipedriveCollection(config, "persons", config.limit),
+  ]);
+  const accountByPipedriveId = new Map();
+  const accountByName = new Map();
+  const summary = { organizations: organizations.length, persons: persons.length, accountsCreated: 0, accountsMatched: 0, contactsCreated: 0, contactsExisting: 0, contactsConflicted: 0, contactsSkipped: 0 };
+  const results = [];
+  for (const org of organizations) {
+    const name = cleanNullable(org.name);
+    if (!name) continue;
+    const domain = cleanDomain(org.domain || org.website || org.web_url);
+    const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
+    const account = existing || await createAccount(env, {
+      workspaceId,
+      auth,
+      auditUserId: auth.user.id,
+      name,
+      domain,
+      source: `${source.name}: Pipedrive`,
+      observation: [cleanNullable(org.address), cleanNullable(org.industry) ? `Industry: ${org.industry}` : ""].filter(Boolean).join("\n"),
+    });
+    if (existing) summary.accountsMatched += 1;
+    else summary.accountsCreated += 1;
+    accountByPipedriveId.set(String(org.id), account.id);
+    accountByName.set(name.toLowerCase(), account.id);
+    if (domain) accountByName.set(domain.toLowerCase(), account.id);
+    results.push({ type: "organization", action: existing ? "matched" : "created", accountId: account.id, pipedriveId: org.id, name });
+  }
+  for (const person of persons) {
+    const email = pipedrivePrimaryValue(person.email);
+    const name = cleanNullable(person.name) || [cleanNullable(person.first_name), cleanNullable(person.last_name)].filter(Boolean).join(" ") || email;
+    if (!email || !name) {
+      summary.contactsSkipped += 1;
+      continue;
+    }
+    const orgId = pipedriveEntityId(person.org_id || person.organization);
+    const orgName = cleanNullable(person.org_name || person.organization?.name || person.org_id?.name);
+    const domain = email.split("@")[1] || "";
+    let accountId = orgId ? accountByPipedriveId.get(String(orgId)) : null;
+    if (!accountId && orgName) accountId = accountByName.get(orgName.toLowerCase());
+    if (!accountId && domain) accountId = accountByName.get(domain.toLowerCase());
+    if (!accountId) {
+      const accountName = orgName || domain || `${name} account`;
+      const existing = await findImportAccountMatch(env, workspaceId, { name: accountName, domain });
+      const account = existing || await createAccount(env, { workspaceId, auth, auditUserId: auth.user.id, name: accountName, domain, source: `${source.name}: Pipedrive person` });
+      accountId = account.id;
+      if (existing) summary.accountsMatched += 1;
+      else summary.accountsCreated += 1;
+      accountByName.set(accountName.toLowerCase(), account.id);
+      if (domain) accountByName.set(domain.toLowerCase(), account.id);
+    }
+    const created = await createImportContactIfMissing(env, workspaceId, accountId, {
+      name,
+      email,
+      title: cleanNullable(person.job_title || person.title),
+      phone: pipedrivePrimaryValue(person.phone),
+    });
+    if (created.action === "created") summary.contactsCreated += 1;
+    else if (created.action === "existing") summary.contactsExisting += 1;
+    else summary.contactsConflicted += 1;
+    results.push({ type: "person", action: created.action, contactId: created.id, accountId, pipedriveId: person.id, email });
+  }
+  return { summary, results };
+}
+
+async function fetchPipedriveCollection(config, objectType, limit = 50) {
+  const baseUrl = (config.apiBaseUrl || "https://api.pipedrive.com").replace(/\/+$/, "");
+  const pageLimit = Math.min(250, Math.max(1, Number(limit || 50)));
+  const items = [];
+  let cursor = null;
+  do {
+    const url = new URL(`${baseUrl}/api/v2/${objectType}`);
+    url.searchParams.set("limit", String(Math.min(pageLimit - items.length, 100)));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    if (config.accessToken && config.authMode !== "bearer") url.searchParams.set("api_token", config.accessToken);
+    const headers = { "user-agent": "UserOrbit-CRM-Pipedrive-Import" };
+    if (config.authMode === "bearer") headers.authorization = `Bearer ${config.accessToken}`;
+    const response = await fetch(url.toString(), { headers });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw httpError(400, `Pipedrive ${objectType} import failed: ${payload.error || payload.message || response.status}`);
+    items.push(...normalizePipedriveItems(payload));
+    cursor = payload.additional_data?.next_cursor || payload.additional_data?.pagination?.next_cursor || payload.next_cursor || null;
+  } while (cursor && items.length < pageLimit);
+  return items.slice(0, pageLimit);
+}
+
+function normalizePipedriveItems(payload) {
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.data?.items)) return payload.data.items;
+  if (Array.isArray(payload.results)) return payload.results;
+  return [];
+}
+
+function pipedrivePrimaryValue(value) {
+  if (Array.isArray(value)) {
+    const primary = value.find((item) => item?.primary) || value[0];
+    return cleanNullable(typeof primary === "object" ? primary.value : primary);
+  }
+  return cleanNullable(value?.value || value);
+}
+
+function pipedriveEntityId(value) {
+  if (value && typeof value === "object") return value.value || value.id;
+  return value;
 }
 
 function parseCsv(input) {
@@ -6331,16 +6442,13 @@ function maskIntegrationConfig(type, config) {
 }
 
 function normalizeNativeImportConfig(provider, input) {
-  if (provider !== "hubspot") throw httpError(400, "Unsupported native import provider");
   const accessToken = cleanNullable(input.accessToken || input.access_token);
-  if (!accessToken) throw httpError(400, "HubSpot accessToken is required");
+  if (!accessToken) throw httpError(400, `${provider} accessToken is required`);
   const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url);
   if (apiBaseUrl) normalizeWebhookUrl(apiBaseUrl);
-  return {
-    accessToken,
-    apiBaseUrl,
-    limit: clampInteger(input.limit || 50, 1, 250, "limit"),
-  };
+  if (provider === "hubspot") return { accessToken, apiBaseUrl, limit: clampInteger(input.limit || 50, 1, 250, "limit") };
+  if (provider === "pipedrive") return { accessToken, apiBaseUrl, authMode: input.authMode === "bearer" ? "bearer" : "api_token", limit: clampInteger(input.limit || 50, 1, 250, "limit") };
+  throw httpError(400, "Unsupported native import provider");
 }
 
 function nativeImportSourceResponse(source) {
@@ -6356,6 +6464,14 @@ function maskNativeImportConfig(provider, config) {
     return {
       accessToken: config.accessToken ? "configured" : "",
       apiBaseUrl: config.apiBaseUrl || "",
+      limit: config.limit || 50,
+    };
+  }
+  if (provider === "pipedrive") {
+    return {
+      accessToken: config.accessToken ? "configured" : "",
+      apiBaseUrl: config.apiBaseUrl || "",
+      authMode: config.authMode || "api_token",
       limit: config.limit || 50,
     };
   }
