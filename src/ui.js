@@ -767,6 +767,12 @@ export const appHtml = String.raw`<!doctype html>
         return '<div class="panel metric"><div class="metric-label">' + label + '</div><div class="metric-value">' + value + '</div></div>';
       }
 
+      function percent(value, total) {
+        const denominator = Number(total || 0);
+        if (!denominator) return "0%";
+        return Math.round((Number(value || 0) / denominator) * 100) + "%";
+      }
+
       function renderAccounts() {
         return header("Accounts", "Target 20-30 high-fit SaaS accounts each week.", '<button id="exportAccounts" class="button">Export CSV</button>') + \`
           <div class="columns">
@@ -1015,7 +1021,7 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderReports() {
-        const reports = state.reports || { pipeline: [], forecast: [], accountStatus: [], taskStatus: [], sequencePerformance: [], activity: {}, stalledOpportunities: [] };
+        const reports = state.reports || { pipeline: [], forecast: [], accountStatus: [], taskStatus: [], sequencePerformance: [], activity: {}, stalledOpportunities: [], ownerPerformance: [], sourceConversion: [] };
         const pipelineValue = reports.pipeline.reduce((total, row) => total + Number(row.value_cents || 0), 0);
         const forecastValue = reports.forecast.reduce((total, row) => total + Number(row.weighted_value_cents || 0), 0);
         const overdueTasks = reports.taskStatus.reduce((total, row) => total + Number(row.overdue || 0), 0);
@@ -1048,6 +1054,16 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Sequence performance</div></div>
               \${reportTable(["Sequence", "Enrollments", "Sent", "Opened", "Clicked", "Failed"], reports.sequencePerformance.map((row) => [row.name, row.enrollments || 0, row.sent || 0, row.opened || 0, row.clicked || 0, row.failed || 0]))}
+            </div>
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Owner performance</div></div>
+              \${reportTable(["Owner", "Accounts", "Contacts", "Emails", "Open pipeline", "Won", "Open tasks"], reports.ownerPerformance.map((row) => [row.owner, row.accounts || 0, row.contacts || 0, row.emails || 0, money(row.open_pipeline_cents || 0), money(row.won_value_cents || 0), row.open_tasks || 0]))}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Source conversion</div></div>
+              \${reportTable(["Source", "Accounts", "Contacted", "Replied", "Qualified", "Won", "Won value"], reports.sourceConversion.map((row) => [row.source, row.accounts || 0, percent(row.contacted_accounts, row.accounts), percent(row.replied_accounts, row.accounts), percent(row.qualified_accounts, row.accounts), row.won_opportunities || 0, money(row.won_value_cents || 0)]))}
             </div>
           </div>
           <div class="columns" style="margin-top:14px">

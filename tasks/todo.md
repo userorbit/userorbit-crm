@@ -22,6 +22,7 @@
 - [x] Add workspace-configurable pipeline stages.
 - [x] Add custom-field account filtering and reporting.
 - [x] Add weighted forecast reporting.
+- [x] Add owner performance and source conversion reporting.
 - [x] Add duplicate-aware CSV import and account duplicate watchlist.
 - [x] Add token-based team invitations.
 - [x] Add workspace webhooks and delivery logs.
@@ -89,3 +90,5 @@ Added communication activity logging: `communication_events` stores calls, meeti
 Added role-based workspace permissions: invite roles now support `viewer`, read access accepts viewers, CRM mutation endpoints require owner/admin/member, workspace settings endpoints require owner/admin, and mutating account/contact/opportunity/task/email/sequence routes verify records belong to the active workspace.
 
 Added email engagement tracking: workspace admins can enable open/click tracking, outbound emails get tracking IDs and first-party tracking links/pixels when configured, `/t/open/*` and `/t/click/*` record engagement, and reports plus account/contact email activity show open/click counts.
+
+Added reporting depth: `/api/reports` now includes owner performance and source conversion analytics, and the Reports UI shows rep workload/activity/pipeline/won value plus source contacted/replied/qualified/won conversion.

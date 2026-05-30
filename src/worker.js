@@ -360,7 +360,7 @@ async function getSummary(env, workspaceId) {
 
 async function getReports(env, workspaceId) {
   const closedStages = await getClosedOpportunityStages(env, workspaceId);
-  const [pipeline, forecast, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, customFieldBreakdowns] = await Promise.all([
+  const [pipeline, forecast, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, ownerPerformance, sourceConversion, customFieldBreakdowns] = await Promise.all([
     env.DB.prepare(`
       SELECT o.stage, COALESCE(os.label, o.stage) AS stage_label, COUNT(*) AS opportunities, COALESCE(SUM(o.value_cents), 0) AS value_cents, AVG(o.confidence) AS avg_confidence
       FROM opportunities o
@@ -444,6 +444,113 @@ async function getReports(env, workspaceId) {
       ORDER BY COALESCE(last_activity_at, o.created_at) ASC
       LIMIT 20
     `).bind(workspaceId, ...closedStages).all(),
+    env.DB.prepare(`
+      WITH account_metrics AS (
+        SELECT
+          a.id,
+          COALESCE(NULLIF(a.owner, ''), 'Unassigned') AS owner,
+          (SELECT COUNT(*) FROM contacts c WHERE c.account_id = a.id) AS contacts,
+          (SELECT COUNT(*) FROM tasks t WHERE t.account_id = a.id AND t.workspace_id = ?) AS tasks,
+          (SELECT COUNT(*) FROM tasks t WHERE t.account_id = a.id AND t.workspace_id = ? AND t.status != 'done') AS open_tasks,
+          (SELECT COUNT(*) FROM email_events ee WHERE ee.account_id = a.id) AS emails,
+          (SELECT COALESCE(SUM(open_count), 0) FROM email_events ee WHERE ee.account_id = a.id) AS opens,
+          (SELECT COALESCE(SUM(click_count), 0) FROM email_events ee WHERE ee.account_id = a.id) AS clicks,
+          (SELECT COUNT(*) FROM opportunities o WHERE o.account_id = a.id AND o.workspace_id = ?) AS opportunities,
+          (
+            SELECT COALESCE(SUM(o.value_cents), 0)
+            FROM opportunities o
+            LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+            WHERE o.account_id = a.id
+              AND o.workspace_id = ?
+              AND COALESCE(os.is_won, CASE WHEN o.stage = 'won' THEN 1 ELSE 0 END) = 0
+              AND COALESCE(os.is_lost, CASE WHEN o.stage = 'lost' THEN 1 ELSE 0 END) = 0
+          ) AS open_pipeline_cents,
+          (
+            SELECT COALESCE(SUM(o.value_cents), 0)
+            FROM opportunities o
+            LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+            WHERE o.account_id = a.id
+              AND o.workspace_id = ?
+              AND COALESCE(os.is_won, CASE WHEN o.stage = 'won' THEN 1 ELSE 0 END) = 1
+          ) AS won_value_cents,
+          (
+            SELECT COUNT(*)
+            FROM opportunities o
+            LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+            WHERE o.account_id = a.id
+              AND o.workspace_id = ?
+              AND COALESCE(os.is_lost, CASE WHEN o.stage = 'lost' THEN 1 ELSE 0 END) = 1
+          ) AS lost_opportunities
+        FROM accounts a
+        WHERE a.workspace_id = ?
+      )
+      SELECT
+        owner,
+        COUNT(*) AS accounts,
+        SUM(contacts) AS contacts,
+        SUM(tasks) AS tasks,
+        SUM(open_tasks) AS open_tasks,
+        SUM(emails) AS emails,
+        SUM(opens) AS opens,
+        SUM(clicks) AS clicks,
+        SUM(opportunities) AS opportunities,
+        SUM(open_pipeline_cents) AS open_pipeline_cents,
+        SUM(won_value_cents) AS won_value_cents,
+        SUM(lost_opportunities) AS lost_opportunities
+      FROM account_metrics
+      GROUP BY owner
+      ORDER BY won_value_cents DESC, open_pipeline_cents DESC, accounts DESC
+    `).bind(workspaceId, workspaceId, workspaceId, workspaceId, workspaceId, workspaceId, workspaceId).all(),
+    env.DB.prepare(`
+      WITH account_metrics AS (
+        SELECT
+          a.id,
+          COALESCE(NULLIF(a.source, ''), 'Unknown') AS source,
+          a.status,
+          (SELECT COUNT(*) FROM email_events ee WHERE ee.account_id = a.id) AS emails,
+          (SELECT COUNT(*) FROM opportunities o WHERE o.account_id = a.id AND o.workspace_id = ?) AS opportunities,
+          (
+            SELECT COUNT(*)
+            FROM opportunities o
+            LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+            WHERE o.account_id = a.id
+              AND o.workspace_id = ?
+              AND COALESCE(os.is_won, CASE WHEN o.stage = 'won' THEN 1 ELSE 0 END) = 1
+          ) AS won_opportunities,
+          (
+            SELECT COUNT(*)
+            FROM opportunities o
+            LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+            WHERE o.account_id = a.id
+              AND o.workspace_id = ?
+              AND COALESCE(os.is_lost, CASE WHEN o.stage = 'lost' THEN 1 ELSE 0 END) = 1
+          ) AS lost_opportunities,
+          (
+            SELECT COALESCE(SUM(o.value_cents), 0)
+            FROM opportunities o
+            LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+            WHERE o.account_id = a.id
+              AND o.workspace_id = ?
+              AND COALESCE(os.is_won, CASE WHEN o.stage = 'won' THEN 1 ELSE 0 END) = 1
+          ) AS won_value_cents
+        FROM accounts a
+        WHERE a.workspace_id = ?
+      )
+      SELECT
+        source,
+        COUNT(*) AS accounts,
+        SUM(CASE WHEN emails > 0 OR status IN ('contacted', 'replied', 'qualified') THEN 1 ELSE 0 END) AS contacted_accounts,
+        SUM(CASE WHEN status IN ('replied', 'qualified') THEN 1 ELSE 0 END) AS replied_accounts,
+        SUM(CASE WHEN status = 'qualified' THEN 1 ELSE 0 END) AS qualified_accounts,
+        SUM(opportunities) AS opportunities,
+        SUM(won_opportunities) AS won_opportunities,
+        SUM(lost_opportunities) AS lost_opportunities,
+        SUM(won_value_cents) AS won_value_cents
+      FROM account_metrics
+      GROUP BY source
+      ORDER BY won_value_cents DESC, qualified_accounts DESC, accounts DESC
+      LIMIT 20
+    `).bind(workspaceId, workspaceId, workspaceId, workspaceId, workspaceId).all(),
     getCustomFieldBreakdowns(env, workspaceId),
   ]);
 
@@ -455,6 +562,8 @@ async function getReports(env, workspaceId) {
     sequencePerformance: sequencePerformance.results,
     activity,
     stalledOpportunities: stalledOpportunities.results,
+    ownerPerformance: ownerPerformance.results,
+    sourceConversion: sourceConversion.results,
     customFieldBreakdowns,
   };
 }
