@@ -1081,8 +1081,8 @@ Content-Type: application/json
                   <tbody>\${tenant.teams.map((team) => '<tr><td>' + escapeHtml(team.name) + '</td><td><span class="pill">' + escapeHtml(team.role) + '</span></td></tr>').join("")}</tbody>
                 </table>
                 <table>
-                  <thead><tr><th>Workspace</th><th>Team</th></tr></thead>
-                  <tbody>\${tenant.workspaces.map((workspace) => '<tr><td>' + escapeHtml(workspace.name) + '</td><td>' + escapeHtml(workspace.team_name) + '</td></tr>').join("")}</tbody>
+                  <thead><tr><th>Workspace</th><th>Team</th><th>Role</th></tr></thead>
+                  <tbody>\${tenant.workspaces.map((workspace) => '<tr><td>' + escapeHtml(workspace.name) + '</td><td>' + escapeHtml(workspace.team_name) + '</td><td><span class="pill">' + escapeHtml(workspace.workspace_role || "") + '</span></td></tr>').join("")}</tbody>
                 </table>
                 <div class="panel-header"><div class="panel-title">Workspace tokens</div></div>
                 \${workspaceTokensTable(state.workspaceTokens)}

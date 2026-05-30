@@ -37,6 +37,8 @@ For first setup, use `CRM_API_TOKEN` to open Settings and set the bootstrap user
 3. Call `GET /api/summary` and `GET /api/reports` before recommending pipeline or follow-up actions.
 4. Choose the workspace that matches the user request. If none exists, create one.
 
+Workspace access is explicit for invited members. Team owners and admins can administer all team workspaces; member invites only grant the invited workspace unless another workspace membership is added later.
+
 Create a team:
 
 ```http

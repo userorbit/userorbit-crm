@@ -30,7 +30,8 @@
 - [x] Add account merge workflow for duplicate accounts.
 - [x] Add inbound email capture that records replies and pauses active sequences.
 - [x] Add password login with user-managed session tokens.
-- [ ] Add OAuth login, workspace membership overrides, and broader audit coverage.
+- [x] Add explicit workspace memberships and workspace-scoped invite access.
+- [ ] Add OAuth login, finer-grained permissions, and broader audit coverage.
 - [ ] Build the next Close-style CRM gaps: advanced import mapping UI, provider-native inbound email sync, native integrations, and communication channels.
 
 ## Review

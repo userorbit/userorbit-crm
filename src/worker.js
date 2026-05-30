@@ -1693,13 +1693,15 @@ async function getTenantContext(env, workspaceId, auth) {
     ORDER BY t.created_at ASC
   `).bind(auth.user.id).all();
   const workspaces = await env.DB.prepare(`
-    SELECT w.*, t.name AS team_name
+    SELECT w.*, t.name AS team_name, COALESCE(wm.role, tm.role) AS workspace_role
     FROM workspaces w
     JOIN teams t ON t.id = w.team_id
     JOIN team_members tm ON tm.team_id = t.id
+    LEFT JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ?
     WHERE tm.user_id = ?
+      AND (tm.role IN ('owner', 'admin') OR wm.user_id IS NOT NULL)
     ORDER BY t.created_at ASC, w.created_at ASC
-  `).bind(auth.user.id).all();
+  `).bind(auth.user.id, auth.user.id).all();
   return {
     user: auth.user,
     teams: teams.results,
@@ -1765,6 +1767,10 @@ async function createWorkspace(env, input, auth) {
   await env.DB.prepare("INSERT INTO workspaces (id, team_id, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, teamId, input.name.trim(), slugify(input.slug || input.name), now, now)
     .run();
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO workspace_members (id, workspace_id, user_id, role, created_at, updated_at)
+    VALUES (?, ?, ?, 'owner', ?, ?)
+  `).bind(crypto.randomUUID(), id, auth.user.id, now, now).run();
   await seedOpportunityStages(env, id);
   await recordAuditLog(env, { workspaceId: id, userId: auth.user.id, action: "workspace.create", resource: "workspace", resourceId: id, metadata: { name: input.name, teamId } });
   return getRequired(env, "SELECT * FROM workspaces WHERE id = ?", id);
@@ -1791,8 +1797,7 @@ async function seedOpportunityStages(env, workspaceId) {
 }
 
 async function listWorkspaceTokens(env, workspaceId, auth) {
-  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
   const rows = await env.DB.prepare(`
     SELECT wat.id, wat.workspace_id, wat.created_by_user_id, wat.name, wat.last_used_at, wat.revoked_at, wat.created_at, wat.updated_at, u.name AS created_by_name
     FROM workspace_api_tokens wat
@@ -1805,22 +1810,22 @@ async function listWorkspaceTokens(env, workspaceId, auth) {
 
 async function listTeamInvitations(env, workspaceId, auth) {
   const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
   const rows = await env.DB.prepare(`
     SELECT ti.id, ti.team_id, ti.workspace_id, ti.invited_user_id, ti.invited_by_user_id, ti.email, ti.role, ti.accepted_at, ti.last_used_at, ti.created_at, u.name AS invited_by_name
     FROM team_invitations ti
     JOIN users u ON u.id = ti.invited_by_user_id
-    WHERE ti.team_id = ?
+    WHERE ti.workspace_id = ?
     ORDER BY ti.created_at DESC
     LIMIT 100
-  `).bind(workspace.team_id).all();
+  `).bind(workspaceId).all();
   return rows.results;
 }
 
 async function createTeamInvitation(env, input, auth) {
   requireFields(input, ["email"]);
   const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", input.workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, input.workspaceId, ["owner", "admin"]);
   const email = cleanEmail(input.email);
   const role = normalizeEnum(input.role || "member", TEAM_ROLES, "role");
   const name = cleanNullable(input.name) || email.split("@")[0];
@@ -1834,9 +1839,16 @@ async function createTeamInvitation(env, input, auth) {
   const user = await getRequired(env, "SELECT * FROM users WHERE email = ?", email);
   await env.DB.prepare(`
     INSERT INTO team_members (id, team_id, user_id, role, created_at, updated_at)
+    VALUES (?, ?, ?, 'member', ?, ?)
+    ON CONFLICT(team_id, user_id) DO UPDATE SET
+      role = CASE WHEN team_members.role IN ('owner', 'admin') THEN team_members.role ELSE 'member' END,
+      updated_at = excluded.updated_at
+  `).bind(crypto.randomUUID(), workspace.team_id, user.id, now, now).run();
+  await env.DB.prepare(`
+    INSERT INTO workspace_members (id, workspace_id, user_id, role, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(team_id, user_id) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at
-  `).bind(crypto.randomUUID(), workspace.team_id, user.id, role, now, now).run();
+    ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at
+  `).bind(crypto.randomUUID(), workspace.id, user.id, role, now, now).run();
   const token = `uocrm_inv_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
@@ -1848,8 +1860,7 @@ async function createTeamInvitation(env, input, auth) {
 }
 
 async function listWebhooks(env, workspaceId, auth) {
-  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
   const [endpoints, deliveries] = await Promise.all([
     env.DB.prepare(`
       SELECT wh.*, u.name AS created_by_name
@@ -1875,8 +1886,7 @@ async function listWebhooks(env, workspaceId, auth) {
 
 async function createWebhook(env, input, auth) {
   requireFields(input, ["name", "url"]);
-  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", input.workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, input.workspaceId, ["owner", "admin"]);
   const url = normalizeWebhookUrl(input.url);
   const events = normalizeWebhookEvents(input.events);
   const now = new Date().toISOString();
@@ -1890,8 +1900,7 @@ async function createWebhook(env, input, auth) {
 }
 
 async function disableWebhook(env, id, workspaceId, auth) {
-  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
   const existing = await getRequired(env, "SELECT * FROM webhook_endpoints WHERE id = ? AND workspace_id = ?", id, workspaceId);
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE webhook_endpoints SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
@@ -1936,7 +1945,7 @@ async function deliverWebhook(env, endpoint, event, resourceId, payload) {
 
 async function createWorkspaceToken(env, input, auth) {
   const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", input.workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, input.workspaceId, ["owner", "admin"]);
   const token = `uocrm_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
@@ -1949,8 +1958,7 @@ async function createWorkspaceToken(env, input, auth) {
 }
 
 async function revokeWorkspaceToken(env, id, workspaceId, auth) {
-  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
   const existing = await getRequired(env, "SELECT * FROM workspace_api_tokens WHERE id = ? AND workspace_id = ?", id, workspaceId);
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE workspace_api_tokens SET revoked_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
@@ -1961,8 +1969,7 @@ async function revokeWorkspaceToken(env, id, workspaceId, auth) {
 }
 
 async function listAuditLogs(env, workspaceId, auth) {
-  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
-  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
   const rows = await env.DB.prepare(`
     SELECT al.*, u.name AS user_name, u.email AS user_email
     FROM audit_logs al
@@ -1977,8 +1984,7 @@ async function listAuditLogs(env, workspaceId, auth) {
 async function resolveWorkspaceId(env, request, auth) {
   const requested = cleanNullable(request.headers.get("x-workspace-id"));
   if (requested) {
-    const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", requested);
-    await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin", "member"]);
+    await requireWorkspaceRole(env, auth.user.id, requested, ["owner", "admin", "member"]);
     return requested;
   }
   return auth.workspaceId || resolveDefaultWorkspaceId(env, auth);
@@ -1989,10 +1995,12 @@ async function resolveDefaultWorkspaceId(env, auth) {
     SELECT w.id
     FROM workspaces w
     JOIN team_members tm ON tm.team_id = w.team_id
+    LEFT JOIN workspace_members wm ON wm.workspace_id = w.id AND wm.user_id = ?
     WHERE tm.user_id = ?
+      AND (tm.role IN ('owner', 'admin') OR wm.user_id IS NOT NULL)
     ORDER BY w.created_at ASC
     LIMIT 1
-  `).bind(auth.user.id).first();
+  `).bind(auth.user.id, auth.user.id).first();
   if (workspace?.id) return workspace.id;
   const teamId = await resolveDefaultTeamId(env, auth);
   const created = await createWorkspace(env, { teamId, name: "Sales" }, auth);
@@ -2680,6 +2688,20 @@ async function requireTeamRole(env, userId, teamId, roles) {
     .first();
   if (!membership || !roles.includes(membership.role)) throw httpError(403, "Forbidden");
   return membership;
+}
+
+async function requireWorkspaceRole(env, userId, workspaceId, roles) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  const teamMembership = await env.DB.prepare("SELECT role FROM team_members WHERE user_id = ? AND team_id = ?")
+    .bind(userId, workspace.team_id)
+    .first();
+  if (teamMembership && ["owner", "admin"].includes(teamMembership.role)) return { role: teamMembership.role, source: "team" };
+
+  const workspaceMembership = await env.DB.prepare("SELECT role FROM workspace_members WHERE user_id = ? AND workspace_id = ?")
+    .bind(userId, workspaceId)
+    .first();
+  if (!workspaceMembership || !roles.includes(workspaceMembership.role)) throw httpError(403, "Forbidden");
+  return { role: workspaceMembership.role, source: "workspace" };
 }
 
 async function sha256Hex(value) {
