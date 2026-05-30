@@ -490,6 +490,29 @@ curl -X POST http://localhost:8787/api/import/accounts.csv \
 
 Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, `contact_phone`, and `contact_title`. The Accounts UI also includes a column mapping panel for imports from tools that use different headers.
 
+### Import from HubSpot
+
+Workspace admins can create a native HubSpot import source with a private app token, then run it on demand:
+
+```sh
+curl -X POST http://localhost:8787/api/native-import-sources \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "HubSpot CRM",
+    "provider": "hubspot",
+    "accessToken": "pat-...",
+    "limit": 100
+  }'
+
+curl -X POST http://localhost:8787/api/native-import-sources/source-id/run \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+The HubSpot importer reads recent companies and contacts through the CRM search APIs, matches accounts by domain/name, matches contacts by email, creates missing records, masks stored tokens in API responses, and records the last run result in Settings.
+
 For scripted imports with custom column names, send JSON:
 
 ```sh
@@ -518,6 +541,7 @@ Supported commands:
 - `send_email`
 - `send_message`
 - `start_call`
+- `run_native_import`
 - `create_dialer_session`
 - `complete_dialer_call`
 - `generate_ai_insight`

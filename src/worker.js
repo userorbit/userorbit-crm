@@ -32,6 +32,7 @@ const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
+const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
@@ -165,6 +166,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listEnrichmentProviders(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "native-import-sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listNativeImportSources(env, workspaceId));
+  }
+
   if (request.method === "GET" && path === "message-channels") {
     const access = await requireWorkspaceRole(env, auth.user.id, workspaceId, WORKSPACE_WRITE_ROLES);
     return json(await listMessageChannels(env, workspaceId, ["owner", "admin"].includes(access.role)));
@@ -242,6 +248,21 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "POST" && path === "enrichment-providers") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createEnrichmentProvider(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path === "native-import-sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createNativeImportSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path.startsWith("native-import-sources/") && path.endsWith("/run")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await runNativeImportSource(env, path.split("/")[1], workspaceId, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("native-import-sources/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableNativeImportSource(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "DELETE" && path.startsWith("enrichment-providers/")) {
@@ -1010,6 +1031,152 @@ async function createImportContactIfMissing(env, workspaceId, accountId, input) 
   if (existing) return { action: existing.account_id === accountId ? "existing" : "email_conflict", id: existing.id };
   const created = await createContact(env, { workspaceId, accountId, name: input.name, email, title: input.title, phone: input.phone });
   return { action: "created", id: created.id };
+}
+
+async function listNativeImportSources(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT nis.*, u.name AS created_by_name
+    FROM workspace_native_import_sources nis
+    LEFT JOIN users u ON u.id = nis.created_by_user_id
+    WHERE nis.workspace_id = ?
+    ORDER BY nis.status ASC, nis.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results.map(nativeImportSourceResponse);
+}
+
+async function createNativeImportSource(env, input, auth) {
+  requireFields(input, ["name", "provider", "accessToken"]);
+  const provider = normalizeEnum(input.provider, NATIVE_IMPORT_PROVIDERS, "provider");
+  const config = normalizeNativeImportConfig(provider, input);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO workspace_native_import_sources (
+      id, workspace_id, created_by_user_id, provider, name, config_json,
+      status, last_run_at, last_result_json, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, provider, input.name.trim(), JSON.stringify(config), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "native_import_source.create", resource: "workspace_native_import_source", resourceId: id, metadata: { provider, name: input.name } });
+  return nativeImportSourceResponse(await getRequired(env, "SELECT * FROM workspace_native_import_sources WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+}
+
+async function disableNativeImportSource(env, id, workspaceId, auth) {
+  const source = await getRequired(env, "SELECT * FROM workspace_native_import_sources WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_native_import_sources SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "native_import_source.disable", resource: "workspace_native_import_source", resourceId: id, metadata: { provider: source.provider, name: source.name } });
+  return { ok: true };
+}
+
+async function runNativeImportSource(env, id, workspaceId, auth) {
+  const source = await getRequired(env, "SELECT * FROM workspace_native_import_sources WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  try {
+    const result = source.provider === "hubspot"
+      ? await runHubSpotImport(env, source, workspaceId, auth)
+      : (() => { throw httpError(400, "Unsupported native import provider"); })();
+    await env.DB.prepare("UPDATE workspace_native_import_sources SET last_run_at = ?, last_result_json = ?, last_error = NULL, updated_at = ? WHERE id = ?")
+      .bind(now, JSON.stringify(result), now, source.id)
+      .run();
+    await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "native_import_source.run", resource: "workspace_native_import_source", resourceId: source.id, metadata: { provider: source.provider, ...result.summary } });
+    return { source: nativeImportSourceResponse(await getRequired(env, "SELECT * FROM workspace_native_import_sources WHERE id = ? AND workspace_id = ?", source.id, workspaceId)), ...result };
+  } catch (error) {
+    await env.DB.prepare("UPDATE workspace_native_import_sources SET last_run_at = ?, last_error = ?, updated_at = ? WHERE id = ?")
+      .bind(now, error.message || String(error), now, source.id)
+      .run();
+    throw error;
+  }
+}
+
+async function runHubSpotImport(env, source, workspaceId, auth) {
+  const config = parseJsonObject(source.config_json);
+  const [companies, contacts] = await Promise.all([
+    fetchHubSpotObjects(config, "companies", ["name", "domain", "website", "industry", "description"], config.limit),
+    fetchHubSpotObjects(config, "contacts", ["firstname", "lastname", "email", "phone", "mobilephone", "jobtitle", "company"], config.limit),
+  ]);
+  const accountByName = new Map();
+  const summary = { companies: companies.length, contacts: contacts.length, accountsCreated: 0, accountsMatched: 0, contactsCreated: 0, contactsExisting: 0, contactsConflicted: 0, contactsSkipped: 0 };
+  const results = [];
+  for (const company of companies) {
+    const props = company.properties || {};
+    const name = cleanNullable(props.name) || cleanNullable(props.domain) || cleanNullable(props.website);
+    if (!name) continue;
+    const domain = cleanDomain(props.domain || props.website);
+    const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
+    const account = existing || await createAccount(env, {
+      workspaceId,
+      auth,
+      auditUserId: auth.user.id,
+      name,
+      domain,
+      source: `${source.name}: HubSpot`,
+      observation: [cleanNullable(props.description), cleanNullable(props.industry) ? `Industry: ${props.industry}` : ""].filter(Boolean).join("\n"),
+    });
+    if (existing) summary.accountsMatched += 1;
+    else summary.accountsCreated += 1;
+    accountByName.set(name.toLowerCase(), account.id);
+    if (domain) accountByName.set(domain.toLowerCase(), account.id);
+    results.push({ type: "company", action: existing ? "matched" : "created", accountId: account.id, hubspotId: company.id, name });
+  }
+  for (const contact of contacts) {
+    const props = contact.properties || {};
+    const email = cleanEmail(props.email);
+    const name = [cleanNullable(props.firstname), cleanNullable(props.lastname)].filter(Boolean).join(" ") || email;
+    if (!email || !name) {
+      summary.contactsSkipped += 1;
+      continue;
+    }
+    const companyName = cleanNullable(props.company);
+    const domain = email.split("@")[1] || "";
+    let accountId = companyName ? accountByName.get(companyName.toLowerCase()) : null;
+    if (!accountId && domain) accountId = accountByName.get(domain.toLowerCase());
+    if (!accountId) {
+      const accountName = companyName || domain || `${name} account`;
+      const existing = await findImportAccountMatch(env, workspaceId, { name: accountName, domain });
+      const account = existing || await createAccount(env, { workspaceId, auth, auditUserId: auth.user.id, name: accountName, domain, source: `${source.name}: HubSpot contact` });
+      accountId = account.id;
+      if (existing) summary.accountsMatched += 1;
+      else summary.accountsCreated += 1;
+      accountByName.set(accountName.toLowerCase(), account.id);
+      if (domain) accountByName.set(domain.toLowerCase(), account.id);
+    }
+    const created = await createImportContactIfMissing(env, workspaceId, accountId, {
+      name,
+      email,
+      title: cleanNullable(props.jobtitle),
+      phone: cleanNullable(props.phone || props.mobilephone),
+    });
+    if (created.action === "created") summary.contactsCreated += 1;
+    else if (created.action === "existing") summary.contactsExisting += 1;
+    else summary.contactsConflicted += 1;
+    results.push({ type: "contact", action: created.action, contactId: created.id, accountId, hubspotId: contact.id, email });
+  }
+  return { summary, results };
+}
+
+async function fetchHubSpotObjects(config, objectType, properties, limit = 50) {
+  const baseUrl = (config.apiBaseUrl || "https://api.hubapi.com").replace(/\/+$/, "");
+  const url = `${baseUrl}/crm/v3/objects/${objectType}/search`;
+  const pageLimit = Math.min(250, Math.max(1, Number(limit || 50)));
+  const items = [];
+  let after = null;
+  do {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.accessToken}`,
+        "content-type": "application/json",
+        "user-agent": "UserOrbit-CRM-HubSpot-Import",
+      },
+      body: JSON.stringify({ limit: Math.min(pageLimit - items.length, 100), after, properties, sorts: [{ propertyName: "hs_lastmodifieddate", direction: "DESCENDING" }] }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw httpError(400, `HubSpot ${objectType} import failed: ${payload.message || payload.error || response.status}`);
+    items.push(...(payload.results || []));
+    after = payload.paging?.next?.after || null;
+  } while (after && items.length < pageLimit);
+  return items.slice(0, pageLimit);
 }
 
 function parseCsv(input) {
@@ -4103,6 +4270,9 @@ async function runAgentCommand(env, input, auth) {
   if (input.command === "start_call") {
     return { result: await startProviderCall(env, { ...(input.payload || {}), workspaceId: input.workspaceId, baseUrl: cleanNullable(input.baseUrl || input.payload?.baseUrl || env.CRM_PUBLIC_URL) || "" }, auth) };
   }
+  if (input.command === "run_native_import") {
+    return { result: await runNativeImportSource(env, cleanNullable(input.sourceId || input.payload?.sourceId || input.payload?.id), input.workspaceId, auth) };
+  }
   if (input.command === "create_dialer_session") {
     return { result: await createDialerSession(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
@@ -6157,6 +6327,38 @@ function maskEnrichmentProviderConfig(config) {
 
 function maskIntegrationConfig(type, config) {
   if (INTEGRATION_TYPES.has(type)) return { webhookUrl: config.webhookUrl ? "configured" : "" };
+  return {};
+}
+
+function normalizeNativeImportConfig(provider, input) {
+  if (provider !== "hubspot") throw httpError(400, "Unsupported native import provider");
+  const accessToken = cleanNullable(input.accessToken || input.access_token);
+  if (!accessToken) throw httpError(400, "HubSpot accessToken is required");
+  const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url);
+  if (apiBaseUrl) normalizeWebhookUrl(apiBaseUrl);
+  return {
+    accessToken,
+    apiBaseUrl,
+    limit: clampInteger(input.limit || 50, 1, 250, "limit"),
+  };
+}
+
+function nativeImportSourceResponse(source) {
+  return {
+    ...source,
+    config: maskNativeImportConfig(source.provider, parseJsonObject(source.config_json)),
+    lastResult: parseJsonObject(source.last_result_json),
+  };
+}
+
+function maskNativeImportConfig(provider, config) {
+  if (provider === "hubspot") {
+    return {
+      accessToken: config.accessToken ? "configured" : "",
+      apiBaseUrl: config.apiBaseUrl || "",
+      limit: config.limit || 50,
+    };
+  }
   return {};
 }
 

@@ -391,6 +391,30 @@ Content-Type: application/json
 
 CSV import matches existing accounts by normalized domain first, then exact account name. The response includes `imported`, `matched`, `failed`, and per-row `action` values.
 
+Create and run a native HubSpot import source:
+
+```http
+POST /api/native-import-sources
+
+{
+  "name": "HubSpot CRM",
+  "provider": "hubspot",
+  "accessToken": "pat-...",
+  "limit": 100
+}
+```
+
+```http
+POST /api/agent/command
+
+{
+  "command": "run_native_import",
+  "sourceId": "native_import_source_id"
+}
+```
+
+HubSpot imports use CRM search endpoints for companies and contacts, match accounts by domain/name, match contacts by email, and create missing records. Treat imported records as third-party data until reviewed.
+
 Review possible duplicate accounts:
 
 ```http
@@ -771,6 +795,7 @@ When SMTP is not configured, the CRM records emails as `drafted` instead of send
 
 - Do not invent account research. Store the source and observation used to justify outreach.
 - Treat enrichment provider output as unverified third-party data unless the user has approved the provider.
+- Treat HubSpot/native import output as external CRM data and review duplicates after each import.
 - Do not send or enroll contacts with `status: "unsubscribed"`.
 - Do not keep contacts in automated sequences after they reply; use `POST /api/contacts/<contact_id>/reply`.
 - Prefer small, personalized batches over bulk imports.

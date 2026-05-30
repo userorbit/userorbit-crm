@@ -610,6 +610,7 @@ export const appHtml = String.raw`<!doctype html>
         emailInboundSources: [],
         integrations: { integrations: [], deliveries: [] },
         enrichmentProviders: [],
+        nativeImportSources: [],
         workspaceTokens: [],
         teamInvitations: [],
         webhooks: { endpoints: [], deliveries: [] },
@@ -705,7 +706,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -728,12 +729,13 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
           canManage ? api("enrichment-providers") : Promise.resolve([]),
+          canManage ? api("native-import-sources") : Promise.resolve([]),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1624,6 +1626,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Message channels</div></div>' + messageChannelsTable(state.messageChannels) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Enrichment providers</div></div>' + enrichmentProvidersTable(state.enrichmentProviders) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Native imports</div></div>' + nativeImportSourcesTable(state.nativeImportSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
               </div>
@@ -1671,6 +1674,14 @@ Content-Type: application/json
                   <label>Auth header<input name="authHeader" placeholder="Authorization or x-api-key" /></label>
                   <label>Auth token<input name="authToken" type="password" placeholder="Bearer token or API key" /></label>
                   <button class="button primary">Create enrichment provider</button>
+                </form>
+                <form id="nativeImportSourceForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="HubSpot CRM" /></label>
+                  <label>Provider<select name="provider"><option value="hubspot">HubSpot</option></select></label>
+                  <label>Access token<input name="accessToken" type="password" required placeholder="Private app token" /></label>
+                  <label>Import limit<input name="limit" type="number" min="1" max="250" value="50" /></label>
+                  <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
+                  <button class="button primary">Create native import</button>
                 </form>
                 <form id="messageChannelForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Outbound SMS or calls" /></label>
@@ -1802,6 +1813,31 @@ Content-Type: application/json
               <td>\${provider.status === "active" ? '<button class="button" data-disable-enrichment-provider-id="' + escapeHtml(provider.id) + '">Disable</button>' : ""}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function nativeImportSourcesTable(sources = []) {
+        if (!sources.length) return '<div class="empty">No native import sources yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Provider</th><th>Last run</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${sources.map((source) => \`
+            <tr>
+              <td>\${escapeHtml(source.name)}<div class="subtitle">\${escapeHtml(source.last_error || importSummary(source.lastResult))}</div></td>
+              <td>\${escapeHtml(source.provider)}<div class="subtitle">\${escapeHtml(source.config?.apiBaseUrl || "default API")}</div></td>
+              <td>\${escapeHtml(source.last_run_at ? formatDateTime(source.last_run_at) : "Never")}</td>
+              <td><span class="pill">\${escapeHtml(source.status)}</span></td>
+              <td>\${source.status === "active" ? '<button class="button" data-run-native-import-source-id="' + escapeHtml(source.id) + '">Run</button> <button class="button" data-disable-native-import-source-id="' + escapeHtml(source.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function importSummary(result) {
+        const summary = result?.summary || {};
+        const parts = [
+          summary.accountsCreated ? summary.accountsCreated + " accounts created" : "",
+          summary.accountsMatched ? summary.accountsMatched + " accounts matched" : "",
+          summary.contactsCreated ? summary.contactsCreated + " contacts created" : "",
+        ].filter(Boolean);
+        return parts.join(", ");
       }
 
       function emailSendersTable(senders = []) {
@@ -2426,6 +2462,23 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#nativeImportSourceForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("native-import-sources", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              provider: form.get("provider"),
+              accessToken: form.get("accessToken"),
+              limit: Number(form.get("limit") || 50),
+              apiBaseUrl: form.get("apiBaseUrl") || undefined,
+            }),
+          });
+          notice("Native import source created.");
+          await refresh();
+        });
+
         $("#messageChannelForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2455,6 +2508,18 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-enrichment-provider-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("enrichment-providers/" + encodeURIComponent(node.dataset.disableEnrichmentProviderId), { method: "DELETE" });
           notice("Enrichment provider disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-run-native-import-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          const result = await api("native-import-sources/" + encodeURIComponent(node.dataset.runNativeImportSourceId) + "/run", { method: "POST", body: "{}" });
+          notice("Imported " + (result.summary?.accountsCreated || 0) + " account(s) and " + (result.summary?.contactsCreated || 0) + " contact(s).");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-native-import-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("native-import-sources/" + encodeURIComponent(node.dataset.disableNativeImportSourceId), { method: "DELETE" });
+          notice("Native import source disabled.");
           await refresh();
         }));
 
