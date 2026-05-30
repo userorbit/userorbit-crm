@@ -164,7 +164,9 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "import/accounts.csv") {
-    return json(await importAccountsCsv(env, workspaceId, await request.text()), 201);
+    const contentType = request.headers.get("content-type") || "";
+    const input = contentType.includes("application/json") ? await readJson(request) : await request.text();
+    return json(await importAccountsCsv(env, workspaceId, input), 201);
   }
 
   if (request.method === "GET" && path === "accounts") {
@@ -484,32 +486,39 @@ function groupDuplicateAccounts(rows) {
     .slice(0, 25);
 }
 
-async function importAccountsCsv(env, workspaceId, body) {
+async function importAccountsCsv(env, workspaceId, input) {
+  const body = typeof input === "string" ? input : input.csv;
+  const mapping = normalizeImportMapping(typeof input === "string" ? {} : input.mapping || {});
   const rows = parseCsv(body);
   if (!rows.length) throw httpError(400, "CSV must include a header row and at least one account row");
   const results = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     try {
-      const name = cleanNullable(row.name || row.account || row.account_name);
+      const customFields = mappedCustomFields(row, mapping);
+      const name = readMapped(row, mapping, "name", ["name", "account", "account_name", "company", "company_name"]);
       if (!name) throw new Error("Missing account name");
-      const contactName = cleanNullable(row.contact_name || row.contact || row.name_contact);
-      const contactEmail = cleanEmail(row.contact_email || row.email);
-      const existing = await findImportAccountMatch(env, workspaceId, { name, domain: row.domain });
+      const domain = readMapped(row, mapping, "domain", ["domain", "website", "url", "account_domain", "company_domain"]);
+      const contactName = readMapped(row, mapping, "contactName", ["contact_name", "contact", "name_contact", "person", "lead_name"]);
+      const contactEmail = cleanEmail(readMapped(row, mapping, "contactEmail", ["contact_email", "email", "person_email", "lead_email"]));
+      const contactTitle = readMapped(row, mapping, "contactTitle", ["contact_title", "title", "job_title", "role"]);
+      const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
       if (existing) {
-        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, existing.id, { name: contactName, email: contactEmail, title: row.contact_title || row.title }) : null;
+        if (Object.keys(customFields).length) await upsertCustomFieldValues(env, workspaceId, "account", existing.id, customFields);
+        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, existing.id, { name: contactName, email: contactEmail, title: contactTitle }) : null;
         results.push({ row: index + 2, ok: true, action: "matched", accountId: existing.id, name: existing.name, contact: contact ? contact.action : "none" });
       } else {
         const account = await createAccount(env, {
           workspaceId,
           name,
-          domain: row.domain,
-          segment: row.segment,
-          status: row.status,
-          source: row.source || "CSV import",
-          owner: row.owner,
-          observation: row.observation || row.notes,
-          contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: row.contact_title || row.title }] : [],
+          domain,
+          segment: readMapped(row, mapping, "segment", ["segment"]),
+          status: readMapped(row, mapping, "status", ["status"]),
+          source: readMapped(row, mapping, "source", ["source"]) || "CSV import",
+          owner: readMapped(row, mapping, "owner", ["owner"]),
+          observation: readMapped(row, mapping, "observation", ["observation", "notes", "description"]),
+          customFields,
+          contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: contactTitle }] : [],
         });
         results.push({ row: index + 2, ok: true, action: "created", accountId: account.id, name: account.name });
       }
@@ -523,6 +532,49 @@ async function importAccountsCsv(env, workspaceId, body) {
     failed: results.filter((result) => !result.ok).length,
     results,
   };
+}
+
+function normalizeImportMapping(mapping) {
+  const normalized = {};
+  const customFields = {};
+  for (const [key, value] of Object.entries(mapping || {})) {
+    if (key === "customFields" && value && typeof value === "object" && !Array.isArray(value)) {
+      for (const [fieldKey, header] of Object.entries(value)) {
+        const cleanHeader = normalizeImportHeader(header);
+        if (cleanHeader) customFields[slugify(fieldKey).replaceAll("-", "_")] = cleanHeader;
+      }
+    } else {
+      const cleanHeader = normalizeImportHeader(value);
+      if (cleanHeader) normalized[key] = cleanHeader;
+    }
+  }
+  return { ...normalized, customFields };
+}
+
+function normalizeImportHeader(value) {
+  const cleaned = cleanNullable(value);
+  return cleaned ? slugify(cleaned).replaceAll("-", "_") : "";
+}
+
+function readMapped(row, mapping, field, aliases) {
+  const mapped = mapping[field];
+  if (mapped && row[mapped] !== undefined) return cleanNullable(row[mapped]) || "";
+  for (const alias of aliases) {
+    if (row[alias] !== undefined) return cleanNullable(row[alias]) || "";
+  }
+  return "";
+}
+
+function mappedCustomFields(row, mapping) {
+  const values = {};
+  for (const [fieldKey, header] of Object.entries(mapping.customFields || {})) {
+    const value = cleanNullable(row[header]);
+    if (value) values[fieldKey] = value;
+  }
+  for (const [header, value] of Object.entries(row)) {
+    if (header.startsWith("cf_") && cleanNullable(value)) values[header.slice(3)] = value;
+  }
+  return values;
 }
 
 async function findImportAccountMatch(env, workspaceId, input) {

@@ -190,7 +190,24 @@ curl -X POST http://localhost:8787/api/import/accounts.csv \
   --data-binary @accounts.csv
 ```
 
-Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, and `contact_title`.
+Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, and `contact_title`. The Accounts UI also includes a column mapping panel for imports from tools that use different headers.
+
+For scripted imports with custom column names, send JSON:
+
+```sh
+curl -X POST http://localhost:8787/api/import/accounts.csv \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "csv": "Company,Website,Full Name,Email Address\nAcme,acme.com,Jane Doe,jane@acme.com",
+    "mapping": {
+      "name": "Company",
+      "domain": "Website",
+      "contactName": "Full Name",
+      "contactEmail": "Email Address"
+    }
+  }'
+```
 
 ## Agent skill contract
 

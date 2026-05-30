@@ -804,6 +804,22 @@ export const appHtml = String.raw`<!doctype html>
               </form>
               <form id="importAccountsForm" class="stack" style="border-top:1px solid var(--border)">
                 <label>Import CSV<textarea name="csv" placeholder="name,domain,segment,status,contact_name,contact_email&#10;Acme,acme.com,product,target,Jane Doe,jane@acme.com"></textarea></label>
+                <details>
+                  <summary>Map columns</summary>
+                  <div class="form-grid" style="margin-top:10px">
+                    <label>Account name<input name="map_name" placeholder="Company Name" /></label>
+                    <label>Domain<input name="map_domain" placeholder="Website" /></label>
+                    <label>Segment<input name="map_segment" placeholder="Segment" /></label>
+                    <label>Status<input name="map_status" placeholder="Status" /></label>
+                    <label>Source<input name="map_source" placeholder="Source" /></label>
+                    <label>Owner<input name="map_owner" placeholder="Owner" /></label>
+                    <label>Observation<input name="map_observation" placeholder="Notes" /></label>
+                    <label>Contact name<input name="map_contactName" placeholder="Full Name" /></label>
+                    <label>Contact email<input name="map_contactEmail" placeholder="Email Address" /></label>
+                    <label>Contact title<input name="map_contactTitle" placeholder="Job Title" /></label>
+                    \${importCustomFieldMappingInputs()}
+                  </div>
+                </details>
                 <button class="button">Import accounts</button>
               </form>
             </div>
@@ -1408,8 +1424,13 @@ Content-Type: application/json
 
         $("#importAccountsForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
-          const csv = new FormData(event.currentTarget).get("csv");
-          const result = await api("import/accounts.csv", { method: "POST", headers: { "content-type": "text/csv" }, body: csv });
+          const form = new FormData(event.currentTarget);
+          const csv = form.get("csv");
+          const mapping = importMappingFromForm(form);
+          const hasMapping = Object.keys(mapping).some((key) => key !== "customFields") || Object.keys(mapping.customFields || {}).length;
+          const result = hasMapping
+            ? await api("import/accounts.csv", { method: "POST", body: JSON.stringify({ csv, mapping }) })
+            : await api("import/accounts.csv", { method: "POST", headers: { "content-type": "text/csv" }, body: csv });
           notice("Imported " + result.imported + " account(s), matched " + (result.matched || 0) + ", " + result.failed + " failed.");
           await refresh();
         });
@@ -1689,6 +1710,24 @@ Content-Type: application/json
           }
           return '<label>' + escapeHtml(field.name) + '<input ' + name + ' value="' + escapeHtml(value) + '" placeholder="Any" /></label>';
         }).join("");
+      }
+
+      function importCustomFieldMappingInputs() {
+        if (!state.customFields.length) return "";
+        return state.customFields.map((field) => '<label>' + escapeHtml(field.name) + ' column<input name="map_cf_' + escapeHtml(field.key) + '" placeholder="' + escapeHtml(field.name) + '" /></label>').join("");
+      }
+
+      function importMappingFromForm(form) {
+        const mapping = { customFields: {} };
+        ["name", "domain", "segment", "status", "source", "owner", "observation", "contactName", "contactEmail", "contactTitle"].forEach((field) => {
+          const value = String(form.get("map_" + field) || "").trim();
+          if (value) mapping[field] = value;
+        });
+        for (const field of state.customFields) {
+          const value = String(form.get("map_cf_" + field.key) || "").trim();
+          if (value) mapping.customFields[field.key] = value;
+        }
+        return mapping;
       }
 
       function customFieldReportPanels(breakdowns) {
