@@ -466,6 +466,9 @@ export const appHtml = String.raw`<!doctype html>
         workspaceId: localStorage.getItem("crmWorkspaceId") || "",
         summary: null,
         accounts: [],
+        accountFilters: { q: "", segment: "", status: "" },
+        savedViews: [],
+        selectedSavedViewId: localStorage.getItem("crmSavedViewId") || "",
         selectedAccountId: localStorage.getItem("crmSelectedAccountId") || "",
         selectedAccount: null,
         reports: null,
@@ -501,15 +504,17 @@ export const appHtml = String.raw`<!doctype html>
           state.workspaceId = tenant.currentWorkspaceId || tenant.workspaces[0]?.id || "";
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
-        const [summary, accounts, reports, sequences, warmup, tasks] = await Promise.all([
+        const accountQuery = accountListQuery();
+        const [summary, accounts, savedViews, reports, sequences, warmup, tasks] = await Promise.all([
           api("summary"),
-          api("accounts"),
+          api("accounts" + accountQuery),
+          api("saved-views?resource=accounts"),
           api("reports"),
           api("sequences"),
           api("warmup"),
           api("tasks"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, reports, sequences, warmup, tasks });
+        Object.assign(state, { tenant, summary, accounts, savedViews, reports, sequences, warmup, tasks });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -550,6 +555,19 @@ export const appHtml = String.raw`<!doctype html>
         return '<div class="topbar"><div><h1>' + title + '</h1><div class="subtitle">' + subtitle + '</div></div>' + action + '</div>';
       }
 
+      function accountListQuery() {
+        const params = new URLSearchParams();
+        if (state.selectedSavedViewId) {
+          params.set("viewId", state.selectedSavedViewId);
+        } else {
+          if (state.accountFilters.q) params.set("q", state.accountFilters.q);
+          if (state.accountFilters.segment) params.set("segment", state.accountFilters.segment);
+          if (state.accountFilters.status) params.set("status", state.accountFilters.status);
+        }
+        const query = params.toString();
+        return query ? "?" + query : "";
+      }
+
       function renderDashboard() {
         const s = state.summary || {};
         return header("Founder-led outreach", "Manage targeted accounts, personalized sequences, and follow-up tasks.") + \`
@@ -582,7 +600,26 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header">
                 <div class="panel-title">Account list</div>
-                <div class="toolbar"><input id="search" placeholder="Search accounts" /></div>
+                <div class="toolbar">
+                  <select id="savedViewSelect">
+                    <option value="">Current filters</option>
+                    \${state.savedViews.map((view) => '<option value="' + view.id + '">' + escapeHtml(view.name) + '</option>').join("")}
+                  </select>
+                </div>
+              </div>
+              <div class="stack" style="border-bottom:1px solid var(--border)">
+                <div class="form-grid">
+                  <label>Search<input id="accountSearch" placeholder="Search accounts" value="\${escapeHtml(state.accountFilters.q)}" /></label>
+                  <label>Segment<select id="accountSegment"><option value="">All segments</option><option value="product">Product</option><option value="growth">Growth</option><option value="success">Success</option></select></label>
+                  <label>Status<select id="accountStatus"><option value="">All statuses</option><option value="target">Target</option><option value="researching">Researching</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="qualified">Qualified</option><option value="disqualified">Disqualified</option></select></label>
+                  <label>View name<input id="savedViewName" placeholder="Product targets" /></label>
+                </div>
+                <div class="toolbar">
+                  <button id="applyAccountFilters" class="button primary">Apply filters</button>
+                  <button id="clearAccountFilters" class="button">Clear</button>
+                  <button id="saveAccountView" class="button">Save view</button>
+                  \${state.selectedSavedViewId ? '<button id="deleteAccountView" class="button">Delete view</button>' : ""}
+                </div>
               </div>
               \${accountsTable(state.accounts)}
             </div>
@@ -919,6 +956,10 @@ Content-Type: application/json
       }
 
       function bind() {
+        if ($("#savedViewSelect")) $("#savedViewSelect").value = state.selectedSavedViewId;
+        if ($("#accountSegment")) $("#accountSegment").value = state.accountFilters.segment;
+        if ($("#accountStatus")) $("#accountStatus").value = state.accountFilters.status;
+
         document.querySelectorAll("[data-view-target]").forEach((node) => node.addEventListener("click", () => {
           state.view = node.dataset.viewTarget;
           render();
@@ -947,6 +988,57 @@ Content-Type: application/json
           };
           await api("accounts", { method: "POST", body: JSON.stringify(payload) });
           notice("Account created.");
+          await refresh();
+        });
+
+        $("#savedViewSelect")?.addEventListener("change", async (event) => {
+          state.selectedSavedViewId = event.currentTarget.value;
+          localStorage.setItem("crmSavedViewId", state.selectedSavedViewId);
+          const view = state.savedViews.find((item) => item.id === state.selectedSavedViewId);
+          if (view?.filters) state.accountFilters = { q: view.filters.q || "", segment: view.filters.segment || "", status: view.filters.status || "" };
+          await refresh();
+        });
+
+        $("#applyAccountFilters")?.addEventListener("click", async () => {
+          state.selectedSavedViewId = "";
+          localStorage.removeItem("crmSavedViewId");
+          state.accountFilters = {
+            q: $("#accountSearch").value.trim(),
+            segment: $("#accountSegment").value,
+            status: $("#accountStatus").value,
+          };
+          await refresh();
+        });
+
+        $("#clearAccountFilters")?.addEventListener("click", async () => {
+          state.selectedSavedViewId = "";
+          localStorage.removeItem("crmSavedViewId");
+          state.accountFilters = { q: "", segment: "", status: "" };
+          await refresh();
+        });
+
+        $("#saveAccountView")?.addEventListener("click", async () => {
+          const name = $("#savedViewName").value.trim();
+          if (!name) return notice("Name the view first.");
+          const filters = {
+            q: $("#accountSearch").value.trim(),
+            segment: $("#accountSegment").value,
+            status: $("#accountStatus").value,
+          };
+          const view = await api("saved-views", { method: "POST", body: JSON.stringify({ name, resource: "accounts", filters }) });
+          state.selectedSavedViewId = view.id;
+          localStorage.setItem("crmSavedViewId", view.id);
+          state.accountFilters = filters;
+          notice("Saved view created.");
+          await refresh();
+        });
+
+        $("#deleteAccountView")?.addEventListener("click", async () => {
+          if (!state.selectedSavedViewId) return;
+          await api("saved-views/" + encodeURIComponent(state.selectedSavedViewId), { method: "DELETE" });
+          state.selectedSavedViewId = "";
+          localStorage.removeItem("crmSavedViewId");
+          notice("Saved view deleted.");
           await refresh();
         });
 

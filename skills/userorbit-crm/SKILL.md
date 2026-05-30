@@ -137,6 +137,24 @@ Export accounts for backup or spreadsheet analysis:
 GET /api/export/accounts.csv
 ```
 
+Create a saved account view for repeat work:
+
+```http
+POST /api/saved-views
+
+{
+  "name": "Product targets",
+  "resource": "accounts",
+  "filters": {
+    "segment": "product",
+    "status": "target",
+    "q": ""
+  }
+}
+```
+
+Use saved views by passing `viewId` to `GET /api/accounts?viewId=<saved_view_id>`.
+
 Send one manual email:
 
 ```http

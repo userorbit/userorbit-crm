@@ -81,12 +81,24 @@ async function routeApi(request, env, url, auth) {
     return json(await getReports(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "saved-views") {
+    return json(await listSavedViews(env, workspaceId, auth, url));
+  }
+
+  if (request.method === "POST" && path === "saved-views") {
+    return json(await createSavedView(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("saved-views/")) {
+    return json(await deleteSavedView(env, path.split("/")[1], workspaceId, auth));
+  }
+
   if (request.method === "GET" && path === "export/accounts.csv") {
     return csv(await exportAccountsCsv(env, workspaceId), "userorbit-accounts.csv");
   }
 
   if (request.method === "GET" && path === "accounts") {
-    return json(await listAccounts(env, url, workspaceId));
+    return json(await listAccounts(env, url, workspaceId, auth));
   }
 
   if (request.method === "GET" && path.startsWith("accounts/")) {
@@ -310,10 +322,42 @@ async function exportAccountsCsv(env, workspaceId) {
   ]);
 }
 
-async function listAccounts(env, url, workspaceId) {
-  const search = `%${url.searchParams.get("q") || ""}%`;
-  const segment = url.searchParams.get("segment");
-  const status = url.searchParams.get("status");
+async function listSavedViews(env, workspaceId, auth, url) {
+  const resource = url.searchParams.get("resource") || "accounts";
+  const rows = await env.DB.prepare(`
+    SELECT * FROM saved_views
+    WHERE workspace_id = ? AND user_id = ? AND resource = ?
+    ORDER BY updated_at DESC
+  `).bind(workspaceId, auth.user.id, resource).all();
+  return rows.results.map((row) => ({ ...row, filters: parseJsonObject(row.filters_json) }));
+}
+
+async function createSavedView(env, input, auth) {
+  requireFields(input, ["name"]);
+  const resource = input.resource || "accounts";
+  if (resource !== "accounts") throw httpError(400, "Only account saved views are supported");
+  const filters = normalizeAccountFilters(input.filters || {});
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO saved_views (id, workspace_id, user_id, name, resource, filters_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), resource, JSON.stringify(filters), now, now).run();
+  return { ...(await getRequired(env, "SELECT * FROM saved_views WHERE id = ?", id)), filters };
+}
+
+async function deleteSavedView(env, id, workspaceId, auth) {
+  await env.DB.prepare("DELETE FROM saved_views WHERE id = ? AND workspace_id = ? AND user_id = ?")
+    .bind(id, workspaceId, auth.user.id)
+    .run();
+  return { ok: true };
+}
+
+async function listAccounts(env, url, workspaceId, auth) {
+  const filters = await resolveAccountFilters(env, url, workspaceId, auth);
+  const search = `%${filters.q || ""}%`;
+  const segment = filters.segment;
+  const status = filters.status;
   const params = [workspaceId, search, search, search];
   let where = "WHERE a.workspace_id = ? AND (a.name LIKE ? OR a.domain LIKE ? OR c.email LIKE ?)";
 
@@ -346,6 +390,36 @@ async function listAccounts(env, url, workspaceId) {
     .all();
 
   return rows.results;
+}
+
+async function resolveAccountFilters(env, url, workspaceId, auth) {
+  const savedViewId = cleanNullable(url.searchParams.get("viewId"));
+  if (savedViewId) {
+    const view = await getRequired(env, "SELECT * FROM saved_views WHERE id = ? AND workspace_id = ? AND user_id = ? AND resource = 'accounts'", savedViewId, workspaceId, auth.user.id);
+    return normalizeAccountFilters(parseJsonObject(view.filters_json));
+  }
+  return normalizeAccountFilters({
+    q: url.searchParams.get("q"),
+    segment: url.searchParams.get("segment"),
+    status: url.searchParams.get("status"),
+  });
+}
+
+function normalizeAccountFilters(input = {}) {
+  return {
+    q: cleanNullable(input.q) || "",
+    segment: SEGMENTS.has(input.segment) ? input.segment : "",
+    status: ACCOUNT_STATUSES.has(input.status) ? input.status : "",
+  };
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 async function createAccount(env, input) {
