@@ -33,6 +33,10 @@
 - [x] Add explicit workspace memberships and workspace-scoped invite access.
 - [ ] Add OAuth login, finer-grained permissions, and broader audit coverage.
 - [ ] Build the next Close-style CRM gaps: advanced import mapping UI, provider-native inbound email sync, native integrations, and communication channels.
+- [x] Restyle the app and lab to match Campsite's design system.
+  - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
+  - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.
+  - [x] Verify locally in browser and record results.
 
 ## Review
 
@@ -71,3 +75,5 @@ Added workspace webhooks: admins can create/disable webhook endpoints from Setti
 Added unsubscribe handling: contacts can be unsubscribed from contact detail or API, active sequence enrollments stop, future manual sends/enrollments are blocked, and unsubscribe events are audited and webhooked.
 
 Added reply handling: contacts can be marked replied from contact detail or API, active sequence enrollments pause with `replied` status, and reply events are audited and webhooked.
+
+Restyled the app/lab against Campsite's current open-source design system: neutral gray tokens, 240px workspace sidebar, compact titlebar, dense panels, small rounded buttons, subtle Campsite-style shadows, table/pill/input treatments, and orange brand accent. Verified `src/ui.js` parsing, loaded `/`, unauthenticated `/app`, authenticated dashboard, and Settings on 390px mobile at `http://localhost:8788`, and fixed mobile tables so wide settings/audit tables scroll inside panels without page overflow.

@@ -60,18 +60,43 @@ export const appHtml = String.raw`<!doctype html>
     <style>
       :root {
         color-scheme: light;
-        --bg: #f7f8fa;
-        --panel: #ffffff;
-        --panel-subtle: #fbfbfc;
-        --text: #18181b;
-        --muted: #71717a;
-        --border: #e4e4e7;
-        --border-strong: #d4d4d8;
-        --accent: #5b5bd6;
-        --accent-dark: #4141b8;
-        --green: #0f8a5f;
-        --amber: #a16207;
-        --red: #b42318;
+        --sidebar-width: 240px;
+        --navbar-height: 56px;
+        --bg-main: #fcfcfc;
+        --bg-primary: #ffffff;
+        --bg-secondary: #fcfcfc;
+        --bg-tertiary: #f5f5f5;
+        --bg-quaternary: #f0f0f0;
+        --bg-button: #ffffff;
+        --bg-primary-action: #171717;
+        --bg-primary-action-hover: #313131;
+        --text-primary: #171717;
+        --text-secondary: #525252;
+        --text-tertiary: #737373;
+        --text-quaternary: #a3a3a3;
+        --text-primary-action: #ffffff;
+        --border-primary: rgba(0, 0, 0, 0.1);
+        --border-primary-opaque: #e5e5e5;
+        --border-secondary: rgba(0, 0, 0, 0.07);
+        --border-tertiary: rgba(0, 0, 0, 0.04);
+        --brand-primary: #ff591e;
+        --brand-secondary: #fb432c;
+        --blue: #2563eb;
+        --green: #16a34a;
+        --amber: #d97706;
+        --red: #dc2626;
+        --bg: var(--bg-main);
+        --panel: var(--bg-primary);
+        --panel-subtle: var(--bg-secondary);
+        --text: var(--text-primary);
+        --muted: var(--text-tertiary);
+        --border: var(--border-primary);
+        --border-strong: var(--border-primary-opaque);
+        --accent: var(--brand-primary);
+        --accent-dark: var(--brand-secondary);
+        --base-shadow-color: rgb(0 0 0 / 0.05);
+        --button-shadow: 0px 1px 1px -1px rgb(0 0 0 / 0.08), 0px 2px 2px -1px rgb(0 0 0 / 0.08), 0px 0px 0px 1px rgb(0 0 0 / 0.06), inset 0px 1px 0px #fff, inset 0px 1px 2px 1px #fff, inset 0px 1px 2px rgb(0 0 0 / 0.06);
+        --panel-shadow: 0px 3px 6px -3px var(--base-shadow-color), 0px 2px 4px -2px var(--base-shadow-color), 0px 1px 2px -1px var(--base-shadow-color), 0px 1px 1px -1px var(--base-shadow-color);
         font-family:
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
@@ -80,10 +105,17 @@ export const appHtml = String.raw`<!doctype html>
         box-sizing: border-box;
       }
 
+      [hidden] {
+        display: none !important;
+      }
+
       body {
         margin: 0;
-        background: var(--bg);
-        color: var(--text);
+        background: var(--bg-main);
+        color: var(--text-primary);
+        font-size: 14px;
+        line-height: 1.45;
+        -webkit-font-smoothing: antialiased;
       }
 
       button,
@@ -95,29 +127,39 @@ export const appHtml = String.raw`<!doctype html>
 
       .shell {
         display: grid;
-        grid-template-columns: 236px 1fr;
+        grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
         min-height: 100vh;
+        background: var(--bg-main);
       }
 
       .sidebar {
-        border-right: 1px solid var(--border);
-        background: #fcfcfd;
-        padding: 18px 14px;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        border-right: 1px solid var(--border-primary);
+        background: var(--bg-secondary);
+        padding: 10px 8px;
+        overflow-y: auto;
       }
 
       .brand {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 0 8px 18px;
+        min-height: 40px;
+        padding: 3px 6px 12px;
+        color: var(--text-primary);
+        font-size: 14px;
         font-weight: 650;
       }
 
       .mark {
         width: 28px;
         height: 28px;
-        border-radius: 7px;
-        background: linear-gradient(135deg, #18181b, #5b5bd6);
+        flex: 0 0 auto;
+        border-radius: 8px;
+        background: linear-gradient(135deg, var(--brand-secondary), var(--brand-primary));
+        box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.32);
       }
 
       .nav {
@@ -128,21 +170,26 @@ export const appHtml = String.raw`<!doctype html>
       .nav button {
         border: 0;
         background: transparent;
-        color: var(--muted);
+        color: var(--text-tertiary);
         text-align: left;
-        padding: 9px 10px;
-        border-radius: 7px;
+        min-height: 30px;
+        padding: 6px 8px;
+        border-radius: 6px;
         cursor: pointer;
+        font-size: 14px;
+        font-weight: 550;
+        line-height: 18px;
       }
 
       .nav button.active,
       .nav button:hover {
-        background: #f0f0f2;
-        color: var(--text);
+        background: var(--bg-quaternary);
+        color: var(--text-primary);
       }
 
       main {
-        padding: 26px;
+        min-width: 0;
+        padding: 0;
       }
 
       .topbar {
@@ -150,24 +197,40 @@ export const appHtml = String.raw`<!doctype html>
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        margin-bottom: 20px;
+        min-height: var(--navbar-height);
+        margin: 0;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--border-primary);
+        background: var(--bg-primary);
       }
 
       h1 {
         margin: 0;
-        font-size: 24px;
+        font-size: 15px;
+        line-height: 20px;
+        font-weight: 700;
         letter-spacing: 0;
       }
 
       .subtitle {
         margin-top: 4px;
-        color: var(--muted);
-        font-size: 14px;
+        color: var(--text-tertiary);
+        font-size: 13px;
+        line-height: 18px;
+      }
+
+      #view > .grid,
+      #view > .columns {
+        margin: 16px;
+      }
+
+      #view > .grid[style*="overflow:auto"] {
+        padding-bottom: 4px;
       }
 
       .grid {
         display: grid;
-        gap: 14px;
+        gap: 12px;
       }
 
       .metrics {
@@ -177,13 +240,14 @@ export const appHtml = String.raw`<!doctype html>
       .columns {
         display: grid;
         grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.8fr);
-        gap: 14px;
+        gap: 12px;
       }
 
       .panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 8px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: 10px;
+        box-shadow: var(--panel-shadow);
         overflow: hidden;
       }
 
@@ -192,29 +256,33 @@ export const appHtml = String.raw`<!doctype html>
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--border);
-        background: var(--panel-subtle);
+        min-height: 42px;
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--border-secondary);
+        background: var(--bg-primary);
       }
 
       .panel-title {
         font-size: 14px;
-        font-weight: 650;
+        line-height: 18px;
+        font-weight: 700;
       }
 
       .metric {
-        padding: 14px 16px;
+        padding: 12px;
       }
 
       .metric-label {
-        color: var(--muted);
+        color: var(--text-tertiary);
         font-size: 12px;
+        font-weight: 550;
       }
 
       .metric-value {
         margin-top: 6px;
         font-size: 22px;
-        font-weight: 700;
+        line-height: 28px;
+        font-weight: 750;
       }
 
       .toolbar {
@@ -227,12 +295,15 @@ export const appHtml = String.raw`<!doctype html>
       select,
       textarea {
         width: 100%;
-        border: 1px solid var(--border-strong);
-        border-radius: 7px;
-        background: #fff;
-        padding: 9px 10px;
-        color: var(--text);
+        border: 1px solid var(--border-primary);
+        border-radius: 6px;
+        background: var(--bg-primary);
+        padding: 7px 9px;
+        color: var(--text-primary);
         outline: none;
+        font-size: 14px;
+        line-height: 20px;
+        box-shadow: inset 0 1px 1px rgb(0 0 0 / 0.03);
       }
 
       textarea {
@@ -243,28 +314,37 @@ export const appHtml = String.raw`<!doctype html>
       input:focus,
       select:focus,
       textarea:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.12);
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
       }
 
       .button {
-        border: 1px solid var(--border-strong);
-        background: #fff;
-        color: var(--text);
-        padding: 9px 12px;
-        border-radius: 7px;
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 30px;
+        border: 0;
+        background: var(--bg-button);
+        color: var(--text-primary);
+        padding: 6px 10px;
+        border-radius: 6px;
         cursor: pointer;
         white-space: nowrap;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 18px;
+        box-shadow: var(--button-shadow);
       }
 
       .button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
+        background: var(--bg-primary-action);
+        color: var(--text-primary-action);
+        box-shadow: 0px 0px 0px 1px rgb(0 0 0 / 0.06), 0px 1px 1px -1px rgb(0 0 0 / 0.08), inset 0px 1px 0px rgb(255 255 255 / 0.12);
       }
 
       .button.primary:hover {
-        background: var(--accent-dark);
+        background: var(--bg-primary-action-hover);
       }
 
       table {
@@ -275,31 +355,34 @@ export const appHtml = String.raw`<!doctype html>
 
       th,
       td {
-        padding: 11px 14px;
-        border-bottom: 1px solid var(--border);
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-secondary);
         text-align: left;
         vertical-align: top;
       }
 
       th {
-        color: var(--muted);
-        font-weight: 600;
-        background: #fafafa;
+        color: var(--text-tertiary);
+        font-size: 12px;
+        font-weight: 650;
+        background: var(--bg-secondary);
       }
 
       tr:hover td {
-        background: #fbfbff;
+        background: var(--bg-secondary);
       }
 
       .pill {
         display: inline-flex;
         align-items: center;
-        border: 1px solid var(--border);
+        border: 1px solid var(--border-secondary);
         border-radius: 999px;
-        padding: 2px 7px;
-        color: var(--muted);
-        background: #fff;
+        padding: 1px 7px;
+        color: var(--text-tertiary);
+        background: var(--bg-tertiary);
         font-size: 12px;
+        font-weight: 550;
+        line-height: 18px;
       }
 
       .pill.green {
@@ -321,16 +404,16 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       .progress {
-        height: 8px;
+        height: 7px;
         border-radius: 999px;
-        background: #ececf0;
+        background: var(--bg-quaternary);
         overflow: hidden;
       }
 
       .progress span {
         display: block;
         height: 100%;
-        background: var(--accent);
+        background: linear-gradient(90deg, var(--brand-secondary), var(--brand-primary));
       }
 
       .stack {
@@ -352,23 +435,28 @@ export const appHtml = String.raw`<!doctype html>
       label {
         display: grid;
         gap: 5px;
-        color: var(--muted);
+        color: var(--text-tertiary);
         font-size: 12px;
-        font-weight: 550;
+        font-weight: 600;
       }
 
       .empty {
         padding: 24px;
-        color: var(--muted);
+        color: var(--text-tertiary);
         text-align: center;
       }
 
       .message {
-        margin-bottom: 14px;
-        padding: 10px 12px;
-        border-radius: 7px;
-        background: #eef2ff;
-        color: #3730a3;
+        position: fixed;
+        left: calc(var(--sidebar-width) + 16px);
+        bottom: 16px;
+        z-index: 20;
+        padding: 8px 10px;
+        border: 1px solid var(--border-primary);
+        border-radius: 8px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        box-shadow: var(--panel-shadow);
         font-size: 13px;
         display: none;
       }
@@ -382,26 +470,36 @@ export const appHtml = String.raw`<!doctype html>
         display: grid;
         place-items: center;
         padding: 24px;
+        background: var(--bg-main);
       }
 
       .auth-card {
         width: min(420px, 100%);
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 22px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: var(--panel-shadow);
       }
 
       .workspace-switcher {
         margin: 0 8px 16px;
       }
 
+      .pipeline-card {
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        padding: 10px;
+        background: var(--bg-primary);
+        box-shadow: var(--panel-shadow);
+      }
+
       .api {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
         white-space: pre-wrap;
-        background: #101014;
-        color: #f4f4f5;
+        background: #171717;
+        color: #f5f5f5;
         padding: 14px;
         border-radius: 8px;
         overflow: auto;
@@ -413,14 +511,27 @@ export const appHtml = String.raw`<!doctype html>
         }
 
         .sidebar {
+          position: static;
+          height: auto;
           border-right: 0;
-          border-bottom: 1px solid var(--border);
+          border-bottom: 1px solid var(--border-primary);
         }
 
         .metrics,
         .columns,
         .form-grid {
           grid-template-columns: 1fr;
+        }
+
+        .message {
+          left: 16px;
+        }
+
+        table {
+          display: block;
+          max-width: 100%;
+          overflow-x: auto;
+          white-space: nowrap;
         }
       }
     </style>
@@ -464,18 +575,18 @@ export const appHtml = String.raw`<!doctype html>
     <script>
       const state = {
         view: "dashboard",
-        token: localStorage.getItem("crmApiToken") || "",
+        token: storageGet("crmApiToken") || "",
         tenant: null,
-        workspaceId: localStorage.getItem("crmWorkspaceId") || "",
+        workspaceId: storageGet("crmWorkspaceId") || "",
         summary: null,
         accounts: [],
         accountFilters: { q: "", segment: "", status: "", customFields: {} },
         savedViews: [],
         customFields: [],
-        selectedSavedViewId: localStorage.getItem("crmSavedViewId") || "",
-        selectedAccountId: localStorage.getItem("crmSelectedAccountId") || "",
+        selectedSavedViewId: storageGet("crmSavedViewId") || "",
+        selectedAccountId: storageGet("crmSelectedAccountId") || "",
         selectedAccount: null,
-        selectedContactId: localStorage.getItem("crmSelectedContactId") || "",
+        selectedContactId: storageGet("crmSelectedContactId") || "",
         selectedContact: null,
         reports: null,
         opportunities: [],
@@ -494,6 +605,26 @@ export const appHtml = String.raw`<!doctype html>
 
       const $ = (selector) => document.querySelector(selector);
       const money = (cents) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format((cents || 0) / 100);
+
+      function storageGet(key) {
+        try {
+          return window.localStorage?.getItem(key) || "";
+        } catch {
+          return "";
+        }
+      }
+
+      function storageSet(key, value) {
+        try {
+          window.localStorage?.setItem(key, value);
+        } catch {}
+      }
+
+      function storageRemove(key) {
+        try {
+          window.localStorage?.removeItem(key);
+        } catch {}
+      }
 
       async function api(path, options = {}) {
         const headers = { "content-type": "application/json", ...(options.headers || {}) };
@@ -516,7 +647,7 @@ export const appHtml = String.raw`<!doctype html>
         const tenant = await api("me");
         if (!state.workspaceId || !tenant.workspaces.some((workspace) => workspace.id === state.workspaceId)) {
           state.workspaceId = tenant.currentWorkspaceId || tenant.workspaces[0]?.id || "";
-          localStorage.setItem("crmWorkspaceId", state.workspaceId);
+          storageSet("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
         const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
@@ -835,7 +966,7 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function pipelineCard(opportunity) {
-        return \`<div style="border:1px solid var(--border); border-radius:8px; padding:10px; background:#fff">
+        return \`<div class="pipeline-card">
           <strong>\${escapeHtml(opportunity.name)}</strong>
           <div class="subtitle">\${escapeHtml(opportunity.account_name || "")}</div>
           <div class="subtitle">\${money(opportunity.value_cents)} · \${Number(opportunity.confidence || 0)}% confidence</div>
@@ -1221,7 +1352,7 @@ Content-Type: application/json
 
         document.querySelectorAll("[data-account-id]").forEach((node) => node.addEventListener("click", async () => {
           state.selectedAccountId = node.dataset.accountId;
-          localStorage.setItem("crmSelectedAccountId", state.selectedAccountId);
+          storageSet("crmSelectedAccountId", state.selectedAccountId);
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
           state.view = "account";
           render();
@@ -1229,7 +1360,7 @@ Content-Type: application/json
 
         document.querySelectorAll("[data-contact-id]").forEach((node) => node.addEventListener("click", async () => {
           state.selectedContactId = node.dataset.contactId;
-          localStorage.setItem("crmSelectedContactId", state.selectedContactId);
+          storageSet("crmSelectedContactId", state.selectedContactId);
           state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
           state.view = "contact";
           render();
@@ -1285,7 +1416,7 @@ Content-Type: application/json
 
         $("#savedViewSelect")?.addEventListener("change", async (event) => {
           state.selectedSavedViewId = event.currentTarget.value;
-          localStorage.setItem("crmSavedViewId", state.selectedSavedViewId);
+          storageSet("crmSavedViewId", state.selectedSavedViewId);
           const view = state.savedViews.find((item) => item.id === state.selectedSavedViewId);
           if (view?.filters) state.accountFilters = { q: view.filters.q || "", segment: view.filters.segment || "", status: view.filters.status || "", customFields: view.filters.customFields || {} };
           await refresh();
@@ -1293,7 +1424,7 @@ Content-Type: application/json
 
         $("#applyAccountFilters")?.addEventListener("click", async () => {
           state.selectedSavedViewId = "";
-          localStorage.removeItem("crmSavedViewId");
+          storageRemove("crmSavedViewId");
           state.accountFilters = {
             q: $("#accountSearch").value.trim(),
             segment: $("#accountSegment").value,
@@ -1305,7 +1436,7 @@ Content-Type: application/json
 
         $("#clearAccountFilters")?.addEventListener("click", async () => {
           state.selectedSavedViewId = "";
-          localStorage.removeItem("crmSavedViewId");
+          storageRemove("crmSavedViewId");
           state.accountFilters = { q: "", segment: "", status: "", customFields: {} };
           await refresh();
         });
@@ -1321,7 +1452,7 @@ Content-Type: application/json
           };
           const view = await api("saved-views", { method: "POST", body: JSON.stringify({ name, resource: "accounts", filters }) });
           state.selectedSavedViewId = view.id;
-          localStorage.setItem("crmSavedViewId", view.id);
+          storageSet("crmSavedViewId", view.id);
           state.accountFilters = filters;
           notice("Saved view created.");
           await refresh();
@@ -1331,7 +1462,7 @@ Content-Type: application/json
           if (!state.selectedSavedViewId) return;
           await api("saved-views/" + encodeURIComponent(state.selectedSavedViewId), { method: "DELETE" });
           state.selectedSavedViewId = "";
-          localStorage.removeItem("crmSavedViewId");
+          storageRemove("crmSavedViewId");
           notice("Saved view deleted.");
           await refresh();
         });
@@ -1391,13 +1522,13 @@ Content-Type: application/json
 
         $("#saveToken")?.addEventListener("click", () => {
           state.token = $("#tokenInput").value.trim();
-          localStorage.setItem("crmApiToken", state.token);
+          storageSet("crmApiToken", state.token);
           notice("Token saved locally.");
         });
 
         $("#workspaceSelect")?.addEventListener("change", async (event) => {
           state.workspaceId = event.currentTarget.value;
-          localStorage.setItem("crmWorkspaceId", state.workspaceId);
+          storageSet("crmWorkspaceId", state.workspaceId);
           await refresh();
         });
 
@@ -1420,7 +1551,7 @@ Content-Type: application/json
           const form = new FormData(event.currentTarget);
           const created = await api("teams", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           state.workspaceId = created.defaultWorkspace.id;
-          localStorage.setItem("crmWorkspaceId", state.workspaceId);
+          storageSet("crmWorkspaceId", state.workspaceId);
           notice("Team created.");
           await refresh();
         });
@@ -1430,7 +1561,7 @@ Content-Type: application/json
           const form = new FormData(event.currentTarget);
           const workspace = await api("workspaces", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           state.workspaceId = workspace.id;
-          localStorage.setItem("crmWorkspaceId", state.workspaceId);
+          storageSet("crmWorkspaceId", state.workspaceId);
           notice("Workspace created.");
           await refresh();
         });
@@ -1622,7 +1753,7 @@ Content-Type: application/json
             });
             state.token = session.token;
           }
-          localStorage.setItem("crmApiToken", state.token);
+          storageSet("crmApiToken", state.token);
           await refresh().catch(showAuth);
         } catch (error) {
           showAuth(error);
