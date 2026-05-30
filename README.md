@@ -675,3 +675,5 @@ Supported commands:
 - `import_calendar_ics`
 
 When SMTP credentials are missing, emails are recorded with status `drafted` instead of being sent. This keeps local development safe.
+
+Email subjects and bodies support template variables in manual sends and sequence templates, including `{{contact.name}}`, `{{contact.firstName}}`, `{{contact.email}}`, `{{contact.title}}`, `{{account.name}}`, `{{account.domain}}`, `{{account.observation}}`, `{{account.segment}}`, `{{account.source}}`, `{{account.status}}`, `{{account.owner}}`, `{{sender.name}}`, `{{sender.email}}`, `{{workspace.name}}`, `{{workspace.teamName}}`, and `{{date.today}}`.

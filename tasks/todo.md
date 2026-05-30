@@ -48,6 +48,7 @@
 - [x] Add AI account/contact summaries, next steps, risks, and scores.
 - [x] Add recurring ICS/webcal calendar source sync.
 - [x] Add workspace email sender rotation with daily caps.
+- [x] Add richer contact/account/sender/workspace email template variables.
 - [x] Add provider-backed inbound email parse webhooks.
 - [x] Add AI call/meeting notes and follow-up generation.
 - [x] Add native Teams and Discord notification integrations.
@@ -161,3 +162,5 @@ Added per-user report alert notification preferences: each user can mute trigger
 Added report alert escalation policies: admins can configure `escalationAfterRuns` with optional escalation webhook or native integration destinations, and each triggered incident escalates once until recovery. Verified local migration, syntax checks, primary trigger delivery, one-time escalation delivery, suppressed duplicate escalation, and Settings form markup.
 
 Added call and meeting recording/transcript capture: communication logs now store optional recording URLs and transcripts, show recording/transcript availability in Communications, and feed transcripts into AI follow-up notes. Verified local migration, syntax checks, API persistence/listing, AI note generation from transcript content, and form markup.
+
+Added richer email template variables: manual sends and sequence emails now render contact, account, sender, workspace, and date placeholders through the same template context. Verified syntax checks and a live manual-send smoke with `{{contact.firstName}}`, account fields, sender, workspace, and date placeholders.

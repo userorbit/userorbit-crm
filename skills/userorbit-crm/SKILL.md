@@ -912,6 +912,8 @@ POST /api/agent/command
 
 When SMTP is not configured, the CRM records emails as `drafted` instead of sending them. When email tracking is enabled, account/contact email activity and `GET /api/reports` include open and click counts.
 
+Manual email bodies and sequence templates support variables such as `{{contact.name}}`, `{{contact.firstName}}`, `{{contact.email}}`, `{{contact.title}}`, `{{account.name}}`, `{{account.domain}}`, `{{account.observation}}`, `{{account.segment}}`, `{{account.source}}`, `{{account.status}}`, `{{account.owner}}`, `{{sender.name}}`, `{{sender.email}}`, `{{workspace.name}}`, `{{workspace.teamName}}`, and `{{date.today}}`.
+
 ## Mailbox Warmup
 
 1. Create or update the configured sender mailbox with `POST /api/warmup/mailboxes`.

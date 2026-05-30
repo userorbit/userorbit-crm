@@ -4021,22 +4021,30 @@ async function sendManualEmail(env, input) {
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const emailSettings = await getEmailSettings(env, input.workspaceId);
   const sender = await chooseEmailSender(env, input.workspaceId);
+  const rendered = renderTemplate(
+    { subject: input.subject, body: input.body },
+    await buildEmailTemplateData(env, {
+      workspaceId: input.workspaceId,
+      contact,
+      sender,
+    }),
+  );
   const tracking = buildEmailTracking(input.baseUrl || env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
   const result = await sendEmail(env, {
     fromEmail: sender?.email,
     fromName: sender?.name,
     to: contact.email,
     toName: contact.name,
-    subject: input.subject,
-    body: input.body,
+    subject: rendered.subject,
+    body: rendered.body,
     tracking,
   });
 
   const event = await recordEmailEvent(env, {
     contact,
     status: result.status,
-    subject: input.subject,
-    body: input.body,
+    subject: rendered.subject,
+    body: rendered.body,
     providerMessageId: result.providerMessageId,
     error: result.error,
     sentAt: result.status === "sent" ? new Date().toISOString() : null,
@@ -4046,7 +4054,7 @@ async function sendManualEmail(env, input) {
 
   await deliverWebhooks(env, contact.workspace_id, "email.created", event.id, event);
   if (input.auditUserId) {
-    await recordAuditLog(env, { workspaceId: contact.workspace_id, userId: input.auditUserId, action: "email.send", resource: "email_event", resourceId: event.id, metadata: { contactId: contact.id, accountId: contact.account_id, status: event.status, subject: input.subject } });
+    await recordAuditLog(env, { workspaceId: contact.workspace_id, userId: input.auditUserId, action: "email.send", resource: "email_event", resourceId: event.id, metadata: { contactId: contact.id, accountId: contact.account_id, status: event.status, subject: rendered.subject } });
   }
   return { ...event, provider: result };
 }
@@ -4063,12 +4071,17 @@ async function processDueSequenceEmails(env, options = {}) {
       et.body,
       c.name AS contact_name,
       c.email,
+      c.title AS contact_title,
+      c.status AS contact_status,
       c.account_id,
       a.workspace_id,
       a.name AS account_name,
       a.domain,
       a.observation,
-      a.segment
+      a.segment,
+      a.source,
+      a.status AS account_status,
+      a.owner AS account_owner
     FROM sequence_enrollments se
     JOIN sequence_steps ss ON ss.sequence_id = se.sequence_id AND ss.step_order = se.current_step_order
     JOIN email_templates et ON et.id = ss.template_id
@@ -4083,6 +4096,8 @@ async function processDueSequenceEmails(env, options = {}) {
 
   const sent = [];
   for (const item of due.results) {
+    const emailSettings = await getEmailSettings(env, item.workspace_id);
+    const sender = await chooseEmailSender(env, item.workspace_id);
     const contact = {
       id: item.contact_id,
       name: item.contact_name,
@@ -4093,20 +4108,28 @@ async function processDueSequenceEmails(env, options = {}) {
     };
     const rendered = renderTemplate(
       { subject: item.subject, body: item.body },
-      {
-        contact: { name: item.contact_name, email: item.email },
-        account: {
-          name: item.account_name,
+      await buildEmailTemplateData(env, {
+        workspaceId: item.workspace_id,
+        contact: {
+          id: item.contact_id,
+          name: item.contact_name,
+          email: item.email,
+          title: item.contact_title,
+          status: item.contact_status,
+          account_id: item.account_id,
+          account_name: item.account_name,
+          workspace_id: item.workspace_id,
           domain: item.domain,
-          observation: item.observation || "your team recently shipped a product update",
+          observation: item.observation,
           segment: item.segment,
+          source: item.source,
+          account_status: item.account_status,
+          owner: item.account_owner,
         },
-        sender: { name: env.CRM_FROM_NAME || "UserOrbit" },
-      },
+        sender,
+      }),
     );
 
-    const emailSettings = await getEmailSettings(env, item.workspace_id);
-    const sender = await chooseEmailSender(env, item.workspace_id);
     const tracking = buildEmailTracking(env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
     const result = await sendEmail(env, {
       fromEmail: sender?.email,
@@ -6749,7 +6772,7 @@ function formatCents(cents) {
 async function getContactWithAccount(env, id) {
   return getRequired(
     env,
-    `SELECT c.*, a.name AS account_name, a.observation, a.workspace_id
+    `SELECT c.*, a.name AS account_name, a.domain, a.observation, a.segment, a.source, a.status AS account_status, a.owner, a.workspace_id
      FROM contacts c
      JOIN accounts a ON a.id = c.account_id
      WHERE c.id = ?`,
@@ -6789,6 +6812,55 @@ function renderTemplate(template, data) {
     });
 
   return { subject: replace(template.subject), body: replace(template.body) };
+}
+
+async function buildEmailTemplateData(env, { workspaceId, contact, sender }) {
+  const workspace = await env.DB.prepare(`
+    SELECT w.id, w.name, w.slug, t.name AS team_name
+    FROM workspaces w
+    JOIN teams t ON t.id = w.team_id
+    WHERE w.id = ?
+  `).bind(workspaceId).first();
+  const contactName = cleanNullable(contact.name) || cleanNullable(contact.email) || "";
+  const accountName = cleanNullable(contact.account_name) || cleanNullable(contact.name) || "";
+  return {
+    contact: {
+      id: contact.id,
+      name: contactName,
+      firstName: firstName(contactName),
+      email: cleanNullable(contact.email) || "",
+      title: cleanNullable(contact.title) || "",
+      status: cleanNullable(contact.status) || "",
+      notes: cleanNullable(contact.notes) || "",
+    },
+    account: {
+      id: contact.account_id,
+      name: accountName,
+      domain: cleanNullable(contact.domain) || "",
+      observation: cleanNullable(contact.observation) || "your team recently shipped a product update",
+      segment: cleanNullable(contact.segment) || "",
+      source: cleanNullable(contact.source) || "",
+      status: cleanNullable(contact.account_status) || "",
+      owner: cleanNullable(contact.owner) || "",
+    },
+    sender: {
+      name: cleanNullable(sender?.name) || cleanNullable(env.CRM_FROM_NAME) || "UserOrbit",
+      email: cleanNullable(sender?.email) || cleanNullable(env.CRM_FROM_EMAIL || env.SMTP_USERNAME) || "",
+    },
+    workspace: {
+      id: workspace?.id || workspaceId,
+      name: workspace?.name || "",
+      slug: workspace?.slug || "",
+      teamName: workspace?.team_name || "",
+    },
+    date: {
+      today: new Date().toISOString().slice(0, 10),
+    },
+  };
+}
+
+function firstName(name) {
+  return String(name || "").trim().split(/\s+/)[0] || "";
 }
 
 function generateWarmupMessages({ planId, mailbox, recipients, startsOn, durationDays, dailyMin, dailyMax }) {
