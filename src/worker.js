@@ -30,7 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
-const INTEGRATION_TYPES = new Set(["slack"]);
+const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
@@ -3793,11 +3793,11 @@ async function deliverIntegrations(env, workspaceId, event, resourceId, payload)
   for (const integration of integrations.results) {
     const events = parseJsonArray(integration.events_json);
     if (events.length && !events.includes(event)) continue;
-    if (integration.type === "slack") await deliverSlackIntegration(env, integration, event, resourceId, payload);
+    await deliverNativeIntegration(env, integration, event, resourceId, payload);
   }
 }
 
-async function deliverSlackIntegration(env, integration, event, resourceId, payload) {
+async function deliverNativeIntegration(env, integration, event, resourceId, payload) {
   const now = new Date().toISOString();
   const config = parseJsonObject(integration.config_json);
   let status = "failed";
@@ -3807,7 +3807,7 @@ async function deliverSlackIntegration(env, integration, event, resourceId, payl
     const response = await fetch(config.webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Integration" },
-      body: JSON.stringify(slackMessageForEvent(event, payload)),
+      body: JSON.stringify(integrationMessageForEvent(integration.type, event, payload)),
     });
     statusCode = response.status;
     status = response.ok ? "sent" : "failed";
@@ -5055,7 +5055,7 @@ function normalizeWebhookEvents(value) {
 }
 
 function normalizeIntegrationConfig(type, input) {
-  if (type === "slack") {
+  if (INTEGRATION_TYPES.has(type)) {
     const webhookUrl = normalizeWebhookUrl(input.webhookUrl || input.webhook_url || input.url);
     return { webhookUrl };
   }
@@ -5071,7 +5071,7 @@ function integrationResponse(integration) {
 }
 
 function maskIntegrationConfig(type, config) {
-  if (type === "slack") return { webhookUrl: config.webhookUrl ? "configured" : "" };
+  if (INTEGRATION_TYPES.has(type)) return { webhookUrl: config.webhookUrl ? "configured" : "" };
   return {};
 }
 
@@ -5173,13 +5173,40 @@ function normalizePhoneAddress(value) {
   return digits || "";
 }
 
-function slackMessageForEvent(event, payload) {
-  const title = slackEventTitle(event, payload);
-  const lines = [`*${title}*`, slackEventDetail(event, payload)].filter(Boolean);
-  return { text: lines.join("\n") };
+function integrationMessageForEvent(type, event, payload) {
+  const title = integrationEventTitle(event, payload);
+  const detail = integrationEventDetail(event, payload);
+  if (type === "slack") return { text: [`*${title}*`, detail].filter(Boolean).join("\n") };
+  if (type === "teams") return teamsMessageForEvent(title, detail, event);
+  if (type === "discord") return discordMessageForEvent(title, detail, event);
+  return { text: [title, detail].filter(Boolean).join("\n") };
 }
 
-function slackEventTitle(event, payload) {
+function teamsMessageForEvent(title, detail, event) {
+  return {
+    "@type": "MessageCard",
+    "@context": "https://schema.org/extensions",
+    summary: title,
+    themeColor: "2563EB",
+    title,
+    sections: [{ facts: [{ name: "Event", value: event }], text: detail || "" }],
+  };
+}
+
+function discordMessageForEvent(title, detail, event) {
+  return {
+    username: "UserOrbit CRM",
+    embeds: [{
+      title,
+      description: detail || event,
+      color: 2442805,
+      fields: [{ name: "Event", value: event, inline: true }],
+      timestamp: new Date().toISOString(),
+    }],
+  };
+}
+
+function integrationEventTitle(event, payload) {
   if (event === "account.created") return `New account: ${payload?.name || "Untitled account"}`;
   if (event === "contact.created") return `New contact: ${payload?.name || payload?.email || "Untitled contact"}`;
   if (event === "task.created") return `New task: ${payload?.title || "Untitled task"}`;
@@ -5187,10 +5214,11 @@ function slackEventTitle(event, payload) {
   if (event === "message.received") return `Inbound message: ${payload?.subject || payload?.type || "Message"}`;
   if (event === "email.received") return `Inbound email: ${payload?.subject || "No subject"}`;
   if (event === "lead_form.submitted") return `Lead form submitted: ${payload?.form?.name || "Lead form"}`;
+  if (event === "ai_notes.created") return `AI notes generated: ${payload?.communication?.subject || "Communication"}`;
   return `UserOrbit event: ${event}`;
 }
 
-function slackEventDetail(event, payload) {
+function integrationEventDetail(event, payload) {
   if (event === "account.created") return [payload?.domain, payload?.segment, payload?.source].filter(Boolean).join(" / ");
   if (event === "contact.created") return [payload?.email, payload?.title].filter(Boolean).join(" / ");
   if (event === "task.created") return [payload?.kind, payload?.due_at || payload?.dueAt].filter(Boolean).join(" / ");
@@ -5198,6 +5226,7 @@ function slackEventDetail(event, payload) {
   if (event === "message.received") return [payload?.type, payload?.direction, payload?.contact_id || payload?.contactId].filter(Boolean).join(" / ");
   if (event === "email.received") return payload?.contact?.email || payload?.fromEmail || "";
   if (event === "lead_form.submitted") return [payload?.account?.name, payload?.contact?.action ? `contact ${payload.contact.action}` : ""].filter(Boolean).join(" / ");
+  if (event === "ai_notes.created") return payload?.insight?.summary || "";
   return "";
 }
 

@@ -1541,10 +1541,11 @@ Content-Type: application/json
                   <button class="button primary">Create webhook</button>
                 </form>
                 <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
-                  <label>Name<input name="name" required placeholder="Sales Slack alerts" /></label>
-                  <label>Slack webhook URL<input name="webhookUrl" type="url" required placeholder="https://hooks.slack.com/services/..." /></label>
+                  <label>Name<input name="name" required placeholder="Sales alerts" /></label>
+                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option></select></label>
+                  <label>Webhook URL<input name="webhookUrl" type="url" required placeholder="https://hooks.slack.com/services/... or provider webhook URL" /></label>
                   <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
-                  <button class="button primary">Create Slack integration</button>
+                  <button class="button primary">Create integration</button>
                 </form>
                 <form id="messageChannelForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Outbound SMS" /></label>
@@ -2187,13 +2188,13 @@ Content-Type: application/json
           await api("integrations", {
             method: "POST",
             body: JSON.stringify({
-              type: "slack",
+              type: form.get("type"),
               name: form.get("name"),
               webhookUrl: form.get("webhookUrl"),
               events: String(form.get("events") || "").split(/\\n|,/).map((event) => event.trim()).filter(Boolean),
             }),
           });
-          notice("Slack integration created.");
+          notice("Integration created.");
           await refresh();
         });
 

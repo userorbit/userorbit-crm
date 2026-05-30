@@ -286,7 +286,7 @@ curl -X POST http://localhost:8787/api/lead-forms \
 
 Share the returned `/forms/<public_key>` URL. Public submissions create or match an account by domain/name, add the contact when the email is new, record a submission, and emit `lead_form.submitted` webhooks.
 
-### Create a Slack integration
+### Create a native notification integration
 
 ```sh
 curl -X POST http://localhost:8787/api/integrations \
@@ -300,7 +300,7 @@ curl -X POST http://localhost:8787/api/integrations \
   }'
 ```
 
-Slack integrations are workspace-scoped. They can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
+Slack, Microsoft Teams, and Discord integrations are workspace-scoped. They can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
 
 ### Generate AI insights
 

@@ -99,7 +99,7 @@ List endpoints and recent deliveries:
 GET /api/webhooks
 ```
 
-Create a native Slack integration for selected CRM events:
+Create a native notification integration for selected CRM events:
 
 ```http
 POST /api/integrations
@@ -111,6 +111,8 @@ POST /api/integrations
   "events": ["lead_form.submitted", "email.received", "task.created"]
 }
 ```
+
+Supported `type` values are `slack`, `teams`, and `discord`. Use the provider's incoming webhook URL; UserOrbit formats the event for that destination and records delivery status.
 
 List integrations and recent delivery status:
 
