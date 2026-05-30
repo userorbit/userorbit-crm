@@ -50,6 +50,7 @@
 - [x] Add provider-backed inbound email parse webhooks.
 - [x] Add AI call/meeting notes and follow-up generation.
 - [x] Add native Teams and Discord notification integrations.
+- [x] Add native Segment Track API event integration.
 - [x] Add AI account website research and enrichment.
 - [x] Add Google/Microsoft OAuth calendar source sync.
 - [x] Add generic account enrichment-provider integrations.

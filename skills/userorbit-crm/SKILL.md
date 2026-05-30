@@ -112,7 +112,7 @@ POST /api/integrations
 }
 ```
 
-Supported `type` values are `slack`, `teams`, and `discord`. Use the provider's incoming webhook URL; UserOrbit formats the event for that destination and records delivery status.
+Supported `type` values are `slack`, `teams`, `discord`, and `segment`. Use the provider's incoming webhook URL for chat destinations, or `writeKey` plus optional `apiBaseUrl` for Segment Track API destinations. UserOrbit formats the event for that destination and records delivery status.
 
 List integrations and recent delivery status:
 

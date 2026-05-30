@@ -1759,8 +1759,10 @@ Content-Type: application/json
                 </form>
                 <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Sales alerts" /></label>
-                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option></select></label>
-                  <label>Webhook URL<input name="webhookUrl" type="url" required placeholder="https://hooks.slack.com/services/... or provider webhook URL" /></label>
+                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option><option value="segment">Segment</option></select></label>
+                  <label>Webhook URL<input name="webhookUrl" type="url" placeholder="https://hooks.slack.com/services/... or provider webhook URL" /></label>
+                  <label>Write key<input name="writeKey" type="password" placeholder="Segment write key" /></label>
+                  <label>API base URL<input name="apiBaseUrl" type="url" placeholder="https://api.segment.io/v1/track" /></label>
                   <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
                   <button class="button primary">Create integration</button>
                 </form>
@@ -1936,7 +1938,7 @@ Content-Type: application/json
           <thead><tr><th>Name</th><th>Type</th><th>Events</th><th>Status</th><th></th></tr></thead>
           <tbody>\${items.map((item) => \`
             <tr>
-              <td>\${escapeHtml(item.name)}<div class="subtitle">\${escapeHtml(item.config?.webhookUrl || "")}</div></td>
+              <td>\${escapeHtml(item.name)}<div class="subtitle">\${escapeHtml(integrationSubtitle(item))}</div></td>
               <td>\${escapeHtml(item.type)}</td>
               <td>\${escapeHtml((item.events || []).join(", ") || "all")}</td>
               <td><span class="pill">\${escapeHtml(item.status)}</span></td>
@@ -1945,6 +1947,11 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No native integrations yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Integration deliveries</div></div>' + reportTable(["Event", "Integration", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.integration_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return integrationTable + deliveryTable;
+      }
+
+      function integrationSubtitle(item) {
+        if (item.type === "segment") return item.config?.apiBaseUrl || "Segment Track API";
+        return item.config?.webhookUrl || "";
       }
 
       function enrichmentProvidersTable(providers = []) {
@@ -2683,6 +2690,8 @@ Content-Type: application/json
               type: form.get("type"),
               name: form.get("name"),
               webhookUrl: form.get("webhookUrl"),
+              writeKey: form.get("writeKey") || undefined,
+              apiBaseUrl: form.get("apiBaseUrl") || undefined,
               events: String(form.get("events") || "").split(/\\n|,/).map((event) => event.trim()).filter(Boolean),
             }),
           });

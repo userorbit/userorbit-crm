@@ -30,7 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
-const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
+const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
 const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
@@ -5586,11 +5586,21 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
   let statusCode = null;
   let error = null;
   try {
-    const response = await fetch(config.webhookUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Integration" },
-      body: JSON.stringify(integrationMessageForEvent(integration.type, event, payload)),
-    });
+    const response = integration.type === "segment"
+      ? await fetch(config.apiBaseUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${btoa(`${config.writeKey}:`)}`,
+          "content-type": "application/json",
+          "user-agent": "UserOrbit-CRM-Integration",
+        },
+        body: JSON.stringify(segmentTrackPayload(integration, event, resourceId, payload, now)),
+      })
+      : await fetch(config.webhookUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Integration" },
+        body: JSON.stringify(integrationMessageForEvent(integration.type, event, payload)),
+      });
     statusCode = response.status;
     status = response.ok ? "sent" : "failed";
     if (!response.ok) error = `HTTP ${response.status}`;
@@ -7062,6 +7072,13 @@ function normalizeWebhookEvents(value) {
 }
 
 function normalizeIntegrationConfig(type, input) {
+  if (type === "segment") {
+    const writeKey = cleanNullable(input.writeKey || input.write_key || input.accessToken || input.access_token);
+    if (!writeKey) throw httpError(400, "Segment writeKey is required");
+    const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url) || "https://api.segment.io/v1/track";
+    normalizeWebhookUrl(apiBaseUrl);
+    return { writeKey, apiBaseUrl };
+  }
   if (INTEGRATION_TYPES.has(type)) {
     const webhookUrl = normalizeWebhookUrl(input.webhookUrl || input.webhook_url || input.url);
     return { webhookUrl };
@@ -7116,6 +7133,7 @@ function maskEnrichmentProviderConfig(config) {
 }
 
 function maskIntegrationConfig(type, config) {
+  if (type === "segment") return { writeKey: config.writeKey ? "configured" : "", apiBaseUrl: config.apiBaseUrl || "https://api.segment.io/v1/track" };
   if (INTEGRATION_TYPES.has(type)) return { webhookUrl: config.webhookUrl ? "configured" : "" };
   return {};
 }
@@ -7386,6 +7404,27 @@ function integrationMessageForEvent(type, event, payload) {
   if (type === "teams") return teamsMessageForEvent(title, detail, event);
   if (type === "discord") return discordMessageForEvent(title, detail, event);
   return { text: [title, detail].filter(Boolean).join("\n") };
+}
+
+function segmentTrackPayload(integration, event, resourceId, payload, sentAt) {
+  return {
+    event: `UserOrbit ${event}`,
+    userId: cleanNullable(payload?.owner || payload?.contact?.email || payload?.email || payload?.fromEmail) || `workspace:${integration.workspace_id}`,
+    anonymousId: cleanNullable(resourceId) || crypto.randomUUID(),
+    timestamp: sentAt,
+    properties: {
+      event,
+      workspaceId: integration.workspace_id,
+      resourceId,
+      title: integrationEventTitle(event, payload),
+      detail: integrationEventDetail(event, payload),
+      payload,
+    },
+    context: {
+      app: { name: "UserOrbit CRM" },
+      integration: { name: integration.name, type: integration.type },
+    },
+  };
 }
 
 function teamsMessageForEvent(title, detail, event) {
