@@ -309,6 +309,11 @@ async function routeApi(request, env, url, auth) {
     return json(await createAiInsight(env, { entity: "account", entityId: path.split("/")[1], workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path.startsWith("accounts/") && path.endsWith("/research")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await researchAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "POST" && path === "accounts") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createAccount(env, { ...(await readJson(request)), workspaceId, auth, auditUserId: auth.user.id }), 201);
@@ -2952,6 +2957,46 @@ async function createAiInsight(env, input, auth) {
   return aiInsightResponse(insight);
 }
 
+async function researchAccount(env, id, input, auth) {
+  if (!id) throw httpError(400, "accountId is required");
+  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+  const sourceUrl = normalizeResearchUrl(input.url || input.website || account.domain);
+  const page = await fetchResearchPage(sourceUrl);
+  const context = await buildAccountResearchContext(env, account, page, input.workspaceId, auth);
+  const generated = await generateAccountResearch(env, context);
+  const now = new Date().toISOString();
+  const insightId = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO ai_insights (
+      id, workspace_id, entity, entity_id, created_by_user_id, provider, model,
+      summary, next_steps_json, risks_json, score, prompt_json, created_at
+    )
+    VALUES (?, ?, 'account', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    insightId,
+    input.workspaceId,
+    account.id,
+    auth.user.id,
+    generated.provider,
+    generated.model || null,
+    generated.summary,
+    JSON.stringify(generated.nextSteps || []),
+    JSON.stringify(generated.risks || []),
+    generated.score ?? null,
+    JSON.stringify(context),
+    now,
+  ).run();
+
+  const shouldUpdateObservation = input.updateObservation !== false && input.update_observation !== false;
+  if (shouldUpdateObservation) {
+    await env.DB.prepare("UPDATE accounts SET observation = ?, updated_at = ? WHERE id = ? AND workspace_id = ?").bind(generated.summary, now, account.id, input.workspaceId).run();
+  }
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "account.research", resource: "account", resourceId: account.id, metadata: { sourceUrl, provider: generated.provider, updatedObservation: shouldUpdateObservation } });
+  const insight = aiInsightResponse(await getRequired(env, "SELECT * FROM ai_insights WHERE id = ?", insightId));
+  await deliverWebhooks(env, input.workspaceId, "account.researched", account.id, { account: await getAccount(env, account.id, input.workspaceId, auth), insight, sourceUrl });
+  return { account: await getAccount(env, account.id, input.workspaceId, auth), insight, sourceUrl };
+}
+
 async function buildAccountInsightContext(env, accountId, workspaceId, auth) {
   const account = await getAccount(env, accountId, workspaceId, auth);
   return {
@@ -2970,6 +3015,25 @@ async function buildAccountInsightContext(env, accountId, workspaceId, auth) {
     opportunities: account.opportunities.slice(0, 8).map((opportunity) => ({ name: opportunity.name, stage: opportunity.stage, valueCents: opportunity.value_cents, confidence: opportunity.confidence, closeDate: opportunity.close_date })),
     tasks: account.tasks.slice(0, 8).map((task) => ({ title: task.title, kind: task.kind, status: task.status, dueAt: task.due_at })),
     recentTimeline: account.timeline.slice(0, 12).map((item) => ({ type: item.type, title: item.title, detail: item.detail, happenedAt: item.happenedAt })),
+  };
+}
+
+async function buildAccountResearchContext(env, account, page, workspaceId, auth) {
+  const current = await getAccount(env, account.id, workspaceId, auth);
+  return {
+    account: {
+      id: account.id,
+      name: account.name,
+      domain: account.domain,
+      segment: account.segment,
+      status: account.status,
+      source: account.source,
+      observation: account.observation,
+      customFields: current.customFields,
+    },
+    website: page,
+    contacts: current.contacts.slice(0, 8).map((contact) => ({ name: contact.name, title: contact.title, status: contact.status })),
+    opportunities: current.opportunities.slice(0, 8).map((opportunity) => ({ name: opportunity.name, stage: opportunity.stage, confidence: opportunity.confidence })),
   };
 }
 
@@ -3062,6 +3126,14 @@ async function generateCommunicationNotes(env, context) {
   return generateFallbackCommunicationNotes(context);
 }
 
+async function generateAccountResearch(env, context) {
+  if (cleanNullable(env.OPENAI_API_KEY)) {
+    const generated = await generateOpenAiAccountResearch(env, context);
+    if (generated) return generated;
+  }
+  return generateFallbackAccountResearch(context);
+}
+
 async function generateOpenAiInsight(env, entity, context) {
   const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
   const prompt = [
@@ -3122,6 +3194,37 @@ async function generateOpenAiCommunicationNotes(env, context) {
     const parsed = parseJsonObject(extractResponseText(payload));
     if (!cleanNullable(parsed.summary)) return null;
     return normalizeGeneratedInsight({ ...parsed, provider: "openai", model });
+  } catch {
+    return null;
+  }
+}
+
+async function generateOpenAiAccountResearch(env, context) {
+  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const prompt = [
+    "You are researching a company for a sales CRM from its public website text and existing CRM context.",
+    "Return compact JSON only with keys: summary, nextSteps, risks, score.",
+    "summary must be one short paragraph with what the company does and why it may be relevant for outreach.",
+    "nextSteps must be concrete research or outreach actions. risks must note missing/conflicting evidence. score must be an integer 0-100 for fit and recency confidence.",
+    JSON.stringify(context),
+  ].join("\n\n");
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        text: { format: { type: "json_object" } },
+      }),
+    });
+    if (!response.ok) return null;
+    const parsed = parseJsonObject(extractResponseText(await response.json()));
+    if (!cleanNullable(parsed.summary)) return null;
+    return normalizeGeneratedInsight({ ...parsed, provider: "openai-research", model });
   } catch {
     return null;
   }
@@ -3203,6 +3306,40 @@ function generateFallbackCommunicationNotes(context) {
   });
 }
 
+function generateFallbackAccountResearch(context) {
+  const account = context.account || {};
+  const website = context.website || {};
+  const text = cleanNullable(website.text) || "";
+  const lower = text.toLowerCase();
+  const signals = [];
+  if (lower.includes("ai")) signals.push("AI");
+  if (lower.includes("sales")) signals.push("sales");
+  if (lower.includes("customer")) signals.push("customer");
+  if (lower.includes("analytics")) signals.push("analytics");
+  if (lower.includes("security")) signals.push("security");
+  const nextSteps = [];
+  nextSteps.push("Validate the current ICP fit against the website positioning before outreach.");
+  if (signals.length) nextSteps.push(`Use ${signals.slice(0, 3).join(", ")} as personalization signals in the first touch.`);
+  if ((context.contacts || []).length) nextSteps.push("Map the existing contacts to the most likely buyer or champion role.");
+  const risks = [];
+  if (!text) risks.push("No website text was fetched, so research confidence is low.");
+  if (website.status && Number(website.status) >= 400) risks.push(`Website returned HTTP ${website.status}.`);
+  if (!account.domain) risks.push("Account has no domain for repeatable enrichment.");
+  const summary = [
+    `${account.name || "This account"} research from ${website.url || account.domain || "the configured source"}.`,
+    website.title ? `Website title: ${website.title}.` : "",
+    text ? `Public positioning signal: ${text.slice(0, 260)}` : "No public positioning text was available.",
+  ].filter(Boolean).join(" ");
+  return normalizeGeneratedInsight({
+    provider: "local-research",
+    model: "heuristic",
+    summary,
+    nextSteps,
+    risks,
+    score: Math.max(10, Math.min(90, 35 + signals.length * 8 + (text.length > 500 ? 15 : 0) - risks.length * 10)),
+  });
+}
+
 function normalizeStringList(value) {
   const items = Array.isArray(value) ? value : String(value || "").split(/\n/);
   return items.map((item) => cleanNullable(item)).filter(Boolean);
@@ -3257,6 +3394,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "generate_ai_insight") {
     return { result: await createAiInsight(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "research_account") {
+    return { result: await researchAccount(env, cleanNullable(input.accountId || input.payload?.accountId || input.payload?.id), { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   if (input.command === "generate_ai_notes") {
     return { result: await createCommunicationAiNotes(env, cleanNullable(input.communicationId || input.payload?.communicationId || input.payload?.id), input.workspaceId, auth) };
@@ -4949,6 +5089,61 @@ function cleanNullable(value) {
 function cleanEmail(value) {
   const cleaned = cleanNullable(value);
   return cleaned ? cleaned.toLowerCase() : "";
+}
+
+function normalizeResearchUrl(value) {
+  const cleaned = cleanNullable(value);
+  if (!cleaned) throw httpError(400, "Account domain or research URL is required");
+  const url = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+  const parsed = new URL(url);
+  if (!["http:", "https:"].includes(parsed.protocol)) throw httpError(400, "Research URL must use http or https");
+  return parsed.toString();
+}
+
+async function fetchResearchPage(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      headers: { "user-agent": "UserOrbit-CRM-ResearchBot/1.0" },
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get("content-type") || "";
+    const raw = contentType.includes("text") || contentType.includes("html") || contentType.includes("json") ? await response.text() : "";
+    return {
+      url,
+      status: response.status,
+      contentType,
+      title: extractHtmlTitle(raw),
+      description: extractMetaDescription(raw),
+      text: htmlToResearchText(raw).slice(0, 5000),
+    };
+  } catch (error) {
+    return { url, status: null, contentType: "", title: "", description: "", text: "", error: error.message || String(error) };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractHtmlTitle(html) {
+  return cleanNullable(String(html || "").match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " "));
+}
+
+function extractMetaDescription(html) {
+  return cleanNullable(String(html || "").match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["'][^>]*>/i)?.[1]);
+}
+
+function htmlToResearchText(html) {
+  return String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractEmailAddress(value) {

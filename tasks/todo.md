@@ -50,7 +50,8 @@
 - [x] Add provider-backed inbound email parse webhooks.
 - [x] Add AI call/meeting notes and follow-up generation.
 - [x] Add native Teams and Discord notification integrations.
-- [ ] Build the next Close-style CRM gaps: full Google/Microsoft OAuth calendar sync, deeper native integrations, and deeper AI enrichment.
+- [x] Add AI account website research and enrichment.
+- [ ] Build the next Close-style CRM gaps: full Google/Microsoft OAuth calendar sync, deeper native integrations, and enrichment-provider integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.

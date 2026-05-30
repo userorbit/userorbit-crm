@@ -908,7 +908,7 @@ export const appHtml = String.raw`<!doctype html>
               \${timelineList(account.timeline)}
             </div>
             <div class="panel">
-              <div class="panel-header"><div class="panel-title">AI insight</div><button id="generateAccountInsight" class="button">Generate</button></div>
+              <div class="panel-header"><div class="panel-title">AI insight</div><div class="toolbar"><button id="researchAccount" class="button">Research site</button><button id="generateAccountInsight" class="button">Generate</button></div></div>
               \${aiInsightsPanel(account.aiInsights)}
               <div class="panel-header"><div class="panel-title">Contacts</div></div>
               \${customFieldsTable(account.customFields)}
@@ -1895,6 +1895,14 @@ Content-Type: application/json
           await api("accounts/" + encodeURIComponent(state.selectedAccountId) + "/ai-insights", { method: "POST", body: "{}" });
           notice("AI insight generated.");
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
+          render();
+        });
+
+        $("#researchAccount")?.addEventListener("click", async () => {
+          if (!state.selectedAccountId) return;
+          const result = await api("accounts/" + encodeURIComponent(state.selectedAccountId) + "/research", { method: "POST", body: "{}" });
+          notice("Account research generated.");
+          state.selectedAccount = result.account || await api("accounts/" + encodeURIComponent(state.selectedAccountId));
           render();
         });
 

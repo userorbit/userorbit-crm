@@ -459,6 +459,30 @@ POST /api/agent/command
 
 Use `entity: "contact"` for a contact-level insight. Insights summarize recent context, next steps, risks, and a 0-100 score. When `OPENAI_API_KEY` is configured the app uses OpenAI's Responses API; otherwise it returns a deterministic local insight from CRM activity.
 
+Research an account website and store the result as an account insight:
+
+```http
+POST /api/accounts/<account_id>/research
+Content-Type: application/json
+
+{
+  "url": "https://example.com",
+  "updateObservation": true
+}
+```
+
+Equivalent agent command:
+
+```json
+{
+  "command": "research_account",
+  "accountId": "account_id",
+  "payload": { "updateObservation": true }
+}
+```
+
+If `url` is omitted, UserOrbit uses the account domain. The command fetches public page text, generates positioning and outreach signals, stores the result as an account AI insight, and updates the account observation unless `updateObservation` is `false`.
+
 Generate AI follow-up notes for a logged call, meeting, or note:
 
 ```http

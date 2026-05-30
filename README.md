@@ -313,6 +313,17 @@ curl -X POST http://localhost:8787/api/accounts/account-id/ai-insights \
 
 Account and contact detail pages include an AI insight panel. The API also supports `POST /api/contacts/<contact_id>/ai-insights` and agent command `generate_ai_insight`. When `OPENAI_API_KEY` is configured, the Worker uses OpenAI's Responses API at `/v1/responses`; otherwise it creates a local deterministic summary from CRM activity.
 
+### Research an account website
+
+```sh
+curl -X POST http://localhost:8787/api/accounts/account-id/research \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{ "updateObservation": true }'
+```
+
+Account detail includes a Research site button. The API fetches the account domain or supplied `url`, stores an AI research insight, and can refresh the account observation with the generated summary. Agents can call `research_account`.
+
 ### Generate AI call and meeting notes
 
 ```sh
@@ -411,6 +422,7 @@ Supported commands:
 - `send_email`
 - `send_message`
 - `generate_ai_insight`
+- `research_account`
 - `generate_ai_notes`
 - `run_sequences`
 - `run_warmup`
