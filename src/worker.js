@@ -390,7 +390,12 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path === "next-best-actions") {
-    return json(await getNextBestActions(env, workspaceId));
+    return json(await getNextBestActions(env, workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path.startsWith("next-best-actions/") && path.endsWith("/dismiss")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await dismissNextBestAction(env, decodeURIComponent(path.split("/")[1]), { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
   if (request.method === "GET" && path === "dashboard/preferences") {
@@ -953,7 +958,7 @@ async function getReports(env, workspaceId, auth) {
   };
 }
 
-async function getNextBestActions(env, workspaceId) {
+async function getNextBestActions(env, workspaceId, auth) {
   const closedStages = await getClosedOpportunityStages(env, workspaceId);
   const [overdueTasks, stalledOpportunities, engagedContacts, unworkedAccounts] = await Promise.all([
     env.DB.prepare(`
@@ -1096,9 +1101,34 @@ async function getNextBestActions(env, workspaceId) {
     })),
   ];
 
+  const dismissedRows = await env.DB.prepare(`
+    SELECT action_id FROM next_best_action_dismissals
+    WHERE workspace_id = ? AND user_id = ?
+  `).bind(workspaceId, auth.user.id).all();
+  const dismissed = new Set(dismissedRows.results.map((row) => row.action_id));
+
   return actions
+    .filter((action) => !dismissed.has(action.id))
     .sort((a, b) => b.priority - a.priority || String(b.lastActivityAt || "").localeCompare(String(a.lastActivityAt || "")))
     .slice(0, 25);
+}
+
+async function dismissNextBestAction(env, actionId, input, auth) {
+  const actions = await getNextBestActions(env, input.workspaceId, auth);
+  const action = actions.find((item) => item.id === actionId);
+  if (!action) throw httpError(404, "Recommendation not found");
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  const reason = cleanNullable(input.reason);
+  await env.DB.prepare(`
+    INSERT INTO next_best_action_dismissals (id, workspace_id, user_id, action_id, action_type, reason, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, user_id, action_id) DO UPDATE SET
+      reason = excluded.reason,
+      created_at = excluded.created_at
+  `).bind(id, input.workspaceId, auth.user.id, action.id, action.type, reason, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "next_best_action.dismiss", resource: "next_best_action", resourceId: action.id, metadata: { type: action.type, reason } });
+  return { ok: true, dismissed: action };
 }
 
 function nextBestAction(input) {

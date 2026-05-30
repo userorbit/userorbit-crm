@@ -925,12 +925,13 @@ export const appHtml = String.raw`<!doctype html>
       function nextBestActionsTable(actions = []) {
         if (!actions.length) return '<div class="empty">No recommended actions yet.</div>';
         return \`<table>
-          <thead><tr><th>Action</th><th>Account</th><th>Score</th></tr></thead>
+          <thead><tr><th>Action</th><th>Account</th><th>Score</th><th></th></tr></thead>
           <tbody>\${actions.slice(0, 8).map((item) => \`
             <tr>
               <td><strong>\${escapeHtml(item.title)}</strong><div class="subtitle">\${escapeHtml(item.reason || item.action || "")}</div></td>
               <td>\${escapeHtml(item.accountName || item.contactName || "")}<div class="subtitle">\${escapeHtml(nextBestActionType(item.type))}</div></td>
               <td><span class="pill">\${Number(item.priority || 0)}</span></td>
+              <td><button class="button" data-dismiss-next-best-action-id="\${escapeHtml(item.id)}">Dismiss</button></td>
             </tr>\`).join("")}</tbody>
         </table>\`;
       }
@@ -2314,6 +2315,17 @@ Content-Type: application/json
           notice("Dashboard saved.");
           await refresh();
         });
+
+        document.querySelectorAll("[data-dismiss-next-best-action-id]").forEach((node) => node.addEventListener("click", async () => {
+          const reason = window.prompt("Dismiss reason", "Not relevant right now");
+          if (reason === null) return;
+          await api("next-best-actions/" + encodeURIComponent(node.dataset.dismissNextBestActionId) + "/dismiss", {
+            method: "POST",
+            body: JSON.stringify({ reason }),
+          });
+          notice("Recommendation dismissed.");
+          await refresh();
+        }));
 
         $("#notificationPreferencesForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();

@@ -80,6 +80,7 @@
 - [x] Add iframe-friendly embedded dashboard share controls.
 - [x] Add workspace email template management.
 - [x] Add computed next-best-action queue.
+- [x] Add per-user dismissal controls for next-best actions.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -173,3 +174,5 @@ Added workspace daily send limits: email settings now include `workspaceDailySen
 Added workspace email template management: admins can create workspace-owned templates, list them alongside read-only seeded defaults, update/disable workspace templates through the API, and manage templates from Settings. Verified local migration, syntax checks, template create/list/update/delete API behavior, and Settings form/table markup.
 
 Added computed next-best actions: `/api/next-best-actions` ranks overdue tasks, stalled open opportunities, engaged contacts without open tasks, and unworked target accounts, and the dashboard exposes a Next best actions widget. Verified syntax checks, live API ranking output, and dashboard markup.
+
+Added per-user next-best-action dismissals: recommendations can be dismissed from the API or dashboard with a reason, dismissal is scoped to the signed-in user/workspace, and dismissed items are filtered out of future queue reads without mutating the underlying CRM record. Verified local migration, syntax checks, API dismissal filtering, and dashboard markup.

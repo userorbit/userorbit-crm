@@ -895,7 +895,7 @@ Filter accounts by custom fields with `cf_<field_key>` query params:
 GET /api/accounts?cf_company_size=11-50
 ```
 
-Use `GET /api/next-best-actions` before choosing daily rep work. It returns ranked workspace actions for overdue tasks, stalled opportunities, engaged contacts without an open task, and unworked target accounts. Prefer these recommendations when the user asks what to do next, then create a task, send a message, enroll a contact, or research the account depending on the action's `type` and `action` fields.
+Use `GET /api/next-best-actions` before choosing daily rep work. It returns ranked workspace actions for overdue tasks, stalled opportunities, engaged contacts without an open task, and unworked target accounts. Prefer these recommendations when the user asks what to do next, then create a task, send a message, enroll a contact, or research the account depending on the action's `type` and `action` fields. When a recommendation is not useful, dismiss it for the current user with `POST /api/next-best-actions/<url_encoded_action_id>/dismiss` and a short `reason`; dismissal hides the recommendation but does not alter the underlying CRM record.
 
 Send one manual email:
 

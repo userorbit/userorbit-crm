@@ -503,6 +503,15 @@ curl http://localhost:8787/api/next-best-actions \
 
 The action queue ranks overdue tasks, stalled open opportunities, engaged contacts without an open task, and unworked target accounts. It is computed from workspace CRM activity, needs no external AI service, and powers the dashboard's Next best actions widget.
 
+Dismiss a recommendation for the signed-in user without changing the underlying account, task, or opportunity:
+
+```sh
+curl -X POST http://localhost:8787/api/next-best-actions/task_due%3Atask-id/dismiss \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{ "reason": "Handled outside CRM" }'
+```
+
 ### Save report views
 
 ```sh
