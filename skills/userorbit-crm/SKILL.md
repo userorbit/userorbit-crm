@@ -305,6 +305,37 @@ Content-Type: application/json
 
 Supported `type` values are `call`, `meeting`, `sms`, `whatsapp`, and `note`. The `log_communication` agent command accepts the same fields in `payload`.
 
+Capture calendar meetings directly or from an ICS export:
+
+```http
+POST /api/calendar/events
+Content-Type: application/json
+
+{
+  "accountId": "account_id",
+  "contactId": "optional_contact_id",
+  "title": "Discovery meeting",
+  "startsAt": "2026-05-31T10:00:00.000Z",
+  "endsAt": "2026-05-31T10:30:00.000Z",
+  "location": "Zoom",
+  "meetingUrl": "https://meet.example.com/room",
+  "attendeeEmails": ["jane@example.com"]
+}
+```
+
+```http
+POST /api/calendar/import.ics
+Content-Type: application/json
+
+{
+  "accountId": "account_id",
+  "contactId": "optional_contact_id",
+  "ics": "BEGIN:VCALENDAR..."
+}
+```
+
+The `import_calendar_ics` agent command accepts the same payload as `POST /api/calendar/import.ics`. Imported meetings appear on account and contact timelines.
+
 Record a parsed inbound reply from an email provider, Cloudflare Email Worker, automation, or agent:
 
 ```http

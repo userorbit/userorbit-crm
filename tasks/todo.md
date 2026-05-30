@@ -34,6 +34,7 @@
 - [x] Add explicit workspace memberships and workspace-scoped invite access.
 - [x] Add advanced CSV import column mapping.
 - [x] Add communication activity logging for calls, meetings, messages, and notes.
+- [x] Add calendar meeting capture with ICS import.
 - [x] Add read-only viewer roles and enforce workspace write/admin permissions.
 - [x] Add configurable email open/click tracking and engagement reporting.
 - [ ] Add OAuth login, field-level permissions, and broader audit coverage.
@@ -92,3 +93,5 @@ Added role-based workspace permissions: invite roles now support `viewer`, read 
 Added email engagement tracking: workspace admins can enable open/click tracking, outbound emails get tracking IDs and first-party tracking links/pixels when configured, `/t/open/*` and `/t/click/*` record engagement, and reports plus account/contact email activity show open/click counts.
 
 Added reporting depth: `/api/reports` now includes owner performance and source conversion analytics, and the Reports UI shows rep workload/activity/pipeline/won value plus source contacted/replied/qualified/won conversion.
+
+Added calendar capture: `calendar_events` stores meetings, `/api/calendar/events` and `/api/calendar/import.ics` create timeline-linked meetings, the Calendar UI supports manual and ICS import flows, and agents can use `import_calendar_ics`.

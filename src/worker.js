@@ -278,6 +278,20 @@ async function routeApi(request, env, url, auth) {
     return json(await createCommunication(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "GET" && path === "calendar/events") {
+    return json(await listCalendarEvents(env, workspaceId));
+  }
+
+  if (request.method === "POST" && path === "calendar/events") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createCalendarEvent(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path === "calendar/import.ics") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await importCalendarIcs(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "PATCH" && path.startsWith("tasks/")) {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await updateTask(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }));
@@ -1020,6 +1034,81 @@ function parseJsonArray(value) {
   }
 }
 
+function normalizeEmailList(value) {
+  const items = Array.isArray(value) ? value : String(value || "").split(/[\n,;]/);
+  return [...new Set(items.map((item) => cleanEmail(item)).filter(Boolean))];
+}
+
+function parseIcsEvents(ics) {
+  const lines = unfoldIcsLines(String(ics || ""));
+  const events = [];
+  let current = null;
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") {
+      current = {};
+      continue;
+    }
+    if (line === "END:VEVENT") {
+      if (current) {
+        events.push({
+          uid: current.UID,
+          summary: current.SUMMARY,
+          description: current.DESCRIPTION,
+          location: current.LOCATION,
+          url: current.URL,
+          attendeeEmails: current.ATTENDEE || [],
+          startsAt: current.DTSTART ? parseIcsDateTime(current.DTSTART) : null,
+          endsAt: current.DTEND ? parseIcsDateTime(current.DTEND) : null,
+        });
+      }
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const rawName = line.slice(0, separator);
+    const name = rawName.split(";")[0].toUpperCase();
+    const value = unescapeIcsText(line.slice(separator + 1));
+    if (name === "ATTENDEE") {
+      current.ATTENDEE = [...(current.ATTENDEE || []), value.replace(/^mailto:/i, "")];
+    } else if (!current[name]) {
+      current[name] = value;
+    }
+  }
+  return events.filter((event) => event.startsAt);
+}
+
+function unfoldIcsLines(text) {
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const unfolded = [];
+  for (const line of lines) {
+    if (/^[ \t]/.test(line) && unfolded.length) {
+      unfolded[unfolded.length - 1] += line.slice(1);
+    } else if (line.trim()) {
+      unfolded.push(line.trim());
+    }
+  }
+  return unfolded;
+}
+
+function parseIcsDateTime(value) {
+  const raw = String(value || "").trim();
+  if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}T00:00:00.000Z`;
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/);
+  if (!match) throw httpError(400, `Invalid ICS datetime: ${raw}`);
+  const iso = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}${match[7] || "Z"}`;
+  return new Date(iso).toISOString();
+}
+
+function unescapeIcsText(value) {
+  return String(value || "")
+    .replace(/\\n/gi, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\");
+}
+
 async function createAccount(env, input) {
   requireFields(input, ["name"]);
   const workspaceId = input.workspaceId || (await resolveDefaultWorkspaceId(env));
@@ -1396,6 +1485,112 @@ async function createCommunication(env, input, auth) {
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "communication.create", resource: "communication_event", resourceId: id, metadata: { type, accountId: account.id, contactId } });
   await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
   return event;
+}
+
+async function listCalendarEvents(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT ce.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, u.name AS created_by_name
+    FROM calendar_events ce
+    JOIN accounts a ON a.id = ce.account_id
+    LEFT JOIN contacts c ON c.id = ce.contact_id
+    LEFT JOIN users u ON u.id = ce.created_by_user_id
+    WHERE ce.workspace_id = ?
+    ORDER BY ce.starts_at DESC
+    LIMIT 100
+  `).bind(workspaceId).all();
+  return rows.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) }));
+}
+
+async function createCalendarEvent(env, input, auth) {
+  requireFields(input, ["accountId", "title", "startsAt"]);
+  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
+  const contactId = cleanNullable(input.contactId);
+  if (contactId) {
+    await getRequired(env, "SELECT id FROM contacts WHERE id = ? AND account_id = ?", contactId, account.id);
+  }
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  const provider = cleanNullable(input.provider) || "manual";
+  const externalId = cleanNullable(input.externalId || input.uid);
+  const attendeeEmails = normalizeEmailList(input.attendeeEmails || input.attendee_emails);
+  const existing = externalId ? await env.DB.prepare("SELECT * FROM calendar_events WHERE workspace_id = ? AND provider = ? AND external_id = ?").bind(input.workspaceId, provider, externalId).first() : null;
+  if (existing) {
+    await env.DB.prepare(`
+      UPDATE calendar_events
+      SET account_id = ?, contact_id = ?, title = ?, description = ?, location = ?, meeting_url = ?,
+          attendee_emails_json = ?, starts_at = ?, ends_at = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+    `).bind(
+      account.id,
+      contactId,
+      input.title.trim(),
+      cleanNullable(input.description),
+      cleanNullable(input.location),
+      cleanNullable(input.meetingUrl || input.meeting_url),
+      attendeeEmails.length ? JSON.stringify(attendeeEmails) : null,
+      normalizeDateTime(input.startsAt, "startsAt"),
+      input.endsAt ? normalizeDateTime(input.endsAt, "endsAt") : null,
+      now,
+      existing.id,
+      input.workspaceId,
+    ).run();
+  } else {
+    await env.DB.prepare(`
+      INSERT INTO calendar_events (
+        id, workspace_id, account_id, contact_id, created_by_user_id, external_id, provider,
+        title, description, location, meeting_url, attendee_emails_json, starts_at, ends_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id,
+      input.workspaceId,
+      account.id,
+      contactId,
+      auth.user.id,
+      externalId,
+      provider,
+      input.title.trim(),
+      cleanNullable(input.description),
+      cleanNullable(input.location),
+      cleanNullable(input.meetingUrl || input.meeting_url),
+      attendeeEmails.length ? JSON.stringify(attendeeEmails) : null,
+      normalizeDateTime(input.startsAt, "startsAt"),
+      input.endsAt ? normalizeDateTime(input.endsAt, "endsAt") : null,
+      now,
+      now,
+    ).run();
+  }
+
+  const event = externalId
+    ? await getRequired(env, "SELECT * FROM calendar_events WHERE workspace_id = ? AND provider = ? AND external_id = ?", input.workspaceId, provider, externalId)
+    : await getRequired(env, "SELECT * FROM calendar_events WHERE id = ?", id);
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "calendar_event.upsert", resource: "calendar_event", resourceId: event.id, metadata: { accountId: account.id, contactId, provider } });
+  await deliverWebhooks(env, input.workspaceId, "calendar_event.created", event.id, event);
+  return { ...event, attendee_emails: parseJsonArray(event.attendee_emails_json) };
+}
+
+async function importCalendarIcs(env, input, auth) {
+  requireFields(input, ["accountId", "ics"]);
+  const events = parseIcsEvents(input.ics);
+  if (!events.length) throw httpError(400, "No VEVENT entries found in ICS");
+  const created = [];
+  for (const event of events) {
+    created.push(await createCalendarEvent(env, {
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      contactId: input.contactId,
+      provider: input.provider || "ics",
+      externalId: event.uid,
+      title: event.summary || "Calendar event",
+      description: event.description,
+      location: event.location,
+      meetingUrl: event.url || event.meetingUrl,
+      attendeeEmails: event.attendeeEmails,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+    }, auth));
+  }
+  return { imported: created.length, events: created };
 }
 
 async function updateTask(env, id, input) {
@@ -1992,6 +2187,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "log_communication") {
     return { result: await createCommunication(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "import_calendar_ics") {
+    return { result: await importCalendarIcs(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   throw httpError(400, "Unsupported agent command");
 }
@@ -2694,7 +2892,7 @@ async function maybeCompleteWarmupPlan(env, planId) {
 
 async function getAccount(env, id, workspaceId) {
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, workspaceId);
-  const [contacts, opportunities, tasks, emails, communications, customFields] = await Promise.all([
+  const [contacts, opportunities, tasks, emails, communications, calendarEvents, customFields] = await Promise.all([
     env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare("SELECT * FROM opportunities WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare(`
@@ -2722,6 +2920,15 @@ async function getAccount(env, id, workspaceId) {
       ORDER BY ce.occurred_at DESC
       LIMIT 100
     `).bind(id, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT ce.*, c.name AS contact_name, c.email AS contact_email, u.name AS created_by_name
+      FROM calendar_events ce
+      LEFT JOIN contacts c ON c.id = ce.contact_id
+      LEFT JOIN users u ON u.id = ce.created_by_user_id
+      WHERE ce.account_id = ? AND ce.workspace_id = ?
+      ORDER BY ce.starts_at DESC
+      LIMIT 100
+    `).bind(id, workspaceId).all(),
     getCustomFieldValues(env, workspaceId, "account", id),
   ]);
 
@@ -2732,8 +2939,9 @@ async function getAccount(env, id, workspaceId) {
     tasks: tasks.results,
     emails: emails.results,
     communications: communications.results,
+    calendarEvents: calendarEvents.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) })),
     customFields,
-    timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results, communications: communications.results }),
+    timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }),
   };
 }
 
@@ -2747,7 +2955,7 @@ async function getContact(env, id, workspaceId) {
     id,
     workspaceId,
   );
-  const [tasks, opportunities, enrollments, emails, communications] = await Promise.all([
+  const [tasks, opportunities, enrollments, emails, communications, calendarEvents] = await Promise.all([
     env.DB.prepare(`
       SELECT * FROM tasks
       WHERE contact_id = ? AND workspace_id = ?
@@ -2781,6 +2989,14 @@ async function getContact(env, id, workspaceId) {
       ORDER BY ce.occurred_at DESC
       LIMIT 100
     `).bind(id, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT ce.*, u.name AS created_by_name
+      FROM calendar_events ce
+      LEFT JOIN users u ON u.id = ce.created_by_user_id
+      WHERE ce.contact_id = ? AND ce.workspace_id = ?
+      ORDER BY ce.starts_at DESC
+      LIMIT 100
+    `).bind(id, workspaceId).all(),
   ]);
   return {
     ...contact,
@@ -2789,7 +3005,8 @@ async function getContact(env, id, workspaceId) {
     enrollments: enrollments.results,
     emails: emails.results,
     communications: communications.results,
-    timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results, communications: communications.results }),
+    calendarEvents: calendarEvents.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) })),
+    timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }),
   };
 }
 
@@ -2834,7 +3051,7 @@ function normalizeCustomFieldValue(field, value) {
   return String(value).trim();
 }
 
-function buildAccountTimeline({ account, contacts, opportunities, tasks, emails, communications = [] }) {
+function buildAccountTimeline({ account, contacts, opportunities, tasks, emails, communications = [], calendarEvents = [] }) {
   const items = [
     {
       id: `account:${account.id}`,
@@ -2878,11 +3095,18 @@ function buildAccountTimeline({ account, contacts, opportunities, tasks, emails,
       detail: [event.contact_name || event.contact_email, event.direction, event.outcome, event.created_by_name].filter(Boolean).join(" · "),
       happenedAt: event.occurred_at || event.created_at,
     })),
+    ...calendarEvents.map((event) => ({
+      id: `calendar:${event.id}`,
+      type: "calendar",
+      title: event.title,
+      detail: [event.contact_name || event.contact_email, event.location, event.meeting_url, event.created_by_name].filter(Boolean).join(" · "),
+      happenedAt: event.starts_at || event.created_at,
+    })),
   ];
   return items.sort((a, b) => String(b.happenedAt || "").localeCompare(String(a.happenedAt || "")));
 }
 
-function buildContactTimeline({ contact, tasks, opportunities, enrollments, emails, communications = [] }) {
+function buildContactTimeline({ contact, tasks, opportunities, enrollments, emails, communications = [], calendarEvents = [] }) {
   const items = [
     {
       id: `contact:${contact.id}`,
@@ -2925,6 +3149,13 @@ function buildContactTimeline({ contact, tasks, opportunities, enrollments, emai
       title: event.subject,
       detail: [event.direction, event.outcome, event.created_by_name].filter(Boolean).join(" · "),
       happenedAt: event.occurred_at || event.created_at,
+    })),
+    ...calendarEvents.map((event) => ({
+      id: `calendar:${event.id}`,
+      type: "calendar",
+      title: event.title,
+      detail: [event.location, event.meeting_url, event.created_by_name].filter(Boolean).join(" · "),
+      happenedAt: event.starts_at || event.created_at,
     })),
   ];
   return items.sort((a, b) => String(b.happenedAt || "").localeCompare(String(a.happenedAt || "")));
@@ -3322,6 +3553,12 @@ function normalizeDate(value, field) {
     throw httpError(400, `${field} must use YYYY-MM-DD format`);
   }
   return date;
+}
+
+function normalizeDateTime(value, field) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) throw httpError(400, `${field} must be a valid date-time`);
+  return date.toISOString();
 }
 
 function addDaysDate(date, days) {

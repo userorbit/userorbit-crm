@@ -563,6 +563,7 @@ export const appHtml = String.raw`<!doctype html>
           <button data-view="warmup">Warmup</button>
           <button data-view="tasks">Tasks</button>
           <button data-view="communications">Comms</button>
+          <button data-view="calendar">Calendar</button>
           <button data-view="api">Agent API</button>
           <button data-view="settings">Settings</button>
         </nav>
@@ -597,6 +598,7 @@ export const appHtml = String.raw`<!doctype html>
         warmup: null,
         tasks: [],
         communications: [],
+        calendarEvents: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
         workspaceTokens: [],
         teamInvitations: [],
@@ -654,7 +656,7 @@ export const appHtml = String.raw`<!doctype html>
         }
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -667,13 +669,14 @@ export const appHtml = String.raw`<!doctype html>
           api("warmup"),
           api("tasks"),
           api("communications"),
+          api("calendar/events"),
           api("email/settings"),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -701,6 +704,7 @@ export const appHtml = String.raw`<!doctype html>
           warmup: renderWarmup,
           tasks: renderTasks,
           communications: renderCommunications,
+          calendar: renderCalendar,
           api: renderApi,
           settings: renderSettings,
         };
@@ -872,6 +876,7 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opens", account.emails.reduce((total, email) => total + Number(email.open_count || 0), 0))}
             \${metric("Clicks", account.emails.reduce((total, email) => total + Number(email.click_count || 0), 0))}
             \${metric("Comms", account.communications.length)}
+            \${metric("Meetings", account.calendarEvents.length)}
             \${metric("Status", escapeHtml(account.status))}
           </div>
           <div class="columns" style="margin-top:14px">
@@ -897,6 +902,8 @@ export const appHtml = String.raw`<!doctype html>
               \${emailActivityTable(account.emails, true)}
               <div class="panel-header"><div class="panel-title">Communication activity</div></div>
               \${communicationTable(account.communications)}
+              <div class="panel-header"><div class="panel-title">Calendar activity</div></div>
+              \${calendarTable(account.calendarEvents)}
             </div>
           </div>\`;
       }
@@ -929,6 +936,7 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opens", contact.emails.reduce((total, email) => total + Number(email.open_count || 0), 0))}
             \${metric("Clicks", contact.emails.reduce((total, email) => total + Number(email.click_count || 0), 0))}
             \${metric("Comms", contact.communications.length)}
+            \${metric("Meetings", contact.calendarEvents.length)}
             \${metric("Status", escapeHtml(contact.status))}
           </div>
           <div class="columns" style="margin-top:14px">
@@ -953,6 +961,8 @@ export const appHtml = String.raw`<!doctype html>
               \${emailActivityTable(contact.emails)}
               <div class="panel-header"><div class="panel-title">Communication activity</div></div>
               \${communicationTable(contact.communications)}
+              <div class="panel-header"><div class="panel-title">Calendar activity</div></div>
+              \${calendarTable(contact.calendarEvents)}
             </div>
           </div>\`;
       }
@@ -1169,6 +1179,39 @@ export const appHtml = String.raw`<!doctype html>
           </div>\`;
       }
 
+      function renderCalendar() {
+        return header("Calendar", "Capture meetings from manual entry or ICS calendar exports.") + \`
+          <div class="columns">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Recent meetings</div></div>
+              \${calendarTable(state.calendarEvents)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Add meeting</div></div>
+              <form id="calendarEventForm" class="stack">
+                <div class="form-grid">
+                  <label>Account<select name="accountId" required>\${state.accounts.map((account) => '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(account.name) + '</option>').join("")}</select></label>
+                  <label>Contact ID<input name="contactId" placeholder="Optional contact id" /></label>
+                  <label class="full">Title<input name="title" required placeholder="Discovery meeting" /></label>
+                  <label>Starts at<input name="startsAt" type="datetime-local" required /></label>
+                  <label>Ends at<input name="endsAt" type="datetime-local" /></label>
+                  <label>Location<input name="location" placeholder="Zoom / Office" /></label>
+                  <label>Meeting URL<input name="meetingUrl" placeholder="https://meet.example.com/..." /></label>
+                  <label class="full">Attendees<textarea name="attendeeEmails" placeholder="jane@example.com&#10;alex@example.com"></textarea></label>
+                  <label class="full">Description<textarea name="description" placeholder="Agenda, notes, next steps"></textarea></label>
+                </div>
+                <button class="button primary">Add meeting</button>
+              </form>
+              <form id="calendarIcsForm" class="stack" style="border-top:1px solid var(--border)">
+                <label>Account<select name="accountId" required>\${state.accounts.map((account) => '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(account.name) + '</option>').join("")}</select></label>
+                <label>Contact ID<input name="contactId" placeholder="Optional contact id" /></label>
+                <label>ICS data<textarea name="ics" required placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;SUMMARY:Discovery meeting&#10;..."></textarea></label>
+                <button class="button primary">Import ICS</button>
+              </form>
+            </div>
+          </div>\`;
+      }
+
       function renderWarmup() {
         const warmup = state.warmup || { mailboxes: [], plans: [], recentMessages: [], summary: {} };
         const summary = warmup.summary || {};
@@ -1268,6 +1311,17 @@ export const appHtml = String.raw`<!doctype html>
           item.account_name || "",
           item.contact_name || item.contact_email || "",
           [item.direction, item.outcome].filter(Boolean).join(" / "),
+        ]));
+      }
+
+      function calendarTable(items) {
+        if (!items?.length) return '<div class="empty">No calendar activity yet.</div>';
+        return reportTable(["Starts", "Title", "Account", "Contact", "Location"], items.map((item) => [
+          formatDateTime(item.starts_at),
+          item.title,
+          item.account_name || "",
+          item.contact_name || item.contact_email || "",
+          item.meeting_url || item.location || "",
         ]));
       }
 
@@ -1608,6 +1662,42 @@ Content-Type: application/json
             }),
           });
           notice("Communication logged.");
+          await refresh();
+        });
+
+        $("#calendarEventForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("calendar/events", {
+            method: "POST",
+            body: JSON.stringify({
+              accountId: form.get("accountId"),
+              contactId: form.get("contactId") || undefined,
+              title: form.get("title"),
+              startsAt: form.get("startsAt"),
+              endsAt: form.get("endsAt") || undefined,
+              location: form.get("location") || undefined,
+              meetingUrl: form.get("meetingUrl") || undefined,
+              attendeeEmails: String(form.get("attendeeEmails") || "").split(/\\n|,/).map((email) => email.trim()).filter(Boolean),
+              description: form.get("description") || undefined,
+            }),
+          });
+          notice("Calendar event added.");
+          await refresh();
+        });
+
+        $("#calendarIcsForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const result = await api("calendar/import.ics", {
+            method: "POST",
+            body: JSON.stringify({
+              accountId: form.get("accountId"),
+              contactId: form.get("contactId") || undefined,
+              ics: form.get("ics"),
+            }),
+          });
+          notice("Imported " + result.imported + " calendar event(s).");
           await refresh();
         });
 

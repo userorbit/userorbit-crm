@@ -10,6 +10,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Account detail timelines with contacts, opportunities, tasks, and email activity.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
 - Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
+- Calendar meeting capture with manual entry and ICS import.
 - Pipeline board with workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending, inbound reply capture, and scheduled sequence processing.
@@ -172,6 +173,21 @@ curl -X POST http://localhost:8787/api/email/inbound \
 
 Inbound emails are matched to contacts by `fromEmail` or `contactId`, recorded on account and contact timelines, and pause active sequence enrollments by marking the contact as replied.
 
+### Import calendar meetings
+
+```sh
+curl -X POST http://localhost:8787/api/calendar/import.ics \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "accountId": "account-id",
+    "contactId": "optional-contact-id",
+    "ics": "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:meeting-1\nSUMMARY:Discovery call\nDTSTART:20260531T100000Z\nDTEND:20260531T103000Z\nEND:VEVENT\nEND:VCALENDAR"
+  }'
+```
+
+Calendar events are attached to account/contact timelines and can also be created directly with `POST /api/calendar/events`.
+
 ### Configure email tracking
 
 ```sh
@@ -239,5 +255,6 @@ Supported commands:
 - `run_warmup`
 - `create_task`
 - `log_communication`
+- `import_calendar_ics`
 
 When SMTP credentials are missing, emails are recorded with status `drafted` instead of being sent. This keeps local development safe.
