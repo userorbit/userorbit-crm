@@ -602,6 +602,7 @@ export const appHtml = String.raw`<!doctype html>
         communications: [],
         messageChannels: { channels: [], deliveries: [] },
         calendarEvents: [],
+        calendarSources: [],
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
         integrations: { integrations: [], deliveries: [] },
@@ -662,7 +663,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -677,6 +678,7 @@ export const appHtml = String.raw`<!doctype html>
           api("communications"),
           canWrite ? api("message-channels") : Promise.resolve({ channels: [], deliveries: [] }),
           api("calendar/events"),
+          canWrite ? api("calendar/sources") : Promise.resolve([]),
           api("email/settings"),
           canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
@@ -685,7 +687,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1230,6 +1232,8 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Recent meetings</div></div>
               \${calendarTable(state.calendarEvents)}
+              <div class="panel-header"><div class="panel-title">Calendar sources</div></div>
+              \${calendarSourcesTable(state.calendarSources)}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Add meeting</div></div>
@@ -1253,8 +1257,31 @@ export const appHtml = String.raw`<!doctype html>
                 <label>ICS data<textarea name="ics" required placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;SUMMARY:Discovery meeting&#10;..."></textarea></label>
                 <button class="button primary">Import ICS</button>
               </form>
+              <form id="calendarSourceForm" class="stack" style="border-top:1px solid var(--border)">
+                <label>Name<input name="name" required placeholder="Jane's calendar feed" /></label>
+                <label>Account<select name="accountId" required>\${state.accounts.map((account) => '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(account.name) + '</option>').join("")}</select></label>
+                <label>Contact ID<input name="contactId" placeholder="Optional contact id" /></label>
+                <label>ICS feed URL<input name="url" required placeholder="webcal://calendar.example.com/private.ics" /></label>
+                <label>Sync interval minutes<input name="syncIntervalMinutes" type="number" min="15" step="15" value="1440" /></label>
+                <button class="button primary">Create calendar source</button>
+              </form>
             </div>
           </div>\`;
+      }
+
+      function calendarSourcesTable(sources = []) {
+        if (!sources.length) return '<div class="empty">No calendar sources yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Account</th><th>Status</th><th>Last sync</th><th></th></tr></thead>
+          <tbody>\${sources.map((source) => \`
+            <tr>
+              <td>\${escapeHtml(source.name)}<div class="subtitle">\${escapeHtml(source.url)}</div></td>
+              <td>\${escapeHtml(source.account_name || "")}</td>
+              <td>\${source.last_error ? '<span class="pill red">error</span>' : '<span class="pill">' + escapeHtml(source.status) + '</span>'}<div class="subtitle">\${escapeHtml(source.last_error || "")}</div></td>
+              <td>\${escapeHtml(source.last_synced_at ? formatDateTime(source.last_synced_at) : "Never")}</td>
+              <td><button class="button" data-run-calendar-source-id="\${escapeHtml(source.id)}">Sync</button>\${source.status === "active" ? '<button class="button" data-disable-calendar-source-id="' + escapeHtml(source.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
       }
 
       function renderForms() {
@@ -1877,6 +1904,35 @@ Content-Type: application/json
           notice("Imported " + result.imported + " calendar event(s).");
           await refresh();
         });
+
+        $("#calendarSourceForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("calendar/sources", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              accountId: form.get("accountId"),
+              contactId: form.get("contactId") || undefined,
+              url: form.get("url"),
+              syncIntervalMinutes: Number(form.get("syncIntervalMinutes") || 1440),
+            }),
+          });
+          notice("Calendar source created.");
+          await refresh();
+        });
+
+        document.querySelectorAll("[data-run-calendar-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          const result = await api("calendar/sources/" + encodeURIComponent(node.dataset.runCalendarSourceId) + "/run", { method: "POST", body: "{}" });
+          notice("Imported " + result.imported + " calendar event(s).");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-calendar-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("calendar/sources/" + encodeURIComponent(node.dataset.disableCalendarSourceId), { method: "DELETE" });
+          notice("Calendar source disabled.");
+          await refresh();
+        }));
 
         $("#leadFormCreate")?.addEventListener("submit", async (event) => {
           event.preventDefault();

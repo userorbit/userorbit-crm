@@ -12,6 +12,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
 - Provider-backed SMS and WhatsApp channels through Twilio-compatible outbound and inbound messaging.
 - Calendar meeting capture with manual entry and ICS import.
+- Calendar source sync from ICS/webcal feeds.
 - Public lead capture forms that create or match accounts and contacts.
 - Pipeline board with workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
@@ -203,6 +204,30 @@ curl -X POST http://localhost:8787/api/calendar/import.ics \
 ```
 
 Calendar events are attached to account/contact timelines and can also be created directly with `POST /api/calendar/events`.
+
+### Sync an ICS calendar feed
+
+```sh
+curl -X POST http://localhost:8787/api/calendar/sources \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Sales calendar",
+    "accountId": "account-id",
+    "contactId": "optional-contact-id",
+    "url": "webcal://calendar.example.com/private.ics",
+    "syncIntervalMinutes": 1440
+  }'
+```
+
+Run a source immediately:
+
+```sh
+curl -X POST http://localhost:8787/api/calendar/sources/source-id/run \
+  -H "authorization: Bearer $CRM_API_TOKEN"
+```
+
+Active sources are also checked by the scheduled Worker. Feed events are upserted by ICS UID and attached to account/contact timelines.
 
 ### Configure email tracking
 

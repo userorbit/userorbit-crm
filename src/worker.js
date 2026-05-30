@@ -33,6 +33,7 @@ const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer"
 const INTEGRATION_TYPES = new Set(["slack"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
+const CALENDAR_SOURCE_TYPES = new Set(["ics_feed"]);
 
 export default {
   async fetch(request, env) {
@@ -357,9 +358,29 @@ async function routeApi(request, env, url, auth) {
     return json(await listCalendarEvents(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "calendar/sources") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await listCalendarSources(env, workspaceId));
+  }
+
   if (request.method === "POST" && path === "calendar/events") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createCalendarEvent(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path === "calendar/sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createCalendarSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path.startsWith("calendar/sources/") && path.endsWith("/run")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await syncCalendarSource(env, path.split("/")[2], workspaceId, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("calendar/sources/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableCalendarSource(env, path.split("/")[2], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "calendar/import.ics") {
@@ -1983,6 +2004,100 @@ async function listCalendarEvents(env, workspaceId) {
   return rows.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) }));
 }
 
+async function listCalendarSources(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT cs.*, a.name AS account_name, c.name AS contact_name, u.name AS created_by_name
+    FROM calendar_sources cs
+    JOIN accounts a ON a.id = cs.account_id
+    LEFT JOIN contacts c ON c.id = cs.contact_id
+    LEFT JOIN users u ON u.id = cs.created_by_user_id
+    WHERE cs.workspace_id = ?
+    ORDER BY cs.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results;
+}
+
+async function createCalendarSource(env, input, auth) {
+  requireFields(input, ["name", "accountId", "url"]);
+  const type = normalizeEnum(input.type || "ics_feed", CALENDAR_SOURCE_TYPES, "type");
+  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
+  const contactId = cleanNullable(input.contactId);
+  if (contactId) {
+    await getRequired(env, "SELECT id FROM contacts WHERE id = ? AND account_id = ?", contactId, account.id);
+  }
+  const url = normalizeCalendarSourceUrl(input.url);
+  const interval = Math.max(15, Math.min(10080, Number(input.syncIntervalMinutes || input.sync_interval_minutes || 1440)));
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO calendar_sources (
+      id, workspace_id, account_id, contact_id, created_by_user_id, name, type, url, provider,
+      status, sync_interval_minutes, last_synced_at, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, account.id, contactId, auth.user.id, input.name.trim(), type, url, cleanNullable(input.provider) || type, interval, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "calendar_source.create", resource: "calendar_source", resourceId: id, metadata: { accountId: account.id, contactId, type } });
+  return getRequired(env, "SELECT * FROM calendar_sources WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+}
+
+async function disableCalendarSource(env, id, workspaceId, auth) {
+  const source = await getRequired(env, "SELECT * FROM calendar_sources WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE calendar_sources SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "calendar_source.disable", resource: "calendar_source", resourceId: id, metadata: { name: source.name, type: source.type } });
+  return { ok: true };
+}
+
+async function syncCalendarSource(env, id, workspaceId, auth = null) {
+  const source = await getRequired(env, "SELECT * FROM calendar_sources WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  try {
+    const response = await fetch(source.url, { headers: { "user-agent": "UserOrbit-CRM-CalendarSync" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const ics = await response.text();
+    const result = await importCalendarIcs(env, {
+      workspaceId,
+      accountId: source.account_id,
+      contactId: source.contact_id,
+      provider: `calendar_source:${source.id}`,
+      ics,
+    }, auth || { user: { id: source.created_by_user_id || null } });
+    await env.DB.prepare("UPDATE calendar_sources SET last_synced_at = ?, last_error = NULL, updated_at = ? WHERE id = ?").bind(now, now, source.id).run();
+    if (auth?.user?.id) {
+      await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "calendar_source.sync", resource: "calendar_source", resourceId: source.id, metadata: { imported: result.imported } });
+    }
+    return { sourceId: source.id, imported: result.imported, events: result.events };
+  } catch (error) {
+    const message = error.message || String(error);
+    await env.DB.prepare("UPDATE calendar_sources SET last_synced_at = ?, last_error = ?, updated_at = ? WHERE id = ?").bind(now, message, now, source.id).run();
+    throw httpError(400, `Calendar sync failed: ${message}`);
+  }
+}
+
+async function syncDueCalendarSources(env, limit = 10) {
+  const now = new Date();
+  const rows = await env.DB.prepare(`
+    SELECT *
+    FROM calendar_sources
+    WHERE status = 'active'
+    ORDER BY COALESCE(last_synced_at, '1970-01-01T00:00:00.000Z') ASC
+    LIMIT ?
+  `).bind(limit).all();
+  const items = [];
+  for (const source of rows.results) {
+    const last = source.last_synced_at ? new Date(source.last_synced_at) : new Date(0);
+    const dueAt = new Date(last.getTime() + Number(source.sync_interval_minutes || 1440) * 60 * 1000);
+    if (dueAt > now) continue;
+    try {
+      const result = await syncCalendarSource(env, source.id, source.workspace_id);
+      items.push({ sourceId: source.id, status: "synced", imported: result.imported });
+    } catch (error) {
+      items.push({ sourceId: source.id, status: "failed", error: error.message || String(error) });
+    }
+  }
+  return { processed: items.length, items };
+}
+
 async function createCalendarEvent(env, input, auth) {
   requireFields(input, ["accountId", "title", "startsAt"]);
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
@@ -2401,11 +2516,12 @@ async function resolveInboundContact(env, input) {
 }
 
 async function processScheduledJobs(env) {
-  const [sequences, warmup] = await Promise.all([
+  const [sequences, warmup, calendar] = await Promise.all([
     processDueSequenceEmails(env, { limit: 20 }),
     processDueWarmupEmails(env, { limit: 1 }),
+    syncDueCalendarSources(env, 5),
   ]);
-  return { sequences, warmup };
+  return { sequences, warmup, calendar };
 }
 
 async function getWarmupOverview(env) {
@@ -4512,6 +4628,14 @@ function normalizeWebhookUrl(value) {
   const url = cleanNullable(value);
   if (!url || !/^https?:\/\//i.test(url)) throw httpError(400, "Webhook URL must start with http:// or https://");
   return url;
+}
+
+function normalizeCalendarSourceUrl(value) {
+  const raw = cleanNullable(value);
+  if (!raw) throw httpError(400, "Calendar URL is required");
+  const normalized = raw.replace(/^webcal:\/\//i, "https://");
+  if (!/^https?:\/\//i.test(normalized)) throw httpError(400, "Calendar URL must start with https://, http://, or webcal://");
+  return normalized;
 }
 
 function normalizeWebhookEvents(value) {

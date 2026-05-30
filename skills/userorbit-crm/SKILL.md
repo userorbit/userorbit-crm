@@ -461,6 +461,28 @@ Content-Type: application/json
 
 The `import_calendar_ics` agent command accepts the same payload as `POST /api/calendar/import.ics`. Imported meetings appear on account and contact timelines.
 
+Create a recurring ICS/webcal calendar source:
+
+```http
+POST /api/calendar/sources
+
+{
+  "name": "Sales calendar",
+  "accountId": "account_id",
+  "contactId": "optional_contact_id",
+  "url": "webcal://calendar.example.com/private.ics",
+  "syncIntervalMinutes": 1440
+}
+```
+
+Run a source immediately:
+
+```http
+POST /api/calendar/sources/<source_id>/run
+```
+
+List sources with `GET /api/calendar/sources`. Active sources are also checked by the scheduled Worker, and events are upserted by ICS UID.
+
 Record a parsed inbound reply from an email provider, Cloudflare Email Worker, automation, or agent:
 
 ```http
