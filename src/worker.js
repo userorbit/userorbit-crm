@@ -32,7 +32,7 @@ const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
-const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive"]);
+const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
@@ -1077,7 +1077,9 @@ async function runNativeImportSource(env, id, workspaceId, auth) {
       ? await runHubSpotImport(env, source, workspaceId, auth)
       : source.provider === "pipedrive"
         ? await runPipedriveImport(env, source, workspaceId, auth)
-        : (() => { throw httpError(400, "Unsupported native import provider"); })();
+        : source.provider === "salesforce"
+          ? await runSalesforceImport(env, source, workspaceId, auth)
+          : (() => { throw httpError(400, "Unsupported native import provider"); })();
     await env.DB.prepare("UPDATE workspace_native_import_sources SET last_run_at = ?, last_result_json = ?, last_error = NULL, updated_at = ? WHERE id = ?")
       .bind(now, JSON.stringify(result), now, source.id)
       .run();
@@ -1288,6 +1290,104 @@ function pipedrivePrimaryValue(value) {
 function pipedriveEntityId(value) {
   if (value && typeof value === "object") return value.value || value.id;
   return value;
+}
+
+async function runSalesforceImport(env, source, workspaceId, auth) {
+  const config = parseJsonObject(source.config_json);
+  const limit = Math.min(250, Math.max(1, Number(config.limit || 50)));
+  const [accounts, contacts] = await Promise.all([
+    fetchSalesforceQuery(config, `SELECT Id, Name, Website, Industry, Description, BillingCountry FROM Account ORDER BY LastModifiedDate DESC LIMIT ${limit}`),
+    fetchSalesforceQuery(config, `SELECT Id, FirstName, LastName, Name, Email, Phone, Title, AccountId, Account.Name, Account.Website FROM Contact ORDER BY LastModifiedDate DESC LIMIT ${limit}`),
+  ]);
+  const accountBySalesforceId = new Map();
+  const accountByName = new Map();
+  const summary = { accounts: accounts.length, contacts: contacts.length, accountsCreated: 0, accountsMatched: 0, contactsCreated: 0, contactsExisting: 0, contactsConflicted: 0, contactsSkipped: 0 };
+  const results = [];
+  for (const sfAccount of accounts) {
+    const name = cleanNullable(sfAccount.Name);
+    if (!name) continue;
+    const domain = cleanDomain(sfAccount.Website);
+    const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
+    const account = existing || await createAccount(env, {
+      workspaceId,
+      auth,
+      auditUserId: auth.user.id,
+      name,
+      domain,
+      source: `${source.name}: Salesforce`,
+      observation: [cleanNullable(sfAccount.Description), cleanNullable(sfAccount.Industry) ? `Industry: ${sfAccount.Industry}` : "", cleanNullable(sfAccount.BillingCountry) ? `Country: ${sfAccount.BillingCountry}` : ""].filter(Boolean).join("\n"),
+    });
+    if (existing) summary.accountsMatched += 1;
+    else summary.accountsCreated += 1;
+    accountBySalesforceId.set(String(sfAccount.Id), account.id);
+    accountByName.set(name.toLowerCase(), account.id);
+    if (domain) accountByName.set(domain.toLowerCase(), account.id);
+    results.push({ type: "account", action: existing ? "matched" : "created", accountId: account.id, salesforceId: sfAccount.Id, name });
+  }
+  for (const sfContact of contacts) {
+    const email = cleanEmail(sfContact.Email);
+    const name = cleanNullable(sfContact.Name) || [cleanNullable(sfContact.FirstName), cleanNullable(sfContact.LastName)].filter(Boolean).join(" ") || email;
+    if (!email || !name) {
+      summary.contactsSkipped += 1;
+      continue;
+    }
+    const sfAccountId = cleanNullable(sfContact.AccountId);
+    const sfAccountName = cleanNullable(sfContact.Account?.Name);
+    const domain = cleanDomain(sfContact.Account?.Website) || email.split("@")[1] || "";
+    let accountId = sfAccountId ? accountBySalesforceId.get(sfAccountId) : null;
+    if (!accountId && sfAccountName) accountId = accountByName.get(sfAccountName.toLowerCase());
+    if (!accountId && domain) accountId = accountByName.get(domain.toLowerCase());
+    if (!accountId) {
+      const accountName = sfAccountName || domain || `${name} account`;
+      const existing = await findImportAccountMatch(env, workspaceId, { name: accountName, domain });
+      const account = existing || await createAccount(env, { workspaceId, auth, auditUserId: auth.user.id, name: accountName, domain, source: `${source.name}: Salesforce contact` });
+      accountId = account.id;
+      if (existing) summary.accountsMatched += 1;
+      else summary.accountsCreated += 1;
+      accountByName.set(accountName.toLowerCase(), account.id);
+      if (domain) accountByName.set(domain.toLowerCase(), account.id);
+    }
+    const created = await createImportContactIfMissing(env, workspaceId, accountId, {
+      name,
+      email,
+      title: cleanNullable(sfContact.Title),
+      phone: cleanNullable(sfContact.Phone),
+    });
+    if (created.action === "created") summary.contactsCreated += 1;
+    else if (created.action === "existing") summary.contactsExisting += 1;
+    else summary.contactsConflicted += 1;
+    results.push({ type: "contact", action: created.action, contactId: created.id, accountId, salesforceId: sfContact.Id, email });
+  }
+  return { summary, results };
+}
+
+async function fetchSalesforceQuery(config, soql) {
+  const instanceUrl = (config.instanceUrl || config.apiBaseUrl || "https://login.salesforce.com").replace(/\/+$/, "");
+  const apiVersion = cleanNullable(config.apiVersion) || "v60.0";
+  const url = new URL(`${instanceUrl}/services/data/${apiVersion}/query`);
+  url.searchParams.set("q", soql);
+  const items = [];
+  let nextUrl = url.toString();
+  while (nextUrl) {
+    const response = await fetch(nextUrl, {
+      headers: {
+        authorization: `Bearer ${config.accessToken}`,
+        "user-agent": "UserOrbit-CRM-Salesforce-Import",
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw httpError(400, `Salesforce import failed: ${payload.message || payload.error || response.status}`);
+    items.push(...(payload.records || []).map(stripSalesforceAttributes));
+    nextUrl = payload.nextRecordsUrl ? `${instanceUrl}${payload.nextRecordsUrl}` : null;
+  }
+  return items;
+}
+
+function stripSalesforceAttributes(record) {
+  if (!record || typeof record !== "object") return record;
+  return Object.fromEntries(Object.entries(record)
+    .filter(([key]) => key !== "attributes")
+    .map(([key, value]) => [key, value && typeof value === "object" ? stripSalesforceAttributes(value) : value]));
 }
 
 function parseCsv(input) {
@@ -6448,6 +6548,10 @@ function normalizeNativeImportConfig(provider, input) {
   if (apiBaseUrl) normalizeWebhookUrl(apiBaseUrl);
   if (provider === "hubspot") return { accessToken, apiBaseUrl, limit: clampInteger(input.limit || 50, 1, 250, "limit") };
   if (provider === "pipedrive") return { accessToken, apiBaseUrl, authMode: input.authMode === "bearer" ? "bearer" : "api_token", limit: clampInteger(input.limit || 50, 1, 250, "limit") };
+  if (provider === "salesforce") {
+    const instanceUrl = normalizeWebhookUrl(input.instanceUrl || input.instance_url || input.apiBaseUrl || input.api_base_url);
+    return { accessToken, instanceUrl, apiVersion: cleanNullable(input.apiVersion || input.api_version) || "v60.0", limit: clampInteger(input.limit || 50, 1, 250, "limit") };
+  }
   throw httpError(400, "Unsupported native import provider");
 }
 
@@ -6472,6 +6576,14 @@ function maskNativeImportConfig(provider, config) {
       accessToken: config.accessToken ? "configured" : "",
       apiBaseUrl: config.apiBaseUrl || "",
       authMode: config.authMode || "api_token",
+      limit: config.limit || 50,
+    };
+  }
+  if (provider === "salesforce") {
+    return {
+      accessToken: config.accessToken ? "configured" : "",
+      instanceUrl: config.instanceUrl || "",
+      apiVersion: config.apiVersion || "v60.0",
       limit: config.limit || 50,
     };
   }

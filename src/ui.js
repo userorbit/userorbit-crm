@@ -1676,12 +1676,13 @@ Content-Type: application/json
                   <button class="button primary">Create enrichment provider</button>
                 </form>
                 <form id="nativeImportSourceForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
-                  <label>Name<input name="name" required placeholder="HubSpot or Pipedrive CRM" /></label>
-                  <label>Provider<select name="provider"><option value="hubspot">HubSpot</option><option value="pipedrive">Pipedrive</option></select></label>
+                  <label>Name<input name="name" required placeholder="HubSpot, Pipedrive, or Salesforce CRM" /></label>
+                  <label>Provider<select name="provider"><option value="hubspot">HubSpot</option><option value="pipedrive">Pipedrive</option><option value="salesforce">Salesforce</option></select></label>
                   <label>Access token<input name="accessToken" type="password" required placeholder="Private app token or API token" /></label>
                   <label>Auth mode<select name="authMode"><option value="api_token">API token query</option><option value="bearer">Bearer token</option></select></label>
                   <label>Import limit<input name="limit" type="number" min="1" max="250" value="50" /></label>
-                  <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
+                  <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy or Salesforce instance URL" /></label>
+                  <label>Salesforce API version<input name="apiVersion" placeholder="v60.0" /></label>
                   <button class="button primary">Create native import</button>
                 </form>
                 <form id="messageChannelForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -2475,6 +2476,7 @@ Content-Type: application/json
               authMode: form.get("authMode"),
               limit: Number(form.get("limit") || 50),
               apiBaseUrl: form.get("apiBaseUrl") || undefined,
+              apiVersion: form.get("apiVersion") || undefined,
             }),
           });
           notice("Native import source created.");

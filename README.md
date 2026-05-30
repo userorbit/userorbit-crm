@@ -490,9 +490,9 @@ curl -X POST http://localhost:8787/api/import/accounts.csv \
 
 Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, `contact_phone`, and `contact_title`. The Accounts UI also includes a column mapping panel for imports from tools that use different headers.
 
-### Import from HubSpot or Pipedrive
+### Import from HubSpot, Pipedrive, or Salesforce
 
-Workspace admins can create a native HubSpot or Pipedrive import source with a private app/API token, then run it on demand:
+Workspace admins can create a native HubSpot, Pipedrive, or Salesforce import source with a private app/API token, then run it on demand:
 
 ```sh
 curl -X POST http://localhost:8787/api/native-import-sources \
@@ -512,8 +512,9 @@ curl -X POST http://localhost:8787/api/native-import-sources/source-id/run \
 ```
 
 For Pipedrive, use `provider: "pipedrive"` and optionally `authMode: "bearer"` when using an OAuth bearer token instead of the default API-token query parameter.
+For Salesforce, use `provider: "salesforce"` and set `apiBaseUrl` to the Salesforce instance URL, for example `https://your-domain.my.salesforce.com`.
 
-The native importers read recent companies/organizations and contacts/persons through provider CRM APIs, match accounts by domain/name, match contacts by email, create missing records, mask stored tokens in API responses, and record the last run result in Settings.
+The native importers read recent companies/organizations/accounts and contacts/persons through provider CRM APIs, match accounts by domain/name, match contacts by email, create missing records, mask stored tokens in API responses, and record the last run result in Settings.
 
 For scripted imports with custom column names, send JSON:
 
