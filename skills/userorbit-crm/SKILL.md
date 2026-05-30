@@ -918,6 +918,8 @@ Manual email bodies and sequence templates support variables such as `{{contact.
 
 Workspace admins can manage reusable templates with `GET /api/email/templates`, `POST /api/email/templates`, `PATCH /api/email/templates/<id>`, and `DELETE /api/email/templates/<id>`. Treat templates with `scope: "default"` as read-only seeded examples. Use workspace-scoped templates for team-specific outbound copy, keep placeholders intact until contact/account data is available, and prefer disabling obsolete templates over reusing their names for materially different messaging.
 
+Generate a reviewable contact email draft with `POST /api/contacts/<contact_id>/email-draft` or the `generate_email_draft` agent command. Draft generation never sends mail; inspect the returned `subject`, `body`, and `rationale`, then decide whether to send with `send_email`, edit manually, create a task, or dismiss the related next-best action.
+
 ## Mailbox Warmup
 
 1. Create or update the configured sender mailbox with `POST /api/warmup/mailboxes`.

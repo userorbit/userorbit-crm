@@ -686,6 +686,7 @@ Supported commands:
 - `research_account`
 - `enrich_account`
 - `generate_ai_notes`
+- `generate_email_draft`
 - `run_sequences`
 - `run_warmup`
 - `create_task`
@@ -697,3 +698,14 @@ When SMTP credentials are missing, emails are recorded with status `drafted` ins
 Email subjects and bodies support template variables in manual sends and sequence templates, including `{{contact.name}}`, `{{contact.firstName}}`, `{{contact.email}}`, `{{contact.title}}`, `{{account.name}}`, `{{account.domain}}`, `{{account.observation}}`, `{{account.segment}}`, `{{account.source}}`, `{{account.status}}`, `{{account.owner}}`, `{{sender.name}}`, `{{sender.email}}`, `{{workspace.name}}`, `{{workspace.teamName}}`, and `{{date.today}}`.
 
 Workspace admins can manage reusable outreach templates from Settings or the API. `GET /api/email/templates` returns read-only seeded defaults plus workspace-owned templates. Use `POST /api/email/templates` with `name`, `subject`, and `body` to create a workspace template, `PATCH /api/email/templates/<id>` to update a workspace template, and `DELETE /api/email/templates/<id>` to disable it. Global seeded templates remain available for default sequences and cannot be modified from a workspace.
+
+Members can generate a reviewable, non-sending email draft for a contact from account/contact timeline context:
+
+```sh
+curl -X POST http://localhost:8787/api/contacts/contact-id/email-draft \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{ "intent": "follow up after engagement" }'
+```
+
+The draft endpoint returns `subject`, `body`, `provider`, `model`, and `rationale`. It uses OpenAI when configured and a deterministic local fallback otherwise; sending still requires `POST /api/email/send` or the `send_email` agent command.

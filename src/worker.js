@@ -536,6 +536,11 @@ async function routeApi(request, env, url, auth) {
     return json(await createAiInsight(env, { entity: "contact", entityId: path.split("/")[1], workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/email-draft")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createContactEmailDraft(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "POST" && path === "opportunities") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createOpportunity(env, { ...(await readJson(request)), workspaceId, auditUserId: auth.user.id }), 201);
@@ -4840,6 +4845,14 @@ async function createAiInsight(env, input, auth) {
   return aiInsightResponse(insight);
 }
 
+async function createContactEmailDraft(env, contactId, input, auth) {
+  if (!contactId) throw httpError(400, "contactId is required");
+  const context = await buildContactEmailDraftContext(env, contactId, input.workspaceId, input);
+  const draft = await generateEmailDraft(env, context);
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_draft.generate", resource: "contact", resourceId: contactId, metadata: { provider: draft.provider, model: draft.model || null, intent: context.intent } });
+  return { ...draft, context: { contact: context.contact, account: context.account, intent: context.intent } };
+}
+
 async function researchAccount(env, id, input, auth) {
   if (!id) throw httpError(400, "accountId is required");
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
@@ -4985,6 +4998,33 @@ async function buildContactInsightContext(env, contactId, workspaceId) {
   };
 }
 
+async function buildContactEmailDraftContext(env, contactId, workspaceId, input = {}) {
+  const contact = await getContact(env, contactId, workspaceId);
+  return {
+    intent: cleanNullable(input.intent) || "personalized follow-up",
+    contact: {
+      id: contact.id,
+      name: contact.name,
+      firstName: firstName(contact.name),
+      title: contact.title,
+      email: contact.email,
+      status: contact.status,
+    },
+    account: {
+      id: contact.account_id,
+      name: contact.account_name,
+      domain: contact.account_domain,
+      segment: contact.account_segment,
+      status: contact.account_status,
+    },
+    opportunities: contact.opportunities.slice(0, 5).map((opportunity) => ({ name: opportunity.name, stage: opportunity.stage, valueCents: opportunity.value_cents, confidence: opportunity.confidence, closeDate: opportunity.close_date })),
+    tasks: contact.tasks.slice(0, 5).map((task) => ({ title: task.title, kind: task.kind, status: task.status, dueAt: task.due_at })),
+    emails: contact.emails.slice(0, 5).map((email) => ({ subject: email.subject, direction: email.direction, status: email.status, opens: email.open_count, clicks: email.click_count, sentAt: email.sent_at || email.created_at })),
+    communications: contact.communications.slice(0, 5).map((item) => ({ type: item.type, direction: item.direction, outcome: item.outcome, subject: item.subject, occurredAt: item.occurred_at })),
+    recentTimeline: contact.timeline.slice(0, 10).map((item) => ({ type: item.type, title: item.title, detail: item.detail, happenedAt: item.happenedAt })),
+  };
+}
+
 async function buildCommunicationNoteContext(env, id, workspaceId) {
   const event = await getRequired(env, `
     SELECT ce.*, a.name AS account_name, a.domain, a.segment, a.status AS account_status,
@@ -5071,6 +5111,14 @@ async function generateAccountResearch(env, context) {
     if (generated) return generated;
   }
   return generateFallbackAccountResearch(context);
+}
+
+async function generateEmailDraft(env, context) {
+  if (cleanNullable(env.OPENAI_API_KEY)) {
+    const generated = await generateOpenAiEmailDraft(env, context);
+    if (generated) return generated;
+  }
+  return generateFallbackEmailDraft(context);
 }
 
 async function generateOpenAiInsight(env, entity, context) {
@@ -5164,6 +5212,45 @@ async function generateOpenAiAccountResearch(env, context) {
     const parsed = parseJsonObject(extractResponseText(await response.json()));
     if (!cleanNullable(parsed.summary)) return null;
     return normalizeGeneratedInsight({ ...parsed, provider: "openai-research", model });
+  } catch {
+    return null;
+  }
+}
+
+async function generateOpenAiEmailDraft(env, context) {
+  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const prompt = [
+    "You are drafting a concise, human sales email from CRM context.",
+    "Return compact JSON only with keys: subject, body, rationale.",
+    "subject must be under 90 characters. body must be plain text under 140 words, specific to the contact/account, and end with one clear question. Do not invent facts.",
+    "rationale must briefly explain what CRM signal the draft used.",
+    JSON.stringify(context),
+  ].join("\n\n");
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        text: { format: { type: "json_object" } },
+      }),
+    });
+    if (!response.ok) return null;
+    const parsed = parseJsonObject(extractResponseText(await response.json()));
+    const subject = cleanNullable(parsed.subject);
+    const body = cleanNullable(parsed.body);
+    if (!subject || !body) return null;
+    return {
+      provider: "openai",
+      model,
+      subject,
+      body,
+      rationale: cleanNullable(parsed.rationale) || "Generated from CRM context.",
+    };
   } catch {
     return null;
   }
@@ -5277,6 +5364,37 @@ function generateFallbackAccountResearch(context) {
     risks,
     score: Math.max(10, Math.min(90, 35 + signals.length * 8 + (text.length > 500 ? 15 : 0) - risks.length * 10)),
   });
+}
+
+function generateFallbackEmailDraft(context) {
+  const contact = context.contact || {};
+  const account = context.account || {};
+  const first = contact.firstName || contact.name || "there";
+  const latest = context.recentTimeline?.[0];
+  const openOpportunity = (context.opportunities || []).find((opportunity) => !["won", "lost"].includes(opportunity.stage));
+  const signal = latest?.detail || latest?.title || account.domain || account.status || "your team";
+  const subject = openOpportunity
+    ? `Next step on ${openOpportunity.name}`
+    : `Quick question about ${account.name || "your team"}`;
+  const body = [
+    `Hi ${first},`,
+    "",
+    openOpportunity
+      ? `I saw ${account.name || "your team"} has ${openOpportunity.name} in ${openOpportunity.stage}. ${signal ? `The latest note I have is: ${String(signal).slice(0, 140)}.` : ""}`
+      : `I was reviewing ${account.name || "your company"}${account.domain ? ` (${account.domain})` : ""} and noticed ${String(signal).slice(0, 160)}.`,
+    "",
+    "Would it be useful to compare notes on the current priority and decide whether there is a concrete next step?",
+    "",
+    "Best,",
+    "{{sender.name}}",
+  ].join("\n");
+  return {
+    provider: "local",
+    model: "heuristic",
+    subject,
+    body,
+    rationale: latest ? `Used latest ${latest.type} timeline signal.` : "Used account and contact context.",
+  };
 }
 
 async function fetchEnrichmentProvider(provider, account, input) {
@@ -5447,6 +5565,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "generate_ai_notes") {
     return { result: await createCommunicationAiNotes(env, cleanNullable(input.communicationId || input.payload?.communicationId || input.payload?.id), input.workspaceId, auth) };
+  }
+  if (input.command === "generate_email_draft") {
+    return { result: await createContactEmailDraft(env, cleanNullable(input.contactId || input.payload?.contactId || input.payload?.id), { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   if (input.command === "import_calendar_ics") {
     return { result: await importCalendarIcs(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };

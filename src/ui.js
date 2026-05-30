@@ -636,6 +636,7 @@ export const appHtml = String.raw`<!doctype html>
         selectedAccount: null,
         selectedContactId: storageGet("crmSelectedContactId") || "",
         selectedContact: null,
+        generatedEmailDraft: null,
         reports: null,
         opportunities: [],
         opportunityStages: [],
@@ -1112,6 +1113,15 @@ export const appHtml = String.raw`<!doctype html>
         </div>\`;
       }
 
+      function emailDraftPanel(draft) {
+        if (!draft) return "";
+        return \`<div class="stack" style="border-top:1px solid var(--border); padding-top:12px">
+          <div><strong>Draft email</strong><div class="subtitle">\${escapeHtml([draft.provider, draft.model, draft.rationale].filter(Boolean).join(" / "))}</div></div>
+          <label>Subject<input readonly value="\${escapeHtml(draft.subject || "")}" /></label>
+          <label>Body<textarea readonly rows="8">\${escapeHtml(draft.body || "")}</textarea></label>
+        </div>\`;
+      }
+
       function renderContactDetail() {
         const contact = state.selectedContact;
         if (!contact) return header("Contact", "Open a contact from an account.") + '<div class="panel"><div class="empty">No contact selected.</div></div>';
@@ -1134,8 +1144,9 @@ export const appHtml = String.raw`<!doctype html>
               \${timelineList(contact.timeline)}
             </div>
             <div class="panel">
-              <div class="panel-header"><div class="panel-title">AI insight</div><button id="generateContactInsight" class="button">Generate</button></div>
+              <div class="panel-header"><div class="panel-title">AI insight</div><div class="toolbar"><button id="generateContactInsight" class="button">Generate</button><button id="generateEmailDraft" class="button">Draft email</button></div></div>
               \${aiInsightsPanel(contact.aiInsights)}
+              \${emailDraftPanel(state.generatedEmailDraft)}
               <div class="panel-header"><div class="panel-title">Sequences</div></div>
               \${reportTable(["Sequence", "Status", "Step", "Next send"], contact.enrollments.map((item) => [item.sequence_name, item.status, item.current_step_order, item.next_send_at || ""]))}
               <div class="panel-header"><div class="panel-title">Opportunities</div></div>
@@ -2278,6 +2289,7 @@ Content-Type: application/json
           state.selectedContactId = node.dataset.contactId;
           storageSet("crmSelectedContactId", state.selectedContactId);
           state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
+          state.generatedEmailDraft = null;
           state.view = "contact";
           render();
         }));
@@ -2543,6 +2555,13 @@ Content-Type: application/json
           await api("contacts/" + encodeURIComponent(state.selectedContactId) + "/ai-insights", { method: "POST", body: "{}" });
           notice("AI insight generated.");
           state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
+          render();
+        });
+
+        $("#generateEmailDraft")?.addEventListener("click", async () => {
+          if (!state.selectedContactId) return;
+          state.generatedEmailDraft = await api("contacts/" + encodeURIComponent(state.selectedContactId) + "/email-draft", { method: "POST", body: "{}" });
+          notice("Email draft generated.");
           render();
         });
 
