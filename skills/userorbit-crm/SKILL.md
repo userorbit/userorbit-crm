@@ -146,6 +146,14 @@ POST /api/contacts/<contact_id>/unsubscribe
 
 Unsubscribed contacts are blocked from manual sends and sequence enrollment, and active sequence enrollments are stopped.
 
+Mark a contact as replied:
+
+```http
+POST /api/contacts/<contact_id>/reply
+```
+
+Reply handling sets contact status to `replied` and stops active sequence enrollments for that contact.
+
 Create a follow-up task:
 
 ```http
@@ -316,6 +324,7 @@ When SMTP is not configured, the CRM records emails as `drafted` instead of send
 
 - Do not invent account research. Store the source and observation used to justify outreach.
 - Do not send or enroll contacts with `status: "unsubscribed"`.
+- Do not keep contacts in automated sequences after they reply; use `POST /api/contacts/<contact_id>/reply`.
 - Prefer small, personalized batches over bulk imports.
 - Check `GET /api/summary`, `GET /api/accounts`, and `GET /api/tasks` before deciding the next action.
 - Keep workspace-specific work scoped with `X-Workspace-Id` or `workspaceId` in command payloads. Workspace tokens automatically default to their own workspace.

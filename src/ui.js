@@ -747,7 +747,7 @@ export const appHtml = String.raw`<!doctype html>
       function renderContactDetail() {
         const contact = state.selectedContact;
         if (!contact) return header("Contact", "Open a contact from an account.") + '<div class="panel"><div class="empty">No contact selected.</div></div>';
-        const action = '<div class="toolbar"><button class="button" data-account-id="' + escapeHtml(contact.account_id) + '">Back to account</button>' + (contact.status === "unsubscribed" ? "" : '<button id="unsubscribeContact" class="button">Unsubscribe</button>') + '</div>';
+        const action = '<div class="toolbar"><button class="button" data-account-id="' + escapeHtml(contact.account_id) + '">Back to account</button>' + (contact.status === "unsubscribed" ? "" : '<button id="markContactReplied" class="button">Mark replied</button><button id="unsubscribeContact" class="button">Unsubscribe</button>') + '</div>';
         return header(escapeHtml(contact.name), escapeHtml([contact.title, contact.email, contact.account_name].filter(Boolean).join(" · ")), action) + \`
           <div class="grid metrics">
             \${metric("Tasks", contact.tasks.length)}
@@ -1232,6 +1232,12 @@ Content-Type: application/json
         $("#unsubscribeContact")?.addEventListener("click", async () => {
           await api("contacts/" + encodeURIComponent(state.selectedContactId) + "/unsubscribe", { method: "POST", body: "{}" });
           notice("Contact unsubscribed.");
+          await refresh();
+        });
+
+        $("#markContactReplied")?.addEventListener("click", async () => {
+          await api("contacts/" + encodeURIComponent(state.selectedContactId) + "/reply", { method: "POST", body: "{}" });
+          notice("Contact marked replied.");
           await refresh();
         });
 

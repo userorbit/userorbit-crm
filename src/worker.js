@@ -179,6 +179,10 @@ async function routeApi(request, env, url, auth) {
     return json(await createContact(env, await readJson(request)), 201);
   }
 
+  if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/reply")) {
+    return json(await markContactReplied(env, path.split("/")[1], workspaceId, auth));
+  }
+
   if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/unsubscribe")) {
     return json(await unsubscribeContact(env, path.split("/")[1], workspaceId, auth));
   }
@@ -1233,6 +1237,26 @@ async function unsubscribeContact(env, id, workspaceId, auth) {
   await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "contact.unsubscribe", resource: "contact", resourceId: id, metadata: { email: contact.email } });
   const updated = await getContact(env, id, workspaceId);
   await deliverWebhooks(env, workspaceId, "contact.unsubscribed", id, updated);
+  return updated;
+}
+
+async function markContactReplied(env, id, workspaceId, auth) {
+  const contact = await getRequired(
+    env,
+    `SELECT c.*, a.workspace_id
+     FROM contacts c
+     JOIN accounts a ON a.id = c.account_id
+     WHERE c.id = ? AND a.workspace_id = ?`,
+    id,
+    workspaceId,
+  );
+  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE contacts SET status = 'replied', updated_at = ? WHERE id = ?").bind(now, id).run();
+  await env.DB.prepare("UPDATE sequence_enrollments SET status = 'replied', updated_at = ? WHERE contact_id = ? AND status = 'active'").bind(now, id).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "contact.reply", resource: "contact", resourceId: id, metadata: { email: contact.email } });
+  const updated = await getContact(env, id, workspaceId);
+  await deliverWebhooks(env, workspaceId, "contact.replied", id, updated);
   return updated;
 }
 
