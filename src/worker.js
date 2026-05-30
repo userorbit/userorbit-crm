@@ -1810,25 +1810,29 @@ async function listReportAlerts(env, workspaceId) {
 }
 
 async function createReportAlert(env, input, auth) {
-  requireFields(input, ["name", "metric", "operator", "deliveryUrl"]);
+  requireFields(input, ["name", "metric", "operator"]);
   if (input.threshold === undefined || input.threshold === null) throw httpError(400, "threshold is required");
   const metric = normalizeEnum(input.metric, REPORT_ALERT_METRICS, "metric");
   const operator = normalizeEnum(input.operator, REPORT_ALERT_OPERATORS, "operator");
   const frequency = normalizeEnum(input.frequency || "daily", EXPORT_FREQUENCIES, "frequency");
   const threshold = Math.trunc(Number(input.threshold));
   if (!Number.isFinite(threshold)) throw httpError(400, "threshold must be a number");
-  const deliveryUrl = normalizeWebhookUrl(input.deliveryUrl || input.delivery_url);
+  const integrationId = cleanNullable(input.integrationId || input.integration_id);
+  if (integrationId) await getRequired(env, "SELECT id FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'", integrationId, input.workspaceId);
+  const deliveryUrl = cleanNullable(input.deliveryUrl || input.delivery_url);
+  if (!deliveryUrl && !integrationId) throw httpError(400, "deliveryUrl or integrationId is required");
+  const normalizedDeliveryUrl = deliveryUrl ? normalizeWebhookUrl(deliveryUrl) : "";
   const now = new Date().toISOString();
   const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
     INSERT INTO report_alerts (
-      id, workspace_id, created_by_user_id, name, metric, operator, threshold, frequency, delivery_url,
+      id, workspace_id, created_by_user_id, name, metric, operator, threshold, frequency, delivery_url, integration_id,
       status, last_run_at, next_run_at, last_value, last_triggered_at, last_error, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, NULL, NULL, ?, ?)
-  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, deliveryUrl, nextRunAt, now, now).run();
-  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency } });
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId } });
   return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
@@ -1877,33 +1881,13 @@ async function evaluateReportAlert(env, alert) {
   let statusCode = null;
   let error = null;
   if (triggered) {
-    try {
-      const response = await fetch(alert.delivery_url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "user-agent": "UserOrbit-CRM-ReportAlert",
-          "x-userorbit-report-alert-id": alert.id,
-          "x-userorbit-report-alert-metric": alert.metric,
-        },
-        body: JSON.stringify({
-          alertId: alert.id,
-          workspaceId: alert.workspace_id,
-          name: alert.name,
-          metric: alert.metric,
-          operator: alert.operator,
-          threshold: alert.threshold,
-          value,
-          triggeredAt: now,
-        }),
-      });
-      statusCode = response.status;
-      status = response.ok ? "sent" : "failed";
-      if (!response.ok) error = `HTTP ${response.status}`;
-    } catch (caught) {
-      status = "failed";
-      error = caught.message || String(caught);
-    }
+    const payload = reportAlertPayload(alert, value, now);
+    const delivery = alert.integration_id
+      ? await deliverReportAlertIntegration(env, alert, payload)
+      : await deliverReportAlertWebhook(alert, payload);
+    status = delivery.status;
+    statusCode = delivery.statusCode;
+    error = delivery.error;
     await env.DB.prepare(`
       INSERT INTO report_alert_deliveries (id, workspace_id, alert_id, metric, value, threshold, status, status_code, error, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1914,6 +1898,49 @@ async function evaluateReportAlert(env, alert) {
     .bind(now, nextRunAt, value, triggered ? now : cleanNullable(alert.last_triggered_at), cleanNullable(error), now, alert.id)
     .run();
   return { alertId: alert.id, status, triggered, value, threshold: alert.threshold, statusCode, error };
+}
+
+function reportAlertPayload(alert, value, triggeredAt) {
+  return {
+    alertId: alert.id,
+    workspaceId: alert.workspace_id,
+    name: alert.name,
+    metric: alert.metric,
+    operator: alert.operator,
+    threshold: alert.threshold,
+    value,
+    triggeredAt,
+  };
+}
+
+async function deliverReportAlertWebhook(alert, payload) {
+  let status = "failed";
+  let statusCode = null;
+  let error = null;
+  try {
+    const response = await fetch(alert.delivery_url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "UserOrbit-CRM-ReportAlert",
+        "x-userorbit-report-alert-id": alert.id,
+        "x-userorbit-report-alert-metric": alert.metric,
+      },
+      body: JSON.stringify(payload),
+    });
+    statusCode = response.status;
+    status = response.ok ? "sent" : "failed";
+    if (!response.ok) error = `HTTP ${response.status}`;
+  } catch (caught) {
+    error = caught.message || String(caught);
+  }
+  return { status, statusCode, error };
+}
+
+async function deliverReportAlertIntegration(env, alert, payload) {
+  const integration = await env.DB.prepare("SELECT * FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'").bind(alert.integration_id, alert.workspace_id).first();
+  if (!integration) return { status: "failed", statusCode: null, error: "Integration is disabled or missing" };
+  return deliverNativeIntegration(env, integration, "report_alert.triggered", alert.id, payload);
 }
 
 function reportAlertMetricValue(metric, reports) {
@@ -5862,6 +5889,7 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
     INSERT INTO integration_deliveries (id, workspace_id, integration_id, event, resource_id, status, status_code, error, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(crypto.randomUUID(), integration.workspace_id, integration.id, event, cleanNullable(resourceId), status, statusCode, cleanNullable(error), now).run();
+  return { status, statusCode, error };
 }
 
 async function createWorkspaceToken(env, input, auth) {
@@ -7723,6 +7751,7 @@ function integrationEventTitle(event, payload) {
   if (event === "email.received") return `Inbound email: ${payload?.subject || "No subject"}`;
   if (event === "lead_form.submitted") return `Lead form submitted: ${payload?.form?.name || "Lead form"}`;
   if (event === "ai_notes.created") return `AI notes generated: ${payload?.communication?.subject || "Communication"}`;
+  if (event === "report_alert.triggered") return `Report alert: ${payload?.name || payload?.metric || "Alert"}`;
   return `UserOrbit event: ${event}`;
 }
 
@@ -7735,6 +7764,7 @@ function integrationEventDetail(event, payload) {
   if (event === "email.received") return payload?.contact?.email || payload?.fromEmail || "";
   if (event === "lead_form.submitted") return [payload?.account?.name, payload?.contact?.action ? `contact ${payload.contact.action}` : ""].filter(Boolean).join(" / ");
   if (event === "ai_notes.created") return payload?.insight?.summary || "";
+  if (event === "report_alert.triggered") return [payload?.metric, payload?.operator && payload?.threshold !== undefined ? `${payload.operator} ${payload.threshold}` : "", payload?.value !== undefined ? `value ${payload.value}` : ""].filter(Boolean).join(" / ");
   return "";
 }
 

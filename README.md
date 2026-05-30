@@ -572,7 +572,7 @@ curl -X POST http://localhost:8787/api/report-alerts \
   }'
 ```
 
-Report alerts evaluate daily, weekly, or monthly against report metrics and POST JSON only when the rule triggers. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
+Report alerts evaluate daily, weekly, or monthly against report metrics and deliver only when the rule triggers. Use `deliveryUrl` for a direct webhook, or `integrationId` to send through an active native Slack, Teams, Discord, Zapier, or Segment integration. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
 
 ### Import accounts
 

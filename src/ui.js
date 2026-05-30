@@ -1787,7 +1787,8 @@ Content-Type: application/json
                   <label>Operator<select name="operator"><option value="gte">At least</option><option value="gt">Greater than</option><option value="lte">At most</option><option value="lt">Less than</option><option value="eq">Equals</option></select></label>
                   <label>Threshold<input name="threshold" type="number" required value="1" /></label>
                   <label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
-                  <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/report-alert" /></label>
+                  <label>Native integration<select name="integrationId"><option value="">Webhook URL</option>\${nativeIntegrationOptions()}</select></label>
+                  <label>Delivery URL<input name="deliveryUrl" type="url" placeholder="Required when no native integration is selected" /></label>
                   <button class="button primary">Create report alert</button>
                 </form>
                 <form id="dashboardShareForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -1958,7 +1959,7 @@ Content-Type: application/json
           <thead><tr><th>Name</th><th>Rule</th><th>Next run</th><th>Status</th><th></th></tr></thead>
           <tbody>\${alerts.map((alert) => \`
             <tr>
-              <td>\${escapeHtml(alert.name)}<div class="subtitle">\${escapeHtml(alert.delivery_url)}</div></td>
+              <td>\${escapeHtml(alert.name)}<div class="subtitle">\${escapeHtml(reportAlertDestination(alert))}</div></td>
               <td>\${escapeHtml(reportAlertMetricLabel(alert.metric) + " " + alert.operator + " " + alert.threshold)}<div class="subtitle">\${escapeHtml(alert.last_value === null || alert.last_value === undefined ? "" : "Last value " + alert.last_value)}</div></td>
               <td>\${escapeHtml(alert.next_run_at ? formatDateTime(alert.next_run_at) : "Not scheduled")}<div class="subtitle">\${escapeHtml(alert.last_error || (alert.last_triggered_at ? "Triggered " + formatDateTime(alert.last_triggered_at) : ""))}</div></td>
               <td><span class="pill">\${escapeHtml(alert.status)}</span></td>
@@ -1977,6 +1978,21 @@ Content-Type: application/json
           stalled_opportunities: "Stalled opportunities",
           emails_failed: "Failed emails",
         }[metric] || metric;
+      }
+
+      function reportAlertDestination(alert) {
+        if (alert.integration_id) {
+          const integration = (state.integrations?.integrations || []).find((item) => item.id === alert.integration_id);
+          return integration ? "Integration: " + integration.name + " (" + integration.type + ")" : "Integration: " + alert.integration_id;
+        }
+        return alert.delivery_url || "";
+      }
+
+      function nativeIntegrationOptions() {
+        return (state.integrations?.integrations || [])
+          .filter((integration) => integration.status === "active")
+          .map((integration) => '<option value="' + escapeHtml(integration.id) + '">' + escapeHtml(integration.name + " (" + integration.type + ")") + '</option>')
+          .join("");
       }
 
       function dashboardSharesTable(shares = []) {
@@ -2796,7 +2812,8 @@ Content-Type: application/json
               operator: form.get("operator"),
               threshold: Number(form.get("threshold") || 0),
               frequency: form.get("frequency"),
-              deliveryUrl: form.get("deliveryUrl"),
+              deliveryUrl: form.get("deliveryUrl") || undefined,
+              integrationId: form.get("integrationId") || undefined,
             }),
           });
           notice("Report alert created.");
