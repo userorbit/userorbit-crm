@@ -516,6 +516,20 @@ curl -X PATCH http://localhost:8787/api/dashboard/preferences \
 
 Dashboard preferences are scoped to the signed-in user and active workspace. Supported widgets are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
 
+### Share a dashboard
+
+```sh
+curl -X POST http://localhost:8787/api/dashboard/shares \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Leadership snapshot",
+    "widgets": ["metrics", "pipeline", "sequence_performance", "stalled_opportunities"]
+  }'
+```
+
+Workspace admins can create revocable read-only dashboard share links at `/share/dashboards/<public_key>`. Shared dashboards expose aggregate metrics and report widgets only; they do not expose account/contact detail rows or require an app session.
+
 ### Export accounts
 
 ```sh

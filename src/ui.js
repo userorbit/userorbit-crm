@@ -638,6 +638,7 @@ export const appHtml = String.raw`<!doctype html>
         workspaceTokens: [],
         teamInvitations: [],
         exportSchedules: { schedules: [], deliveries: [] },
+        dashboardShares: [],
         webhooks: { endpoints: [], deliveries: [] },
         auditLogs: [],
         generatedToken: "",
@@ -731,7 +732,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -761,6 +762,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("export-schedules") : Promise.resolve({ schedules: [], deliveries: [] }),
+          canManage ? api("dashboard/shares") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
@@ -768,7 +770,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
-        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, dashboardShares, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1706,6 +1708,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Enrichment providers</div></div>' + enrichmentProvidersTable(state.enrichmentProviders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Native imports</div></div>' + nativeImportSourcesTable(state.nativeImportSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Scheduled exports</div></div>' + exportSchedulesTable(state.exportSchedules) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Dashboard shares</div></div>' + dashboardSharesTable(state.dashboardShares) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
               </div>
@@ -1745,6 +1748,13 @@ Content-Type: application/json
                   <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/accounts.csv" /></label>
                   <label>Next run<input name="nextRunAt" type="datetime-local" /></label>
                   <button class="button primary">Create export schedule</button>
+                </form>
+                <form id="dashboardShareForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Weekly leadership dashboard" /></label>
+                  <div class="form-grid">
+                    \${dashboardWidgetOptions().map((widget) => '<label><input name="widgets" type="checkbox" value="' + escapeHtml(widget.key) + '"' + (["metrics", "pipeline", "sequence_performance", "stalled_opportunities"].includes(widget.key) ? " checked" : "") + " /> " + escapeHtml(widget.label) + '</label>').join("")}
+                  </div>
+                  <button class="button primary">Create share link</button>
                 </form>
                 <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Sales alerts" /></label>
@@ -1896,6 +1906,24 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No scheduled exports yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Export deliveries</div></div>' + reportTable(["Schedule", "Resource", "Rows", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.schedule_name, delivery.resource, delivery.row_count || 0, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return scheduleTable + deliveryTable;
+      }
+
+      function dashboardSharesTable(shares = []) {
+        if (!shares.length) return '<div class="empty">No dashboard share links yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Widgets</th><th>Last viewed</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${shares.map((share) => {
+            const url = window.location.origin + share.share_path;
+            return \`
+            <tr>
+              <td>\${escapeHtml(share.name)}<div class="subtitle">\${escapeHtml(url)}</div></td>
+              <td>\${escapeHtml((share.widgets || []).join(", "))}</td>
+              <td>\${escapeHtml(share.last_viewed_at ? formatDateTime(share.last_viewed_at) : "Never")}</td>
+              <td><span class="pill">\${escapeHtml(share.status)}</span></td>
+              <td>\${share.status === "active" ? '<a class="button" href="' + escapeHtml(share.share_path) + '" target="_blank" rel="noreferrer">Open</a> <button class="button" data-disable-dashboard-share-id="' + escapeHtml(share.id) + '">Disable</button>' : ""}</td>
+            </tr>\`;
+          }).join("")}</tbody>
+        </table>\`;
       }
 
       function integrationsTable(integrations) {
@@ -2676,6 +2704,20 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#dashboardShareForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("dashboard/shares", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              widgets: form.getAll("widgets"),
+            }),
+          });
+          notice("Dashboard share created.");
+          await refresh();
+        });
+
         $("#enrichmentProviderForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2748,6 +2790,12 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-export-schedule-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("export-schedules/" + encodeURIComponent(node.dataset.disableExportScheduleId), { method: "DELETE" });
           notice("Export schedule disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-dashboard-share-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("dashboard/shares/" + encodeURIComponent(node.dataset.disableDashboardShareId), { method: "DELETE" });
+          notice("Dashboard share disabled.");
           await refresh();
         }));
 

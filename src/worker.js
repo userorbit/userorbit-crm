@@ -75,6 +75,10 @@ export default {
         return await handlePublicLeadForm(request, env, url);
       }
 
+      if (request.method === "GET" && url.pathname.startsWith("/share/dashboards/")) {
+        return await handlePublicDashboardShare(env, url.pathname.split("/").pop());
+      }
+
       if (request.method === "POST" && url.pathname.startsWith("/hooks/messages/")) {
         return await handleInboundMessageWebhook(request, env, url);
       }
@@ -343,8 +347,23 @@ async function routeApi(request, env, url, auth) {
     return json(await getDashboardPreferences(env, workspaceId, auth));
   }
 
+  if (request.method === "GET" && path === "dashboard/shares") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listDashboardShares(env, workspaceId));
+  }
+
   if (request.method === "PATCH" && path === "dashboard/preferences") {
     return json(await updateDashboardPreferences(env, workspaceId, await readJson(request), auth));
+  }
+
+  if (request.method === "POST" && path === "dashboard/shares") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createDashboardShare(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("dashboard/shares/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableDashboardShare(env, path.split("/")[2], workspaceId, auth));
   }
 
   if (request.method === "GET" && path === "reports") {
@@ -1647,6 +1666,51 @@ function nextExportRunAt(frequency, fromIso) {
 async function getDashboardPreferences(env, workspaceId, auth) {
   const existing = await env.DB.prepare("SELECT * FROM dashboard_preferences WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, auth.user.id).first();
   return dashboardPreferencesResponse(workspaceId, auth.user.id, existing);
+}
+
+async function listDashboardShares(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT ds.*, u.name AS created_by_name
+    FROM dashboard_shares ds
+    LEFT JOIN users u ON u.id = ds.created_by_user_id
+    WHERE ds.workspace_id = ?
+    ORDER BY ds.status ASC, ds.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results.map(dashboardShareResponse);
+}
+
+async function createDashboardShare(env, input, auth) {
+  requireFields(input, ["name"]);
+  const widgets = normalizeDashboardWidgets(input.widgets);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  const publicKey = input.publicKey || crypto.randomUUID().replaceAll("-", "");
+  await env.DB.prepare(`
+    INSERT INTO dashboard_shares (
+      id, workspace_id, created_by_user_id, name, public_key, widgets_json,
+      status, last_viewed_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), publicKey, JSON.stringify(widgets), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "dashboard_share.create", resource: "dashboard_share", resourceId: id, metadata: { name: input.name, widgets } });
+  return dashboardShareResponse(await getRequired(env, "SELECT * FROM dashboard_shares WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+}
+
+async function disableDashboardShare(env, id, workspaceId, auth) {
+  const share = await getRequired(env, "SELECT * FROM dashboard_shares WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE dashboard_shares SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "dashboard_share.disable", resource: "dashboard_share", resourceId: id, metadata: { name: share.name } });
+  return { ok: true };
+}
+
+function dashboardShareResponse(share) {
+  const { widgets_json, ...safeShare } = share;
+  return {
+    ...safeShare,
+    widgets: normalizeDashboardWidgets(parseJsonArray(widgets_json)),
+    share_path: `/share/dashboards/${share.public_key}`,
+  };
 }
 
 async function updateDashboardPreferences(env, workspaceId, input, auth) {
@@ -6752,6 +6816,79 @@ function publicLeadFormHtml(form) {
       <label class="hidden">Website<input name="website" tabindex="-1" autocomplete="off" /></label>
       <button>Submit</button>
     </form>
+  </main>
+</body>
+</html>`;
+}
+
+async function handlePublicDashboardShare(env, key) {
+  const share = await getRequired(env, "SELECT * FROM dashboard_shares WHERE public_key = ? AND status = 'active'", cleanNullable(key));
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE dashboard_shares SET last_viewed_at = ?, updated_at = ? WHERE id = ?").bind(now, now, share.id).run();
+  const [workspace, summary, reports] = await Promise.all([
+    getRequired(env, "SELECT w.*, t.name AS team_name FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", share.workspace_id),
+    getSummary(env, share.workspace_id),
+    getReports(env, share.workspace_id, null),
+  ]);
+  return new Response(publicDashboardShareHtml({ ...share, widgets: normalizeDashboardWidgets(parseJsonArray(share.widgets_json)) }, workspace, summary, reports), {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+function publicDashboardShareHtml(share, workspace, summary, reports) {
+  const widgets = share.widgets || DEFAULT_DASHBOARD_WIDGETS;
+  const metricCards = [
+    ["Accounts", summary.accounts || 0],
+    ["Contacts", summary.contacts || 0],
+    ["Active sequences", summary.activeEnrollments || 0],
+    ["Open tasks", summary.dueTasks || 0],
+    ["Open pipeline", formatCents(summary.openPipelineCents || 0)],
+  ];
+  const table = (headers, rows) => rows.length ? `<table><thead><tr>${headers.map((header) => `<th>${escapeHtmlText(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtmlText(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>` : '<div class="empty">No data yet.</div>';
+  const panels = [];
+  if (widgets.includes("metrics")) {
+    panels.push(`<section class="metrics">${metricCards.map(([label, value]) => `<div class="card"><span>${escapeHtmlText(label)}</span><strong>${escapeHtmlText(value)}</strong></div>`).join("")}</section>`);
+  }
+  if (widgets.includes("pipeline")) {
+    panels.push(`<section><h2>Pipeline health</h2>${table(["Stage", "Deals", "Value"], (reports.pipeline || []).map((row) => [row.stage_label || row.stage, row.opportunities, formatCents(row.value_cents || 0)]))}</section>`);
+  }
+  if (widgets.includes("sequence_performance")) {
+    panels.push(`<section><h2>Sequence performance</h2>${table(["Sequence", "Sent", "Opened", "Clicked"], (reports.sequencePerformance || []).map((row) => [row.name, row.sent || 0, row.opened || 0, row.clicked || 0]))}</section>`);
+  }
+  if (widgets.includes("stalled_opportunities")) {
+    panels.push(`<section><h2>Stalled opportunities</h2>${table(["Opportunity", "Stage", "Last activity"], (reports.stalledOpportunities || []).slice(0, 10).map((row) => [row.name, row.stage, row.last_activity_at || "No activity"]))}</section>`);
+  }
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtmlText(share.name)} - UserOrbit CRM</title>
+  <style>
+    body { margin:0; background:#f7f7f5; color:#1f2328; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:1120px; margin:0 auto; padding:32px 20px 48px; }
+    header { margin-bottom:22px; }
+    h1 { margin:0; font-size:30px; line-height:38px; letter-spacing:0; }
+    h2 { margin:0 0 14px; font-size:16px; line-height:24px; }
+    .subtitle { color:#667085; margin-top:6px; font-size:14px; }
+    .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+    .card, section { background:#fff; border:1px solid #deded8; border-radius:8px; padding:16px; box-shadow:0 1px 1px rgba(16,24,40,.03); }
+    .card span { display:block; color:#667085; font-size:12px; font-weight:700; }
+    .card strong { display:block; margin-top:8px; font-size:24px; }
+    section { margin-top:16px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { padding:9px 8px; border-bottom:1px solid #ecece7; text-align:left; vertical-align:top; }
+    th { color:#667085; font-size:12px; }
+    .empty { color:#667085; font-size:14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>${escapeHtmlText(share.name)}</h1>
+      <div class="subtitle">${escapeHtmlText(workspace.team_name)} / ${escapeHtmlText(workspace.name)} · Shared dashboard · ${escapeHtmlText(new Date().toISOString().slice(0, 10))}</div>
+    </header>
+    ${panels.join("") || '<section><div class="empty">No widgets selected.</div></section>'}
   </main>
 </body>
 </html>`;

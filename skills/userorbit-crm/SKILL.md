@@ -409,6 +409,19 @@ PATCH /api/dashboard/preferences
 
 Supported widget keys are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
 
+Create a revocable public aggregate dashboard share:
+
+```http
+POST /api/dashboard/shares
+
+{
+  "name": "Leadership snapshot",
+  "widgets": ["metrics", "pipeline", "sequence_performance", "stalled_opportunities"]
+}
+```
+
+List shares with `GET /api/dashboard/shares`. Open `share_path` to view the read-only dashboard, and disable a link with `DELETE /api/dashboard/shares/<share_id>`. Shared dashboards expose aggregate dashboard/report widgets only.
+
 Export accounts for backup or spreadsheet analysis:
 
 ```http
