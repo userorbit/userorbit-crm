@@ -1,0 +1,1 @@
+- When verifying browser UI fixes, check the user's actual open browser/port and reload it before concluding. A served script can be fixed while the current tab is still running the old broken JavaScript.

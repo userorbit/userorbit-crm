@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "userorbit-crm",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-05-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "userorbit-crm",
+      "database_id": "replace-with-wrangler-d1-create-output"
+    }
+  ],
+  "vars": {
+    "CRM_FROM_EMAIL": "founder@example.com",
+    "CRM_FROM_NAME": "UserOrbit",
+    "SMTP_HOST": "smtp.zoho.in",
+    "SMTP_PORT": "465",
+    "SMTP_SECURE": "true"
+  }
+}

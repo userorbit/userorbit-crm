@@ -1,0 +1,8 @@
+CRM_API_TOKEN="replace-with-a-long-random-token"
+CRM_FROM_EMAIL="founder@userorbit.com"
+CRM_FROM_NAME="UserOrbit"
+SMTP_HOST="smtp.zoho.com"
+SMTP_PORT="465"
+SMTP_SECURE="true"
+SMTP_USERNAME="founder@userorbit.com"
+SMTP_PASSWORD="zoho-app-specific-password"

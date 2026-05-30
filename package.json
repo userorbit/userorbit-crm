@@ -1,0 +1,29 @@
+{
+  "name": "userorbit-crm",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/userorbit/userorbit-crm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/userorbit/userorbit-crm/issues"
+  },
+  "homepage": "https://github.com/userorbit/userorbit-crm#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create userorbit-crm",
+    "db:migrate:local": "wrangler d1 migrations apply userorbit-crm --local",
+    "db:migrate": "wrangler d1 migrations apply userorbit-crm --remote",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "^4.81.0"
+  }
+}
