@@ -350,7 +350,7 @@ curl -X POST http://localhost:8787/api/integrations \
   }'
 ```
 
-Slack, Microsoft Teams, Discord, and Segment integrations are workspace-scoped. Chat integrations use incoming webhook URLs; Segment uses a write key and sends CRM events to the Track API for analytics/data-pipeline routing. All native integrations can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
+Slack, Microsoft Teams, Discord, Segment, and Zapier integrations are workspace-scoped. Chat integrations use incoming webhook URLs; Segment uses a write key and sends CRM events to the Track API for analytics/data-pipeline routing; Zapier uses a Catch Hook URL and receives structured automation payloads. All native integrations can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
 
 ### Generate AI insights
 

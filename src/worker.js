@@ -30,7 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
-const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment"]);
+const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
 const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
@@ -5599,7 +5599,7 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
       : await fetch(config.webhookUrl, {
         method: "POST",
         headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Integration" },
-        body: JSON.stringify(integrationMessageForEvent(integration.type, event, payload)),
+        body: JSON.stringify(integration.type === "zapier" ? zapierEventPayload(integration, event, resourceId, payload, now) : integrationMessageForEvent(integration.type, event, payload)),
       });
     statusCode = response.status;
     status = response.ok ? "sent" : "failed";
@@ -7404,6 +7404,18 @@ function integrationMessageForEvent(type, event, payload) {
   if (type === "teams") return teamsMessageForEvent(title, detail, event);
   if (type === "discord") return discordMessageForEvent(title, detail, event);
   return { text: [title, detail].filter(Boolean).join("\n") };
+}
+
+function zapierEventPayload(integration, event, resourceId, payload, sentAt) {
+  return {
+    event,
+    workspaceId: integration.workspace_id,
+    resourceId,
+    title: integrationEventTitle(event, payload),
+    detail: integrationEventDetail(event, payload),
+    data: payload,
+    sentAt,
+  };
 }
 
 function segmentTrackPayload(integration, event, resourceId, payload, sentAt) {

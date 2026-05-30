@@ -1759,8 +1759,8 @@ Content-Type: application/json
                 </form>
                 <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Sales alerts" /></label>
-                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option><option value="segment">Segment</option></select></label>
-                  <label>Webhook URL<input name="webhookUrl" type="url" placeholder="https://hooks.slack.com/services/... or provider webhook URL" /></label>
+                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option><option value="segment">Segment</option><option value="zapier">Zapier</option></select></label>
+                  <label>Webhook URL<input name="webhookUrl" type="url" placeholder="Provider webhook URL or Zapier Catch Hook" /></label>
                   <label>Write key<input name="writeKey" type="password" placeholder="Segment write key" /></label>
                   <label>API base URL<input name="apiBaseUrl" type="url" placeholder="https://api.segment.io/v1/track" /></label>
                   <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
