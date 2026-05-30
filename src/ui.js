@@ -605,6 +605,7 @@ export const appHtml = String.raw`<!doctype html>
         accounts: [],
         accountFilters: { q: "", segment: "", status: "", customFields: {} },
         savedViews: [],
+        dashboardPreferences: { widgets: ["metrics", "priority_accounts", "due_tasks"] },
         customFields: [],
         selectedSavedViewId: storageGet("crmSavedViewId") || "",
         selectedAccountId: storageGet("crmSelectedAccountId") || "",
@@ -726,10 +727,11 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
+          api("dashboard/preferences"),
           api("custom-fields?entity=account"),
           api("reports"),
           api("opportunities"),
@@ -756,7 +758,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -833,22 +835,42 @@ export const appHtml = String.raw`<!doctype html>
 
       function renderDashboard() {
         const s = state.summary || {};
+        const widgets = dashboardWidgets();
         return header("Founder-led outreach", "Manage targeted accounts, personalized sequences, and follow-up tasks.") + \`
-          <div class="grid metrics">
+          \${widgets.includes("metrics") ? \`<div class="grid metrics">
             \${metric("Accounts", s.accounts || 0)}
             \${metric("Contacts", s.contacts || 0)}
             \${metric("Active sequences", s.activeEnrollments || 0)}
             \${metric("Open tasks", s.dueTasks || 0)}
             \${metric("Open pipeline", money(s.openPipelineCents || 0))}
-          </div>
+          </div>\` : ""}
           <div class="columns" style="margin-top:14px">
-            <div class="panel">
+            \${widgets.includes("priority_accounts") ? \`<div class="panel">
               <div class="panel-header"><div class="panel-title">Priority accounts</div><button class="button" data-view-target="accounts">Add account</button></div>
               \${accountsTable(state.accounts.slice(0, 8))}
-            </div>
-            <div class="panel">
+            </div>\` : ""}
+            \${widgets.includes("due_tasks") ? \`<div class="panel">
               <div class="panel-header"><div class="panel-title">Due tasks</div><button class="button" data-view-target="tasks">View tasks</button></div>
               \${taskList(state.tasks.slice(0, 6))}
+            </div>\` : ""}
+            \${widgets.includes("pipeline") ? \`<div class="panel">
+              <div class="panel-header"><div class="panel-title">Pipeline health</div><button class="button" data-view-target="reports">View reports</button></div>
+              \${reportTable(["Stage", "Deals", "Value"], (state.reports?.pipeline || []).map((row) => [row.stage_label || row.stage, row.opportunities, money(row.value_cents)]).slice(0, 6))}
+            </div>\` : ""}
+            \${widgets.includes("sequence_performance") ? \`<div class="panel">
+              <div class="panel-header"><div class="panel-title">Sequence performance</div><button class="button" data-view-target="sequences">View sequences</button></div>
+              \${reportTable(["Sequence", "Sent", "Opened", "Clicked"], (state.reports?.sequencePerformance || []).map((row) => [row.name, row.sent || 0, row.opened || 0, row.clicked || 0]).slice(0, 6))}
+            </div>\` : ""}
+            \${widgets.includes("stalled_opportunities") ? \`<div class="panel">
+              <div class="panel-header"><div class="panel-title">Stalled opportunities</div><button class="button" data-view-target="pipeline">Open pipeline</button></div>
+              \${reportTable(["Opportunity", "Stage", "Last activity"], (state.reports?.stalledOpportunities || []).map((row) => [row.name, row.stage, row.last_activity_at || "No activity"]).slice(0, 6))}
+            </div>\` : ""}
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Dashboard widgets</div></div>
+              <form id="dashboardPreferencesForm" class="form-grid" style="padding:0">
+                \${dashboardWidgetOptions().map((widget) => '<label><input name="widgets" type="checkbox" value="' + escapeHtml(widget.key) + '"' + (widgets.includes(widget.key) ? " checked" : "") + " /> " + escapeHtml(widget.label) + '</label>').join("")}
+                <button class="button primary">Save dashboard</button>
+              </form>
             </div>
           </div>\`;
       }
@@ -2015,6 +2037,17 @@ Content-Type: application/json
 
         bindPipelineDragAndDrop();
 
+        $("#dashboardPreferencesForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("dashboard/preferences", {
+            method: "PATCH",
+            body: JSON.stringify({ widgets: form.getAll("widgets") }),
+          });
+          notice("Dashboard saved.");
+          await refresh();
+        });
+
         $("#accountForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2772,6 +2805,23 @@ Content-Type: application/json
         if (!target) return escapeHtml(group.names || "");
         const actions = (group.items || []).slice(1).map((item) => '<button class="button" data-merge-source-account="' + escapeHtml(item.id) + '" data-merge-target-account="' + escapeHtml(target.id) + '">Merge ' + escapeHtml(item.name) + ' into ' + escapeHtml(target.name) + '</button>');
         return '<div class="stack" style="padding:0">' + actions.join("") + '</div>';
+      }
+
+      function dashboardWidgetOptions() {
+        return [
+          { key: "metrics", label: "Metrics" },
+          { key: "priority_accounts", label: "Priority accounts" },
+          { key: "due_tasks", label: "Due tasks" },
+          { key: "pipeline", label: "Pipeline health" },
+          { key: "sequence_performance", label: "Sequence performance" },
+          { key: "stalled_opportunities", label: "Stalled opportunities" },
+        ];
+      }
+
+      function dashboardWidgets() {
+        const allowed = new Set(dashboardWidgetOptions().map((widget) => widget.key));
+        const widgets = (state.dashboardPreferences?.widgets || []).filter((widget) => allowed.has(widget));
+        return widgets.length ? widgets : ["metrics", "priority_accounts", "due_tasks"];
       }
 
       function bindPipelineDragAndDrop() {

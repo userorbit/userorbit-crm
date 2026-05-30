@@ -39,6 +39,8 @@ const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid
 const EMAIL_SYNC_SOURCE_PROVIDERS = new Set(["gmail", "microsoft"]);
 const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oauth"]);
 const CALENDAR_OAUTH_PROVIDERS = new Set(["google", "microsoft"]);
+const DASHBOARD_WIDGETS = new Set(["metrics", "priority_accounts", "due_tasks", "pipeline", "sequence_performance", "stalled_opportunities"]);
+const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "priority_accounts", "due_tasks"];
 
 export default {
   async fetch(request, env) {
@@ -311,6 +313,14 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "summary") {
     return json(await getSummary(env, workspaceId));
+  }
+
+  if (request.method === "GET" && path === "dashboard/preferences") {
+    return json(await getDashboardPreferences(env, workspaceId, auth));
+  }
+
+  if (request.method === "PATCH" && path === "dashboard/preferences") {
+    return json(await updateDashboardPreferences(env, workspaceId, await readJson(request), auth));
   }
 
   if (request.method === "GET" && path === "reports") {
@@ -1474,6 +1484,43 @@ async function createSavedView(env, input, auth) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), resource, JSON.stringify(filters), now, now).run();
   return { ...(await getRequired(env, "SELECT * FROM saved_views WHERE id = ?", id)), filters };
+}
+
+async function getDashboardPreferences(env, workspaceId, auth) {
+  const existing = await env.DB.prepare("SELECT * FROM dashboard_preferences WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, auth.user.id).first();
+  return dashboardPreferencesResponse(workspaceId, auth.user.id, existing);
+}
+
+async function updateDashboardPreferences(env, workspaceId, input, auth) {
+  const widgets = normalizeDashboardWidgets(input.widgets);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO dashboard_preferences (id, workspace_id, user_id, widgets_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, user_id) DO UPDATE SET
+      widgets_json = excluded.widgets_json,
+      updated_at = excluded.updated_at
+  `).bind(id, workspaceId, auth.user.id, JSON.stringify(widgets), now, now).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "dashboard_preferences.update", resource: "dashboard_preferences", resourceId: workspaceId, metadata: { widgets } });
+  return getDashboardPreferences(env, workspaceId, auth);
+}
+
+function dashboardPreferencesResponse(workspaceId, userId, row) {
+  return {
+    id: row?.id || null,
+    workspace_id: workspaceId,
+    user_id: userId,
+    widgets: normalizeDashboardWidgets(parseJsonArray(row?.widgets_json)),
+    created_at: row?.created_at || null,
+    updated_at: row?.updated_at || null,
+  };
+}
+
+function normalizeDashboardWidgets(value) {
+  const source = Array.isArray(value) ? value : DEFAULT_DASHBOARD_WIDGETS;
+  const widgets = source.map((item) => cleanNullable(item)).filter((item) => DASHBOARD_WIDGETS.has(item));
+  return widgets.length ? [...new Set(widgets)] : [...DEFAULT_DASHBOARD_WIDGETS];
 }
 
 async function listLeadForms(env, workspaceId, auth) {

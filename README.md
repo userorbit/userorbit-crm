@@ -31,6 +31,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Account custom fields with role-based read/write permissions for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
 - Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, and stalled opportunities.
+- Per-user dashboard widget preferences for each workspace.
 - Account CSV import/export with duplicate matching and merge workflow for backups and spreadsheet workflows.
 - A landing page at `/` and the CRM app at `/app`.
 - A lightweight Linear/Coss-inspired UI served by the Worker.
@@ -488,6 +489,17 @@ Call channel responses include `call_twiml_path` and `call_status_path` for Twil
 curl http://localhost:8787/api/reports \
   -H "authorization: Bearer $CRM_API_TOKEN"
 ```
+
+### Customize the dashboard
+
+```sh
+curl -X PATCH http://localhost:8787/api/dashboard/preferences \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{ "widgets": ["metrics", "priority_accounts", "due_tasks", "pipeline"] }'
+```
+
+Dashboard preferences are scoped to the signed-in user and active workspace. Supported widgets are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
 
 ### Export accounts
 

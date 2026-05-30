@@ -381,6 +381,20 @@ GET /api/reports
 
 The response includes `pipeline`, `forecast`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, `ownerPerformance`, `sourceConversion`, `stalledOpportunities`, and `customFieldBreakdowns`. `forecast` groups open opportunities by close month with raw and confidence-weighted value.
 
+Review or update the current user's dashboard widgets for the active workspace:
+
+```http
+GET /api/dashboard/preferences
+```
+
+```http
+PATCH /api/dashboard/preferences
+
+{ "widgets": ["metrics", "priority_accounts", "due_tasks", "pipeline"] }
+```
+
+Supported widget keys are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
+
 Export accounts for backup or spreadsheet analysis:
 
 ```http
