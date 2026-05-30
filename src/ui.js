@@ -468,6 +468,7 @@ export const appHtml = String.raw`<!doctype html>
         accounts: [],
         accountFilters: { q: "", segment: "", status: "" },
         savedViews: [],
+        customFields: [],
         selectedSavedViewId: localStorage.getItem("crmSavedViewId") || "",
         selectedAccountId: localStorage.getItem("crmSelectedAccountId") || "",
         selectedAccount: null,
@@ -505,16 +506,17 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, reports, sequences, warmup, tasks] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, sequences, warmup, tasks] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
+          api("custom-fields?entity=account"),
           api("reports"),
           api("sequences"),
           api("warmup"),
           api("tasks"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, reports, sequences, warmup, tasks });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, sequences, warmup, tasks });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -635,6 +637,7 @@ export const appHtml = String.raw`<!doctype html>
                   <label>Contact name<input name="contactName" placeholder="Jane Doe" /></label>
                   <label>Email<input name="contactEmail" type="email" placeholder="jane@acme.com" /></label>
                   <label class="full">Title<input name="contactTitle" placeholder="Head of Product" /></label>
+                  \${customFieldInputs({ prefix: "cf_", values: {} })}
                 </div>
                 <button class="button primary">Create account</button>
               </form>
@@ -676,6 +679,7 @@ export const appHtml = String.raw`<!doctype html>
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Contacts</div></div>
+              \${customFieldsTable(account.customFields)}
               \${reportTable(["Name", "Title", "Email", "Status"], account.contacts.map((contact) => [contact.name, contact.title || "", contact.email, contact.status]))}
               <div class="panel-header"><div class="panel-title">Opportunities</div></div>
               \${reportTable(["Name", "Stage", "Value", "Confidence"], account.opportunities.map((opportunity) => [opportunity.name, opportunity.stage, money(opportunity.value_cents), opportunity.confidence + "%"]))}
@@ -691,6 +695,23 @@ export const appHtml = String.raw`<!doctype html>
               \${reportTable(["Subject", "Contact", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
             </div>
           </div>\`;
+      }
+
+      function customFieldInputs({ prefix, values }) {
+        if (!state.customFields.length) return "";
+        return state.customFields.map((field) => {
+          const value = values[field.key] || "";
+          if (field.type === "select") {
+            const options = (field.options || []).map((option) => '<option value="' + escapeHtml(option) + '">' + escapeHtml(option) + '</option>').join("");
+            return '<label>' + escapeHtml(field.name) + '<select name="' + prefix + escapeHtml(field.key) + '"><option value="">Not set</option>' + options + '</select></label>';
+          }
+          return '<label>' + escapeHtml(field.name) + '<input name="' + prefix + escapeHtml(field.key) + '" value="' + escapeHtml(value) + '" /></label>';
+        }).join("");
+      }
+
+      function customFieldsTable(fields) {
+        if (!fields?.length) return "";
+        return '<div class="stack" style="border-bottom:1px solid var(--border)">' + fields.map((field) => '<div><strong>' + escapeHtml(field.name) + '</strong><div class="subtitle">' + escapeHtml(field.value || "Not set") + '</div></div>').join("") + '</div>';
       }
 
       function timelineList(items) {
@@ -949,6 +970,13 @@ Content-Type: application/json
                   <label>Token name<input name="name" required placeholder="Codex agent" /></label>
                   <button class="button primary">Create workspace token</button>
                 </form>
+                <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Field name<input name="name" required placeholder="Company size" /></label>
+                  <label>Type<select name="type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Select</option><option value="url">URL</option></select></label>
+                  <label>Options<textarea name="options" placeholder="One option per line for select fields"></textarea></label>
+                  <button class="button primary">Create account field</button>
+                </form>
+                \${state.customFields.length ? '<div class="panel-header"><div class="panel-title">Account fields</div></div>' + reportTable(["Name", "Key", "Type"], state.customFields.map((field) => [field.name, field.key, field.type])) : ""}
                 \${state.generatedToken ? '<div class="api">' + escapeHtml(state.generatedToken) + '</div>' : ""}
               </div>
             </div>
@@ -984,6 +1012,7 @@ Content-Type: application/json
             segment: form.get("segment"),
             source: form.get("source"),
             observation: form.get("observation"),
+            customFields: customFieldsFromForm(form, "cf_"),
             contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: form.get("contactTitle") }] : [],
           };
           await api("accounts", { method: "POST", body: JSON.stringify(payload) });
@@ -1149,6 +1178,31 @@ Content-Type: application/json
           notice("Workspace token created.");
           render();
         });
+
+        $("#customFieldForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("custom-fields", {
+            method: "POST",
+            body: JSON.stringify({
+              entity: "account",
+              name: form.get("name"),
+              type: form.get("type"),
+              options: String(form.get("options") || "").split(/\\n|,/).map((option) => option.trim()).filter(Boolean),
+            }),
+          });
+          notice("Custom field created.");
+          await refresh();
+        });
+      }
+
+      function customFieldsFromForm(form, prefix) {
+        const values = {};
+        for (const field of state.customFields) {
+          const value = form.get(prefix + field.key);
+          if (value !== null && String(value).trim()) values[field.key] = value;
+        }
+        return values;
       }
 
       function escapeHtml(value) {

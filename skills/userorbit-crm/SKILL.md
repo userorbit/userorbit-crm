@@ -155,6 +155,25 @@ POST /api/saved-views
 
 Use saved views by passing `viewId` to `GET /api/accounts?viewId=<saved_view_id>`.
 
+Create an account custom field:
+
+```http
+POST /api/custom-fields
+
+{
+  "entity": "account",
+  "name": "Company size",
+  "type": "select",
+  "options": ["1-10", "11-50", "51-200", "200+"]
+}
+```
+
+Set custom field values by passing `customFields` when creating or updating an account. Keys are generated from the field name, for example:
+
+```json
+{ "customFields": { "company_size": "11-50" } }
+```
+
 Send one manual email:
 
 ```http

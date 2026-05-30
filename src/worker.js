@@ -14,6 +14,8 @@ const CONTACT_STATUSES = new Set(["new", "active", "replied", "bounced", "unsubs
 const OPPORTUNITY_STAGES = new Set(["research", "conversation", "demo", "proposal", "won", "lost"]);
 const WARMUP_PLAN_STATUSES = new Set(["active", "paused", "cancelled", "completed"]);
 const WARMUP_INTERACTIONS = new Set(["inbox", "spam", "not_spam", "reply", "important"]);
+const CUSTOM_FIELD_ENTITIES = new Set(["account"]);
+const CUSTOM_FIELD_TYPES = new Set(["text", "number", "date", "select", "url"]);
 
 export default {
   async fetch(request, env) {
@@ -83,6 +85,18 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "saved-views") {
     return json(await listSavedViews(env, workspaceId, auth, url));
+  }
+
+  if (request.method === "GET" && path === "custom-fields") {
+    return json(await listCustomFields(env, workspaceId, url));
+  }
+
+  if (request.method === "POST" && path === "custom-fields") {
+    return json(await createCustomField(env, { ...(await readJson(request)), workspaceId }), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("custom-fields/")) {
+    return json(await deleteCustomField(env, path.split("/")[1], workspaceId));
   }
 
   if (request.method === "POST" && path === "saved-views") {
@@ -353,6 +367,39 @@ async function deleteSavedView(env, id, workspaceId, auth) {
   return { ok: true };
 }
 
+async function listCustomFields(env, workspaceId, url) {
+  const entity = url.searchParams.get("entity") || "account";
+  if (!CUSTOM_FIELD_ENTITIES.has(entity)) throw httpError(400, "Unsupported custom field entity");
+  const rows = await env.DB.prepare(`
+    SELECT * FROM custom_fields
+    WHERE workspace_id = ? AND entity = ?
+    ORDER BY created_at ASC
+  `).bind(workspaceId, entity).all();
+  return rows.results.map((row) => ({ ...row, options: parseJsonArray(row.options_json) }));
+}
+
+async function createCustomField(env, input) {
+  requireFields(input, ["name"]);
+  const entity = input.entity || "account";
+  if (!CUSTOM_FIELD_ENTITIES.has(entity)) throw httpError(400, "Unsupported custom field entity");
+  const type = input.type || "text";
+  if (!CUSTOM_FIELD_TYPES.has(type)) throw httpError(400, "Unsupported custom field type");
+  const key = slugify(input.key || input.name).replaceAll("-", "_");
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  const options = Array.isArray(input.options) ? input.options.map((option) => String(option).trim()).filter(Boolean) : [];
+  await env.DB.prepare(`
+    INSERT INTO custom_fields (id, workspace_id, entity, name, key, type, options_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, input.workspaceId, entity, input.name.trim(), key, type, options.length ? JSON.stringify(options) : null, now, now).run();
+  return { ...(await getRequired(env, "SELECT * FROM custom_fields WHERE id = ?", id)), options };
+}
+
+async function deleteCustomField(env, id, workspaceId) {
+  await env.DB.prepare("DELETE FROM custom_fields WHERE id = ? AND workspace_id = ?").bind(id, workspaceId).run();
+  return { ok: true };
+}
+
 async function listAccounts(env, url, workspaceId, auth) {
   const filters = await resolveAccountFilters(env, url, workspaceId, auth);
   const search = `%${filters.q || ""}%`;
@@ -422,6 +469,15 @@ function parseJsonObject(value) {
   }
 }
 
+function parseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 async function createAccount(env, input) {
   requireFields(input, ["name"]);
   const workspaceId = input.workspaceId || (await resolveDefaultWorkspaceId(env));
@@ -455,6 +511,10 @@ async function createAccount(env, input) {
     }
   }
 
+  if (input.customFields && typeof input.customFields === "object") {
+    await upsertCustomFieldValues(env, workspaceId, "account", id, input.customFields);
+  }
+
   return getAccount(env, id, workspaceId);
 }
 
@@ -477,6 +537,10 @@ async function updateAccount(env, id, input) {
   `)
     .bind(next.name, next.domain, next.segment, next.source, next.observation, next.status, next.owner, new Date().toISOString(), id)
     .run();
+
+  if (input.customFields && typeof input.customFields === "object") {
+    await upsertCustomFieldValues(env, existing.workspace_id, "account", id, input.customFields);
+  }
 
   return getAccount(env, id, existing.workspace_id);
 }
@@ -1382,7 +1446,7 @@ async function maybeCompleteWarmupPlan(env, planId) {
 
 async function getAccount(env, id, workspaceId) {
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, workspaceId);
-  const [contacts, opportunities, tasks, emails] = await Promise.all([
+  const [contacts, opportunities, tasks, emails, customFields] = await Promise.all([
     env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare("SELECT * FROM opportunities WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare(`
@@ -1401,6 +1465,7 @@ async function getAccount(env, id, workspaceId) {
       ORDER BY ee.created_at DESC
       LIMIT 100
     `).bind(id).all(),
+    getCustomFieldValues(env, workspaceId, "account", id),
   ]);
 
   return {
@@ -1409,8 +1474,50 @@ async function getAccount(env, id, workspaceId) {
     opportunities: opportunities.results,
     tasks: tasks.results,
     emails: emails.results,
+    customFields,
     timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results }),
   };
+}
+
+async function getCustomFieldValues(env, workspaceId, entity, entityId) {
+  const rows = await env.DB.prepare(`
+    SELECT cf.id, cf.name, cf.key, cf.type, cf.options_json, cfv.value
+    FROM custom_fields cf
+    LEFT JOIN custom_field_values cfv ON cfv.field_id = cf.id AND cfv.entity_id = ?
+    WHERE cf.workspace_id = ? AND cf.entity = ?
+    ORDER BY cf.created_at ASC
+  `).bind(entityId, workspaceId, entity).all();
+  return rows.results.map((row) => ({ ...row, options: parseJsonArray(row.options_json), value: row.value || "" }));
+}
+
+async function upsertCustomFieldValues(env, workspaceId, entity, entityId, values) {
+  const fields = await env.DB.prepare("SELECT * FROM custom_fields WHERE workspace_id = ? AND entity = ?").bind(workspaceId, entity).all();
+  const byKey = new Map(fields.results.map((field) => [field.key, field]));
+  const now = new Date().toISOString();
+  for (const [key, rawValue] of Object.entries(values)) {
+    const field = byKey.get(key);
+    if (!field) continue;
+    const value = normalizeCustomFieldValue(field, rawValue);
+    const existing = await env.DB.prepare("SELECT id FROM custom_field_values WHERE field_id = ? AND entity_id = ?").bind(field.id, entityId).first();
+    const id = existing?.id || crypto.randomUUID();
+    await env.DB.prepare(`
+      INSERT INTO custom_field_values (id, workspace_id, field_id, entity, entity_id, value, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(field_id, entity_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).bind(id, workspaceId, field.id, entity, entityId, value, now, now).run();
+  }
+}
+
+function normalizeCustomFieldValue(field, value) {
+  if (value === undefined || value === null || value === "") return "";
+  if (field.type === "number") return String(Number(value));
+  if (field.type === "select") {
+    const options = parseJsonArray(field.options_json);
+    const selected = String(value).trim();
+    if (options.length && !options.includes(selected)) throw httpError(400, `Invalid option for ${field.name}`);
+    return selected;
+  }
+  return String(value).trim();
 }
 
 function buildAccountTimeline({ account, contacts, opportunities, tasks, emails }) {
