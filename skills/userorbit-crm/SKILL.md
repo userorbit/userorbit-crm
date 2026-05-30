@@ -75,6 +75,14 @@ POST /api/agent/command
 }
 ```
 
+Open an account timeline before recommending next steps:
+
+```http
+GET /api/accounts/<account_id>
+```
+
+Use the returned `timeline`, `contacts`, `opportunities`, `tasks`, and `emails` arrays to understand current context before creating follow-up work or sending email.
+
 Create a follow-up task:
 
 ```http

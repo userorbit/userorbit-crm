@@ -12,8 +12,9 @@
 - [x] Initialize and publish the GitHub repository.
 - [x] Add reporting dashboards for pipeline, activity, tasks, sequences, and stalled opportunities.
 - [x] Add account CSV export.
+- [x] Add account detail timelines with contacts, opportunities, tasks, and email activity.
 - [ ] Add invitations, password/OAuth login, token revocation UI, and audit logs.
-- [ ] Build the next Close-style CRM gaps: detail timelines, saved views, custom fields, import, inbound email sync, forecast reporting, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: contact detail, opportunity board, saved views, custom fields, import, inbound email sync, forecast reporting, integrations, and communication channels.
 
 ## Review
 
@@ -22,3 +23,5 @@ Completed the first open-source productization slice: landing page at `/`, auth-
 Verified JavaScript parsing, local D1 migration with Node 22 runtime, landing/API responses on port 8788, and browser-visible landing/auth/dashboard flow. Port 8787 was already occupied by an existing server, so verification used 8788 and then stopped that verification server.
 
 Added the next CRM-depth slice: `/api/reports`, account CSV export, a Reports UI tab, an account export button, and agent/docs coverage for reporting and exports.
+
+Added account detail timelines: `GET /api/accounts/:id`, an Account UI view from account rows, timeline composition from account/contact/opportunity/task/email activity, and agent/docs coverage for using account context before follow-up actions.

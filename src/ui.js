@@ -466,6 +466,8 @@ export const appHtml = String.raw`<!doctype html>
         workspaceId: localStorage.getItem("crmWorkspaceId") || "",
         summary: null,
         accounts: [],
+        selectedAccountId: localStorage.getItem("crmSelectedAccountId") || "",
+        selectedAccount: null,
         reports: null,
         sequences: [],
         warmup: null,
@@ -508,6 +510,9 @@ export const appHtml = String.raw`<!doctype html>
           api("tasks"),
         ]);
         Object.assign(state, { tenant, summary, accounts, reports, sequences, warmup, tasks });
+        if (state.view === "account" && state.selectedAccountId) {
+          state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
+        }
         render();
       }
 
@@ -521,6 +526,7 @@ export const appHtml = String.raw`<!doctype html>
         const views = {
           dashboard: renderDashboard,
           accounts: renderAccounts,
+          account: renderAccountDetail,
           reports: renderReports,
           sequences: renderSequences,
           warmup: renderWarmup,
@@ -602,7 +608,7 @@ export const appHtml = String.raw`<!doctype html>
       function accountsTable(accounts) {
         if (!accounts.length) return '<div class="empty">No accounts yet.</div>';
         return \`<table>
-          <thead><tr><th>Account</th><th>Segment</th><th>Status</th><th>Contacts</th><th>Pipeline</th></tr></thead>
+          <thead><tr><th>Account</th><th>Segment</th><th>Status</th><th>Contacts</th><th>Pipeline</th><th></th></tr></thead>
           <tbody>\${accounts.map((a) => \`
             <tr>
               <td><strong>\${escapeHtml(a.name)}</strong><div class="subtitle">\${escapeHtml(a.domain || a.observation || "")}</div></td>
@@ -610,8 +616,55 @@ export const appHtml = String.raw`<!doctype html>
               <td>\${escapeHtml(a.status)}</td>
               <td>\${a.contacts_count || (a.contacts ? a.contacts.length : 0)}</td>
               <td>\${money(a.pipeline_cents || 0)}</td>
+              <td><button class="button" data-account-id="\${escapeHtml(a.id)}">Open</button></td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function renderAccountDetail() {
+        const account = state.selectedAccount;
+        if (!account) return header("Account", "Open an account to see its timeline.") + '<div class="panel"><div class="empty">No account selected.</div></div>';
+        return header(escapeHtml(account.name), escapeHtml(account.domain || account.observation || ""), '<button class="button" data-view-target="accounts">Back to accounts</button>') + \`
+          <div class="grid metrics">
+            \${metric("Contacts", account.contacts.length)}
+            \${metric("Opportunities", account.opportunities.length)}
+            \${metric("Tasks", account.tasks.length)}
+            \${metric("Emails", account.emails.length)}
+            \${metric("Status", escapeHtml(account.status))}
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Timeline</div></div>
+              \${timelineList(account.timeline)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Contacts</div></div>
+              \${reportTable(["Name", "Title", "Email", "Status"], account.contacts.map((contact) => [contact.name, contact.title || "", contact.email, contact.status]))}
+              <div class="panel-header"><div class="panel-title">Opportunities</div></div>
+              \${reportTable(["Name", "Stage", "Value", "Confidence"], account.opportunities.map((opportunity) => [opportunity.name, opportunity.stage, money(opportunity.value_cents), opportunity.confidence + "%"]))}
+            </div>
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Tasks</div></div>
+              \${reportTable(["Title", "Kind", "Status", "Due"], account.tasks.map((task) => [task.title, task.kind, task.status, task.due_at || ""]))}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Email activity</div></div>
+              \${reportTable(["Subject", "Contact", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
+            </div>
+          </div>\`;
+      }
+
+      function timelineList(items) {
+        if (!items.length) return '<div class="empty">No timeline activity yet.</div>';
+        return '<div class="stack">' + items.map((item) => \`
+          <div style="border-bottom:1px solid var(--border); padding-bottom:10px">
+            <span class="pill">\${escapeHtml(item.type)}</span>
+            <strong style="display:block; margin-top:6px">\${escapeHtml(item.title)}</strong>
+            <div class="subtitle">\${escapeHtml(item.detail || "")}</div>
+            <div class="subtitle">\${escapeHtml(formatDateTime(item.happenedAt))}</div>
+          </div>\`).join("") + '</div>';
       }
 
       function renderReports() {
@@ -868,6 +921,14 @@ Content-Type: application/json
       function bind() {
         document.querySelectorAll("[data-view-target]").forEach((node) => node.addEventListener("click", () => {
           state.view = node.dataset.viewTarget;
+          render();
+        }));
+
+        document.querySelectorAll("[data-account-id]").forEach((node) => node.addEventListener("click", async () => {
+          state.selectedAccountId = node.dataset.accountId;
+          localStorage.setItem("crmSelectedAccountId", state.selectedAccountId);
+          state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
+          state.view = "account";
           render();
         }));
 

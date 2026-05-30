@@ -7,6 +7,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 ## What it includes
 
 - Accounts, contacts, opportunities, and tasks.
+- Account detail timelines with contacts, opportunities, tasks, and email activity.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending and scheduled sequence processing.
 - Zoho SMTP support through Cloudflare Workers TCP sockets.
@@ -97,6 +98,13 @@ curl -X POST http://localhost:8787/api/agent/command \
       ]
     }
   }'
+```
+
+### Get an account timeline
+
+```sh
+curl http://localhost:8787/api/accounts/account-id \
+  -H "authorization: Bearer $CRM_API_TOKEN"
 ```
 
 ### Enroll a contact

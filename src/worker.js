@@ -89,6 +89,10 @@ async function routeApi(request, env, url, auth) {
     return json(await listAccounts(env, url, workspaceId));
   }
 
+  if (request.method === "GET" && path.startsWith("accounts/")) {
+    return json(await getAccount(env, path.split("/")[1], workspaceId));
+  }
+
   if (request.method === "POST" && path === "accounts") {
     return json(await createAccount(env, { ...(await readJson(request)), workspaceId }), 201);
   }
@@ -377,7 +381,7 @@ async function createAccount(env, input) {
     }
   }
 
-  return getAccount(env, id);
+  return getAccount(env, id, workspaceId);
 }
 
 async function updateAccount(env, id, input) {
@@ -400,7 +404,7 @@ async function updateAccount(env, id, input) {
     .bind(next.name, next.domain, next.segment, next.source, next.observation, next.status, next.owner, new Date().toISOString(), id)
     .run();
 
-  return getAccount(env, id);
+  return getAccount(env, id, existing.workspace_id);
 }
 
 async function createContact(env, input) {
@@ -1302,11 +1306,82 @@ async function maybeCompleteWarmupPlan(env, planId) {
     .run();
 }
 
-async function getAccount(env, id) {
-  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ?", id);
-  const contacts = await env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all();
-  const opportunities = await env.DB.prepare("SELECT * FROM opportunities WHERE account_id = ? ORDER BY created_at DESC").bind(id).all();
-  return { ...account, contacts: contacts.results, opportunities: opportunities.results };
+async function getAccount(env, id, workspaceId) {
+  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const [contacts, opportunities, tasks, emails] = await Promise.all([
+    env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
+    env.DB.prepare("SELECT * FROM opportunities WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
+    env.DB.prepare(`
+      SELECT t.*, c.name AS contact_name
+      FROM tasks t
+      LEFT JOIN contacts c ON c.id = t.contact_id
+      WHERE t.account_id = ? AND t.workspace_id = ?
+      ORDER BY COALESCE(t.due_at, t.created_at) ASC
+    `).bind(id, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT ee.*, c.name AS contact_name, c.email AS contact_email, s.name AS sequence_name
+      FROM email_events ee
+      LEFT JOIN contacts c ON c.id = ee.contact_id
+      LEFT JOIN sequences s ON s.id = ee.sequence_id
+      WHERE ee.account_id = ?
+      ORDER BY ee.created_at DESC
+      LIMIT 100
+    `).bind(id).all(),
+  ]);
+
+  return {
+    ...account,
+    contacts: contacts.results,
+    opportunities: opportunities.results,
+    tasks: tasks.results,
+    emails: emails.results,
+    timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results }),
+  };
+}
+
+function buildAccountTimeline({ account, contacts, opportunities, tasks, emails }) {
+  const items = [
+    {
+      id: `account:${account.id}`,
+      type: "account",
+      title: "Account created",
+      detail: account.source ? `Source: ${account.source}` : account.observation || "",
+      happenedAt: account.created_at,
+    },
+    ...contacts.map((contact) => ({
+      id: `contact:${contact.id}`,
+      type: "contact",
+      title: `Contact added: ${contact.name}`,
+      detail: [contact.title, contact.email].filter(Boolean).join(" · "),
+      happenedAt: contact.created_at,
+    })),
+    ...opportunities.map((opportunity) => ({
+      id: `opportunity:${opportunity.id}`,
+      type: "opportunity",
+      title: `Opportunity: ${opportunity.name}`,
+      detail: `${opportunity.stage} · ${formatCents(opportunity.value_cents)} · ${opportunity.confidence}% confidence`,
+      happenedAt: opportunity.updated_at || opportunity.created_at,
+    })),
+    ...tasks.map((task) => ({
+      id: `task:${task.id}`,
+      type: "task",
+      title: `Task: ${task.title}`,
+      detail: [task.status, task.kind, task.due_at ? `due ${task.due_at}` : ""].filter(Boolean).join(" · "),
+      happenedAt: task.updated_at || task.created_at,
+    })),
+    ...emails.map((email) => ({
+      id: `email:${email.id}`,
+      type: "email",
+      title: `${email.status}: ${email.subject}`,
+      detail: [email.contact_name || email.contact_email, email.sequence_name].filter(Boolean).join(" · "),
+      happenedAt: email.sent_at || email.created_at,
+    })),
+  ];
+  return items.sort((a, b) => String(b.happenedAt || "").localeCompare(String(a.happenedAt || "")));
+}
+
+function formatCents(cents) {
+  return `$${Math.round(Number(cents || 0) / 100).toLocaleString("en-US")}`;
 }
 
 async function getContactWithAccount(env, id) {
