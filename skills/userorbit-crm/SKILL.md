@@ -120,7 +120,7 @@ List integrations and recent delivery status:
 GET /api/integrations
 ```
 
-Create a provider-backed SMS or WhatsApp message channel:
+Create a provider-backed SMS, WhatsApp, or call channel:
 
 ```http
 POST /api/message-channels
@@ -134,6 +134,8 @@ POST /api/message-channels
   "from": "+15551234567"
 }
 ```
+
+For native calling, use `type: "call"` and optionally include `voiceAgentNumber` to bridge answered customer calls to a rep phone number. Owner/admin channel responses include `call_twiml_path` and `call_status_path` for Twilio-compatible voice callbacks.
 
 List channels and recent delivery status:
 
@@ -442,6 +444,23 @@ POST /api/agent/command
 ```
 
 The contact must have a phone number unless `payload.to` is provided. The send creates a `communication.created` timeline event and a `message.sent` webhook event with delivery status. For inbound provider replies, use the channel `webhook_path`; do not call authenticated APIs from the provider callback.
+
+Start a native outbound call through a configured call channel:
+
+```http
+POST /api/agent/command
+
+{
+  "command": "start_call",
+  "payload": {
+    "channelId": "call_channel_id",
+    "contactId": "contact_id",
+    "body": "Outbound discovery call"
+  }
+}
+```
+
+The call creates an outbound `call` communication event, records provider delivery status, emits `call.started`, and accepts provider status callbacks through the channel `call_status_path`.
 
 Create and work a power dialer queue:
 

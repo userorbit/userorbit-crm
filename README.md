@@ -416,7 +416,7 @@ curl -X POST http://localhost:8787/api/dialer/items/item-id/complete \
 
 Completed dialer calls create outbound `call` communication events, appear on account/contact timelines, emit `dialer.call.completed`, and can be generated through the `create_dialer_session` and `complete_dialer_call` agent commands.
 
-### Create a message channel
+### Create message and call channels
 
 ```sh
 curl -X POST http://localhost:8787/api/message-channels \
@@ -448,6 +448,21 @@ curl -X POST http://localhost:8787/api/messages/send \
 WhatsApp channels use `type: "whatsapp"` and accept either `+15551234567` or `whatsapp:+15551234567` in `from`; outbound addresses are normalized before sending. Recent delivery status is visible from Settings.
 
 Settings shows an inbound webhook URL for each channel. Configure the provider's inbound message callback to that URL. Twilio-style form posts with `From`, `Body`, and `MessageSid` are supported. Inbound messages match contacts by phone number, create account/contact timeline activity, mark the contact replied, pause active sequence enrollments, and emit `message.received`.
+
+Native calling uses the same Twilio-compatible channel model with `type: "call"`. Optionally set `voiceAgentNumber` to bridge answered customer calls to a rep phone number through TwiML. Start a call and store it on the timeline:
+
+```sh
+curl -X POST http://localhost:8787/api/calls/start \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "channelId": "call-channel-id",
+    "contactId": "contact-id",
+    "body": "Outbound discovery call"
+  }'
+```
+
+Call channel responses include `call_twiml_path` and `call_status_path` for Twilio-compatible voice callbacks. Status callbacks update delivery status, call outcomes, and active dialer items.
 
 ### Get reports
 
@@ -502,6 +517,7 @@ Supported commands:
 - `enroll_contact`
 - `send_email`
 - `send_message`
+- `start_call`
 - `create_dialer_session`
 - `complete_dialer_call`
 - `generate_ai_insight`

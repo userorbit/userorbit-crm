@@ -54,7 +54,8 @@
 - [x] Add Google/Microsoft OAuth calendar source sync.
 - [x] Add generic account enrichment-provider integrations.
 - [x] Add power dialer queues with call outcome logging.
-- [ ] Build the next Close-style CRM gaps: deeper native integrations and native calling.
+- [x] Add Twilio-compatible native outbound calling with call status tracking.
+- [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.

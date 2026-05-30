@@ -32,7 +32,7 @@ const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
-const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
+const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
 const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oauth"]);
@@ -69,6 +69,10 @@ export default {
 
       if (request.method === "POST" && url.pathname.startsWith("/hooks/messages/")) {
         return await handleInboundMessageWebhook(request, env, url);
+      }
+
+      if (url.pathname.startsWith("/hooks/calls/")) {
+        return await handleCallWebhook(request, env, url);
       }
 
       if (request.method === "POST" && url.pathname.startsWith("/hooks/email/")) {
@@ -425,6 +429,10 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "POST" && path.startsWith("dialer/items/") && path.endsWith("/start")) {
     await requireWorkspaceWrite(env, auth, workspaceId);
+    const input = await readJson(request);
+    if (input.channelId || input.channel_id) {
+      return json(await startDialerProviderCall(env, path.split("/")[2], { ...input, workspaceId, baseUrl: url.origin }, auth), 201);
+    }
     return json(await startDialerItem(env, path.split("/")[2], workspaceId, auth));
   }
 
@@ -446,6 +454,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "POST" && path === "messages/send") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await sendProviderMessage(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path === "calls/start") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await startProviderCall(env, { ...(await readJson(request)), workspaceId, baseUrl: url.origin }, auth), 201);
   }
 
   if (request.method === "GET" && path === "calendar/events") {
@@ -2009,6 +2022,24 @@ async function startDialerItem(env, itemId, workspaceId, auth) {
   return dialerItemResponse(started);
 }
 
+async function startDialerProviderCall(env, itemId, input, auth) {
+  const item = await getRequired(env, `
+    SELECT dsi.*, c.name AS contact_name
+    FROM dialer_session_items dsi
+    JOIN contacts c ON c.id = dsi.contact_id
+    WHERE dsi.id = ? AND dsi.workspace_id = ? AND dsi.status IN ('queued', 'calling')
+  `, itemId, input.workspaceId);
+  await startDialerItem(env, item.id, input.workspaceId, auth);
+  return startProviderCall(env, {
+    ...input,
+    contactId: item.contact_id,
+    to: item.phone,
+    subject: cleanNullable(input.subject) || `Outbound call to ${item.contact_name}`,
+    body: cleanNullable(input.body) || "Started from power dialer.",
+    dialerItemId: item.id,
+  }, auth);
+}
+
 async function completeDialerItem(env, itemId, input, auth) {
   const item = await getRequired(env, `
     SELECT dsi.*, a.name AS account_name, c.name AS contact_name
@@ -2149,6 +2180,7 @@ async function sendProviderMessage(env, input, auth) {
     JOIN accounts a ON a.id = c.account_id
     WHERE c.id = ? AND a.workspace_id = ?
   `, input.contactId, input.workspaceId);
+  if (channel.type === "call") throw httpError(400, "Use /api/calls/start for call channels");
   const type = normalizeEnum(input.type || channel.type, MESSAGE_CHANNEL_TYPES, "type");
   if (type !== channel.type) throw httpError(400, "Message type must match the selected channel");
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
@@ -2207,6 +2239,72 @@ async function sendProviderMessage(env, input, auth) {
   return { communication: event, delivery: result };
 }
 
+async function startProviderCall(env, input, auth) {
+  requireFields(input, ["channelId", "contactId"]);
+  const channel = await getRequired(env, "SELECT * FROM workspace_message_channels WHERE id = ? AND workspace_id = ? AND status = 'active'", input.channelId, input.workspaceId);
+  if (channel.type !== "call") throw httpError(400, "Selected channel is not a call channel");
+  const contact = await getRequired(env, `
+    SELECT c.*, a.id AS account_id, a.name AS account_name
+    FROM contacts c
+    JOIN accounts a ON a.id = c.account_id
+    WHERE c.id = ? AND a.workspace_id = ?
+  `, input.contactId, input.workspaceId);
+  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  const to = cleanNullable(input.to || input.phone || contact.phone);
+  if (!to) throw httpError(400, "Contact phone is required");
+  const id = input.id || crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO communication_events (
+      id, workspace_id, account_id, contact_id, created_by_user_id,
+      type, direction, outcome, subject, body, occurred_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, 'call', 'outbound', NULL, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    contact.account_id,
+    contact.id,
+    auth.user.id,
+    cleanNullable(input.subject) || `Outbound call to ${contact.name}`,
+    cleanNullable(input.body || input.notes),
+    now,
+    now,
+    now,
+  ).run();
+
+  const result = await deliverProviderCall(channel, { to, communicationId: id, baseUrl: input.baseUrl });
+  await env.DB.prepare(`
+    INSERT INTO message_deliveries (
+      id, workspace_id, channel_id, communication_event_id, account_id, contact_id,
+      provider_message_id, status, status_code, error, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    input.workspaceId,
+    channel.id,
+    id,
+    contact.account_id,
+    contact.id,
+    cleanNullable(result.providerMessageId),
+    result.status,
+    result.statusCode || null,
+    cleanNullable(result.error),
+    now,
+  ).run();
+  if (input.dialerItemId) {
+    await env.DB.prepare("UPDATE dialer_session_items SET status = 'calling', communication_event_id = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND workspace_id = ?")
+      .bind(id, now, now, input.dialerItemId, input.workspaceId)
+      .run();
+  }
+  const event = await getRequired(env, "SELECT * FROM communication_events WHERE id = ?", id);
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "call.start", resource: "communication_event", resourceId: id, metadata: { channelId: channel.id, provider: channel.provider, contactId: contact.id, status: result.status } });
+  await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
+  await deliverWebhooks(env, input.workspaceId, "call.started", id, { ...event, delivery: result });
+  return { communication: event, delivery: result };
+}
+
 async function handleInboundMessageWebhook(request, env, url) {
   const inboundKey = cleanNullable(url.pathname.split("/").pop());
   if (!inboundKey) throw httpError(404, "Message webhook not found");
@@ -2216,6 +2314,55 @@ async function handleInboundMessageWebhook(request, env, url) {
   const wantsJson = (request.headers.get("accept") || "").includes("application/json");
   if (wantsJson) return json(result, 201);
   return new Response("<Response></Response>", { status: 201, headers: { "content-type": "text/xml; charset=utf-8" } });
+}
+
+async function handleCallWebhook(request, env, url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  const inboundKey = cleanNullable(parts[2]);
+  const action = cleanNullable(parts[3]);
+  if (!inboundKey || !action) throw httpError(404, "Call webhook not found");
+  const channel = await getRequired(env, "SELECT * FROM workspace_message_channels WHERE inbound_key = ? AND status = 'active' AND type = 'call'", inboundKey);
+  if (action === "twiml") return callTwimlResponse(channel);
+  if (action === "status" && request.method === "POST") return json(await recordCallStatusWebhook(env, channel, await readProviderWebhookPayload(request)));
+  throw httpError(404, "Call webhook not found");
+}
+
+function callTwimlResponse(channel) {
+  const config = parseJsonObject(channel.config_json);
+  const agentNumber = cleanNullable(config.voiceAgentNumber || config.agentNumber);
+  const xml = agentNumber
+    ? `<Response><Say>Connecting your UserOrbit call.</Say><Dial callerId="${escapeXml(config.from)}">${escapeXml(agentNumber)}</Dial></Response>`
+    : "<Response><Say>Your UserOrbit call was connected. No agent number is configured.</Say><Pause length=\"2\" /></Response>";
+  return new Response(xml, { headers: { "content-type": "text/xml; charset=utf-8" } });
+}
+
+async function recordCallStatusWebhook(env, channel, input) {
+  const providerMessageId = cleanNullable(input.CallSid || input.callSid || input.Sid || input.sid);
+  const providerStatus = cleanNullable(input.CallStatus || input.callStatus || input.status) || "updated";
+  if (!providerMessageId) return { ok: true, ignored: "missing CallSid" };
+  const delivery = await env.DB.prepare("SELECT * FROM message_deliveries WHERE channel_id = ? AND provider_message_id = ? ORDER BY created_at DESC LIMIT 1")
+    .bind(channel.id, providerMessageId)
+    .first();
+  if (!delivery) return { ok: true, ignored: "unknown call" };
+  const status = normalizeProviderCallStatus(providerStatus);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE message_deliveries SET status = ?, status_code = ?, error = COALESCE(?, error) WHERE id = ?")
+    .bind(status, Number(input.CallDuration || input.callDuration || 0) || null, cleanNullable(input.ErrorMessage || input.error), delivery.id)
+    .run();
+  if (["completed", "busy", "failed", "no_answer", "cancelled"].includes(status)) {
+    const outcome = status === "completed" ? "connected" : status === "no_answer" ? "no_answer" : status === "busy" ? "no_answer" : "cancelled";
+    await env.DB.prepare("UPDATE communication_events SET outcome = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
+      .bind(outcome, now, delivery.communication_event_id, channel.workspace_id)
+      .run();
+    await env.DB.prepare("UPDATE dialer_session_items SET status = 'completed', outcome = ?, completed_at = COALESCE(completed_at, ?), updated_at = ? WHERE communication_event_id = ? AND workspace_id = ?")
+      .bind(outcome, now, now, delivery.communication_event_id, channel.workspace_id)
+      .run();
+  }
+  const event = delivery.communication_event_id
+    ? await env.DB.prepare("SELECT * FROM communication_events WHERE id = ? AND workspace_id = ?").bind(delivery.communication_event_id, channel.workspace_id).first()
+    : null;
+  await deliverWebhooks(env, channel.workspace_id, "call.status.updated", delivery.id, { delivery: { ...delivery, status }, communication: event, providerStatus });
+  return { ok: true, status };
 }
 
 async function handleInboundEmailWebhook(request, env, url) {
@@ -3952,6 +4099,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "send_message") {
     return { result: await sendProviderMessage(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "start_call") {
+    return { result: await startProviderCall(env, { ...(input.payload || {}), workspaceId: input.workspaceId, baseUrl: cleanNullable(input.baseUrl || input.payload?.baseUrl || env.CRM_PUBLIC_URL) || "" }, auth) };
   }
   if (input.command === "create_dialer_session") {
     return { result: await createDialerSession(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
@@ -6018,7 +6168,7 @@ function normalizeMessageChannelConfig(provider, input) {
     if (!accountSid || !authToken || !from) throw httpError(400, "Twilio accountSid, authToken, and from number are required");
     const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url);
     if (apiBaseUrl) normalizeWebhookUrl(apiBaseUrl);
-    return { accountSid, authToken, from, apiBaseUrl };
+    return { accountSid, authToken, from, apiBaseUrl, voiceAgentNumber: cleanNullable(input.voiceAgentNumber || input.voice_agent_number || input.agentNumber || input.agent_number) };
   }
   throw httpError(400, "Unsupported message provider");
 }
@@ -6028,6 +6178,8 @@ function messageChannelResponse(channel, revealWebhook = false) {
     ...channel,
     config: maskMessageChannelConfig(channel.provider, parseJsonObject(channel.config_json)),
     webhook_path: revealWebhook && channel.inbound_key ? `/hooks/messages/${channel.inbound_key}` : null,
+    call_twiml_path: revealWebhook && channel.type === "call" && channel.inbound_key ? `/hooks/calls/${channel.inbound_key}/twiml` : null,
+    call_status_path: revealWebhook && channel.type === "call" && channel.inbound_key ? `/hooks/calls/${channel.inbound_key}/status` : null,
   };
 }
 
@@ -6045,6 +6197,7 @@ function maskMessageChannelConfig(provider, config) {
       authToken: config.authToken ? "configured" : "",
       from: config.from || "",
       apiBaseUrl: config.apiBaseUrl || "",
+      voiceAgentNumber: config.voiceAgentNumber || "",
     };
   }
   return {};
@@ -6059,6 +6212,54 @@ async function deliverProviderMessage(channel, message) {
   const config = parseJsonObject(channel.config_json);
   if (channel.provider === "twilio") return deliverTwilioMessage(channel, config, message);
   return { status: "failed", error: "Unsupported message provider" };
+}
+
+async function deliverProviderCall(channel, call) {
+  const config = parseJsonObject(channel.config_json);
+  if (channel.provider === "twilio") return deliverTwilioCall(channel, config, call);
+  return { status: "failed", error: "Unsupported call provider" };
+}
+
+async function deliverTwilioCall(channel, config, call) {
+  const accountSid = config.accountSid;
+  const authToken = config.authToken;
+  const from = formatProviderAddress("call", config.from);
+  const to = formatProviderAddress("call", call.to);
+  const baseUrl = (config.apiBaseUrl || "https://api.twilio.com").replace(/\/+$/, "");
+  const publicBaseUrl = String(call.baseUrl || "").replace(/\/+$/, "");
+  const url = `${baseUrl}/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Calls.json`;
+  let status = "failed";
+  let statusCode = null;
+  let error = null;
+  let providerMessageId = null;
+  try {
+    const body = new URLSearchParams({
+      From: from,
+      To: to,
+      Url: `${publicBaseUrl}/hooks/calls/${channel.inbound_key}/twiml`,
+      StatusCallback: `${publicBaseUrl}/hooks/calls/${channel.inbound_key}/status`,
+      StatusCallbackEvent: "initiated ringing answered completed",
+      StatusCallbackMethod: "POST",
+    });
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+        "content-type": "application/x-www-form-urlencoded",
+        "user-agent": "UserOrbit-CRM-Call",
+      },
+      body,
+    });
+    statusCode = response.status;
+    const responseText = await response.text();
+    const parsed = parseJsonObject(responseText);
+    providerMessageId = cleanNullable(parsed.sid || parsed.callSid || parsed.id);
+    status = response.ok ? normalizeProviderCallStatus(parsed.status || "queued") : "failed";
+    if (!response.ok) error = cleanNullable(parsed.message || parsed.error) || `HTTP ${response.status}`;
+  } catch (caught) {
+    error = caught.message || String(caught);
+  }
+  return { status, statusCode, providerMessageId, error };
 }
 
 async function deliverTwilioMessage(channel, config, message) {
@@ -6100,6 +6301,22 @@ function formatProviderAddress(type, value) {
   if (!address) return "";
   if (type === "whatsapp" && !address.toLowerCase().startsWith("whatsapp:")) return `whatsapp:${address}`;
   return address;
+}
+
+function normalizeProviderCallStatus(status) {
+  const value = String(status || "").toLowerCase().replace(/[\s-]+/g, "_");
+  if (value === "in_progress") return "calling";
+  if (["queued", "initiated", "ringing", "calling", "completed", "busy", "failed", "no_answer", "cancelled"].includes(value)) return value;
+  return "updated";
+}
+
+function escapeXml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 function normalizePhoneAddress(value) {

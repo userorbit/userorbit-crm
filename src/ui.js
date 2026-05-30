@@ -671,6 +671,17 @@ export const appHtml = String.raw`<!doctype html>
           const itemId = event.currentTarget.dataset.startDialerItemId;
           await api("dialer/items/" + encodeURIComponent(itemId) + "/start", { method: "POST", body: "{}" });
         });
+        container.querySelector("[data-start-native-dialer-item-id]")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const itemId = event.currentTarget.dataset.startNativeDialerItemId;
+          await api("dialer/items/" + encodeURIComponent(itemId) + "/start", {
+            method: "POST",
+            body: JSON.stringify({ channelId: form.get("channelId") }),
+          });
+          notice("Native call started.");
+          await refresh();
+        });
         container.querySelector("[data-complete-dialer-item-id]")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -1224,6 +1235,8 @@ export const appHtml = String.raw`<!doctype html>
 
       function renderCommunications() {
         const channels = state.messageChannels?.channels || [];
+        const textChannels = channels.filter((channel) => channel.type === "sms" || channel.type === "whatsapp");
+        const callChannels = channels.filter((channel) => channel.type === "call");
         const callableContacts = state.accounts.flatMap((account) => (account.contacts || [])
           .filter((contact) => contact.phone)
           .map((contact) => ({ ...contact, accountName: account.name })));
@@ -1249,13 +1262,23 @@ export const appHtml = String.raw`<!doctype html>
               <div class="panel-header"><div class="panel-title">Send provider message</div></div>
               <form id="providerMessageForm" class="stack">
                 <div class="form-grid">
-                  <label>Channel<select name="channelId" required>\${channels.map((channel) => '<option value="' + escapeHtml(channel.id) + '">' + escapeHtml(channel.name + " / " + channel.type) + '</option>').join("")}</select></label>
+                  <label>Channel<select name="channelId" required>\${textChannels.map((channel) => '<option value="' + escapeHtml(channel.id) + '">' + escapeHtml(channel.name + " / " + channel.type) + '</option>').join("")}</select></label>
                   <label>Contact<select name="contactId" required>\${state.accounts.flatMap((account) => account.contacts || []).map((contact) => '<option value="' + escapeHtml(contact.id) + '">' + escapeHtml(contact.name + " / " + (contact.phone || contact.email || "")) + '</option>').join("")}</select></label>
                   <label class="full">Body<textarea name="body" required placeholder="Short SMS or WhatsApp follow-up"></textarea></label>
                 </div>
-                <button class="button primary" \${channels.length ? "" : "disabled"}>Send message</button>
+                <button class="button primary" \${textChannels.length ? "" : "disabled"}>Send message</button>
               </form>
-              \${channels.length ? "" : '<div class="empty">Create a message channel in Settings before sending SMS or WhatsApp.</div>'}
+              \${textChannels.length ? "" : '<div class="empty">Create an SMS or WhatsApp channel in Settings before sending messages.</div>'}
+              <div class="panel-header"><div class="panel-title">Start native call</div></div>
+              <form id="providerCallForm" class="stack">
+                <div class="form-grid">
+                  <label>Channel<select name="channelId" required>\${callChannels.map((channel) => '<option value="' + escapeHtml(channel.id) + '">' + escapeHtml(channel.name + " / " + channel.config?.from) + '</option>').join("")}</select></label>
+                  <label>Contact<select name="contactId" required>\${callableContacts.map((contact) => '<option value="' + escapeHtml(contact.id) + '">' + escapeHtml(contact.name + " / " + contact.accountName + " / " + contact.phone) + '</option>').join("")}</select></label>
+                  <label class="full">Notes<textarea name="body" placeholder="Purpose or prep notes for this call"></textarea></label>
+                </div>
+                <button class="button primary" \${callChannels.length && callableContacts.length ? "" : "disabled"}>Start call</button>
+              </form>
+              \${callChannels.length ? "" : '<div class="empty">Create a call channel in Settings before starting native calls.</div>'}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Log activity</div></div>
@@ -1508,6 +1531,7 @@ export const appHtml = String.raw`<!doctype html>
       function renderDialerItem(payload) {
         const item = payload?.item;
         if (!item) return '<div class="empty">This queue is complete.</div>';
+        const callChannels = state.messageChannels?.channels?.filter((channel) => channel.type === "call") || [];
         return \`
           <div class="stack">
             <div>
@@ -1517,6 +1541,7 @@ export const appHtml = String.raw`<!doctype html>
             <div class="toolbar">
               <a class="button primary" href="\${escapeHtml(item.telUrl || "#")}" data-start-dialer-item-id="\${escapeHtml(item.id)}">Call</a>
             </div>
+            \${callChannels.length ? '<form class="stack" data-start-native-dialer-item-id="' + escapeHtml(item.id) + '"><label>Call channel<select name="channelId">' + callChannels.map((channel) => '<option value="' + escapeHtml(channel.id) + '">' + escapeHtml(channel.name + " / " + channel.config?.from) + '</option>').join("") + '</select></label><button class="button primary">Start native call</button></form>' : ""}
             <form class="stack" data-complete-dialer-item-id="\${escapeHtml(item.id)}">
               <div class="form-grid">
                 <label>Outcome<select name="outcome"><option value="connected">Connected</option><option value="left_message">Left message</option><option value="no_answer">No answer</option><option value="scheduled">Scheduled</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="neutral">Neutral</option></select></label>
@@ -1648,11 +1673,12 @@ Content-Type: application/json
                   <button class="button primary">Create enrichment provider</button>
                 </form>
                 <form id="messageChannelForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
-                  <label>Name<input name="name" required placeholder="Outbound SMS" /></label>
-                  <label>Type<select name="type"><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select></label>
+                  <label>Name<input name="name" required placeholder="Outbound SMS or calls" /></label>
+                  <label>Type<select name="type"><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="call">Call</option></select></label>
                   <label>Twilio account SID<input name="accountSid" required placeholder="AC..." /></label>
                   <label>Twilio auth token<input name="authToken" type="password" required placeholder="Token" /></label>
                   <label>From number<input name="from" required placeholder="+15551234567 or whatsapp:+15551234567" /></label>
+                  <label>Agent bridge number<input name="voiceAgentNumber" placeholder="Optional for call channels" /></label>
                   <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
                   <button class="button primary">Create message channel</button>
                 </form>
@@ -2079,6 +2105,21 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#providerCallForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("calls/start", {
+            method: "POST",
+            body: JSON.stringify({
+              channelId: form.get("channelId"),
+              contactId: form.get("contactId"),
+              body: form.get("body"),
+            }),
+          });
+          notice("Native call started.");
+          await refresh();
+        });
+
         $("#calendarEventForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2397,6 +2438,7 @@ Content-Type: application/json
               accountSid: form.get("accountSid"),
               authToken: form.get("authToken"),
               from: form.get("from"),
+              voiceAgentNumber: form.get("voiceAgentNumber") || undefined,
               apiBaseUrl: form.get("apiBaseUrl") || undefined,
             }),
           });
