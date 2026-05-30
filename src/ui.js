@@ -1468,6 +1468,15 @@ Content-Type: application/json
           await refresh();
         }));
 
+        document.querySelectorAll("[data-merge-source-account]").forEach((node) => node.addEventListener("click", async () => {
+          await api("accounts/" + encodeURIComponent(node.dataset.mergeTargetAccount) + "/merge", {
+            method: "POST",
+            body: JSON.stringify({ sourceAccountId: node.dataset.mergeSourceAccount }),
+          });
+          notice("Accounts merged.");
+          await refresh();
+        }));
+
         document.querySelectorAll("[data-revoke-token-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("workspace-tokens/" + encodeURIComponent(node.dataset.revokeTokenId), { method: "DELETE" });
           notice("Workspace token revoked.");
@@ -1545,11 +1554,20 @@ Content-Type: application/json
       function duplicateAccountsPanel() {
         const duplicates = state.accountDuplicates || { domains: [], names: [] };
         const rows = [
-          ...duplicates.domains.map((item) => ["Domain", item.key, item.accounts, item.names]),
-          ...duplicates.names.map((item) => ["Name", item.key, item.accounts, item.names]),
+          ...duplicates.domains.map((item) => ["Domain", item.key, item.accounts, duplicateMergeActions(item)]),
+          ...duplicates.names.map((item) => ["Name", item.key, item.accounts, duplicateMergeActions(item)]),
         ];
         if (!rows.length) return "";
-        return '<div class="stack" style="border-top:1px solid var(--border)"><div class="panel-header"><div class="panel-title">Duplicate watchlist</div></div>' + reportTable(["Match", "Key", "Accounts", "Names"], rows.slice(0, 8)) + '</div>';
+        return '<div class="stack" style="border-top:1px solid var(--border)"><div class="panel-header"><div class="panel-title">Duplicate watchlist</div></div><table><thead><tr><th>Match</th><th>Key</th><th>Accounts</th><th>Merge</th></tr></thead><tbody>' +
+          rows.slice(0, 8).map((row) => '<tr><td>' + escapeHtml(row[0]) + '</td><td>' + escapeHtml(row[1]) + '</td><td>' + escapeHtml(row[2]) + '</td><td>' + row[3] + '</td></tr>').join("") +
+          '</tbody></table></div>';
+      }
+
+      function duplicateMergeActions(group) {
+        const target = group.items?.[0];
+        if (!target) return escapeHtml(group.names || "");
+        const actions = (group.items || []).slice(1).map((item) => '<button class="button" data-merge-source-account="' + escapeHtml(item.id) + '" data-merge-target-account="' + escapeHtml(target.id) + '">Merge ' + escapeHtml(item.name) + ' into ' + escapeHtml(target.name) + '</button>');
+        return '<div class="stack" style="padding:0">' + actions.join("") + '</div>';
       }
 
       function pipelineStages() {

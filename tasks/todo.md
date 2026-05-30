@@ -27,8 +27,9 @@
 - [x] Add workspace webhooks and delivery logs.
 - [x] Add unsubscribe handling for contacts, manual sends, and sequences.
 - [x] Add manual reply handling and sequence pause-on-reply.
+- [x] Add account merge workflow for duplicate accounts.
 - [ ] Add password/OAuth login, workspace membership overrides, and broader audit coverage.
-- [ ] Build the next Close-style CRM gaps: advanced import mapping UI, merge workflows, automatic inbound email sync, native integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: advanced import mapping UI, automatic inbound email sync, native integrations, and communication channels.
 
 ## Review
 

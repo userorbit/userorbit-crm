@@ -163,6 +163,10 @@ async function routeApi(request, env, url, auth) {
     return json(await listAccounts(env, url, workspaceId, auth));
   }
 
+  if (request.method === "POST" && path.startsWith("accounts/") && path.endsWith("/merge")) {
+    return json(await mergeAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }, auth));
+  }
+
   if (request.method === "GET" && path.startsWith("accounts/")) {
     return json(await getAccount(env, path.split("/")[1], workspaceId));
   }
@@ -423,27 +427,49 @@ async function exportAccountsCsv(env, workspaceId) {
 }
 
 async function listAccountDuplicates(env, workspaceId) {
-  const [domains, names] = await Promise.all([
+  const [domainRows, nameRows] = await Promise.all([
     env.DB.prepare(`
-      SELECT lower(domain) AS key, COUNT(*) AS accounts, GROUP_CONCAT(name, ', ') AS names
-      FROM accounts
-      WHERE workspace_id = ? AND domain IS NOT NULL AND trim(domain) != ''
-      GROUP BY lower(domain)
-      HAVING accounts > 1
-      ORDER BY accounts DESC, key ASC
-      LIMIT 25
-    `).bind(workspaceId).all(),
-    env.DB.prepare(`
-      SELECT lower(name) AS key, COUNT(*) AS accounts, GROUP_CONCAT(name, ', ') AS names
+      SELECT lower(domain) AS key, id, name, domain, updated_at
       FROM accounts
       WHERE workspace_id = ?
-      GROUP BY lower(name)
-      HAVING accounts > 1
-      ORDER BY accounts DESC, key ASC
-      LIMIT 25
-    `).bind(workspaceId).all(),
+        AND domain IS NOT NULL
+        AND trim(domain) != ''
+        AND lower(domain) IN (
+          SELECT lower(domain)
+          FROM accounts
+          WHERE workspace_id = ? AND domain IS NOT NULL AND trim(domain) != ''
+          GROUP BY lower(domain)
+          HAVING COUNT(*) > 1
+        )
+      ORDER BY key ASC, updated_at DESC
+    `).bind(workspaceId, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT lower(name) AS key, id, name, domain, updated_at
+      FROM accounts
+      WHERE workspace_id = ?
+        AND lower(name) IN (
+          SELECT lower(name)
+          FROM accounts
+          WHERE workspace_id = ?
+          GROUP BY lower(name)
+          HAVING COUNT(*) > 1
+        )
+      ORDER BY key ASC, updated_at DESC
+    `).bind(workspaceId, workspaceId).all(),
   ]);
-  return { domains: domains.results, names: names.results };
+  return { domains: groupDuplicateAccounts(domainRows.results), names: groupDuplicateAccounts(nameRows.results) };
+}
+
+function groupDuplicateAccounts(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    if (!groups.has(row.key)) groups.set(row.key, []);
+    groups.get(row.key).push({ id: row.id, name: row.name, domain: row.domain, updatedAt: row.updated_at });
+  }
+  return [...groups.entries()]
+    .map(([key, items]) => ({ key, accounts: items.length, names: items.map((item) => item.name).join(", "), items }))
+    .filter((group) => group.accounts > 1)
+    .slice(0, 25);
 }
 
 async function importAccountsCsv(env, workspaceId, body) {
@@ -826,6 +852,47 @@ async function updateAccount(env, id, input) {
   }
 
   return getAccount(env, id, existing.workspace_id);
+}
+
+async function mergeAccount(env, targetAccountId, input, auth) {
+  requireFields(input, ["sourceAccountId"]);
+  if (targetAccountId === input.sourceAccountId) throw httpError(400, "Source and target accounts must differ");
+  const target = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", targetAccountId, input.workspaceId);
+  const source = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", input.sourceAccountId, input.workspaceId);
+
+  await env.DB.prepare("UPDATE contacts SET account_id = ?, updated_at = ? WHERE account_id = ?")
+    .bind(target.id, new Date().toISOString(), source.id)
+    .run();
+  await env.DB.prepare("UPDATE opportunities SET account_id = ?, updated_at = ? WHERE account_id = ? AND workspace_id = ?")
+    .bind(target.id, new Date().toISOString(), source.id, input.workspaceId)
+    .run();
+  await env.DB.prepare("UPDATE tasks SET account_id = ?, updated_at = ? WHERE account_id = ? AND workspace_id = ?")
+    .bind(target.id, new Date().toISOString(), source.id, input.workspaceId)
+    .run();
+  await env.DB.prepare("UPDATE email_events SET account_id = ? WHERE account_id = ?")
+    .bind(target.id, source.id)
+    .run();
+  await env.DB.prepare(`
+    INSERT INTO custom_field_values (id, workspace_id, field_id, entity, entity_id, value, created_at, updated_at)
+    SELECT lower(hex(randomblob(16))), workspace_id, field_id, entity, ?, value, created_at, updated_at
+    FROM custom_field_values source_values
+    WHERE source_values.entity = 'account'
+      AND source_values.entity_id = ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM custom_field_values target_values
+        WHERE target_values.field_id = source_values.field_id
+          AND target_values.entity_id = ?
+      )
+  `).bind(target.id, source.id, target.id).run();
+  await env.DB.prepare("DELETE FROM custom_field_values WHERE entity = 'account' AND entity_id = ?").bind(source.id).run();
+  await env.DB.prepare("DELETE FROM accounts WHERE id = ? AND workspace_id = ?").bind(source.id, input.workspaceId).run();
+
+  await touchAccount(env, target.id);
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "account.merge", resource: "account", resourceId: target.id, metadata: { sourceAccountId: source.id, sourceName: source.name, targetName: target.name } });
+  const merged = await getAccount(env, target.id, input.workspaceId);
+  await deliverWebhooks(env, input.workspaceId, "account.merged", target.id, { target: merged, source });
+  return merged;
 }
 
 async function createContact(env, input) {

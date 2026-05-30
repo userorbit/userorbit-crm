@@ -228,6 +228,17 @@ Review possible duplicate accounts:
 GET /api/duplicates/accounts
 ```
 
+Merge a duplicate account into the account you want to keep:
+
+```http
+POST /api/accounts/<target_account_id>/merge
+Content-Type: application/json
+
+{ "sourceAccountId": "duplicate_account_id" }
+```
+
+The merge moves contacts, opportunities, tasks, email activity, and account custom fields that do not already exist on the target account, then deletes the source account.
+
 Review or move pipeline opportunities:
 
 ```http
