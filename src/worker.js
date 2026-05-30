@@ -253,7 +253,7 @@ async function getSummary(env, workspaceId) {
 
 async function getReports(env, workspaceId) {
   const closedStages = await getClosedOpportunityStages(env, workspaceId);
-  const [pipeline, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities] = await Promise.all([
+  const [pipeline, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, customFieldBreakdowns] = await Promise.all([
     env.DB.prepare(`
       SELECT o.stage, COALESCE(os.label, o.stage) AS stage_label, COUNT(*) AS opportunities, COALESCE(SUM(o.value_cents), 0) AS value_cents, AVG(o.confidence) AS avg_confidence
       FROM opportunities o
@@ -319,6 +319,7 @@ async function getReports(env, workspaceId) {
       ORDER BY COALESCE(last_activity_at, o.created_at) ASC
       LIMIT 20
     `).bind(workspaceId, ...closedStages).all(),
+    getCustomFieldBreakdowns(env, workspaceId),
   ]);
 
   return {
@@ -328,6 +329,7 @@ async function getReports(env, workspaceId) {
     sequencePerformance: sequencePerformance.results,
     activity,
     stalledOpportunities: stalledOpportunities.results,
+    customFieldBreakdowns,
   };
 }
 
@@ -529,11 +531,38 @@ async function deleteCustomField(env, id, workspaceId) {
   return { ok: true };
 }
 
+async function getCustomFieldBreakdowns(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT
+      cf.id,
+      cf.name,
+      cf.key,
+      cf.type,
+      COALESCE(NULLIF(cfv.value, ''), 'Not set') AS value,
+      COUNT(DISTINCT a.id) AS accounts
+    FROM custom_fields cf
+    JOIN accounts a ON a.workspace_id = cf.workspace_id
+    LEFT JOIN custom_field_values cfv ON cfv.field_id = cf.id AND cfv.entity_id = a.id
+    WHERE cf.workspace_id = ? AND cf.entity = 'account'
+    GROUP BY cf.id, value
+    ORDER BY cf.created_at ASC, accounts DESC, value ASC
+  `).bind(workspaceId).all();
+  const byField = new Map();
+  for (const row of rows.results) {
+    if (!byField.has(row.id)) {
+      byField.set(row.id, { id: row.id, name: row.name, key: row.key, type: row.type, values: [] });
+    }
+    byField.get(row.id).values.push({ value: row.value, accounts: row.accounts });
+  }
+  return [...byField.values()];
+}
+
 async function listAccounts(env, url, workspaceId, auth) {
   const filters = await resolveAccountFilters(env, url, workspaceId, auth);
   const search = `%${filters.q || ""}%`;
   const segment = filters.segment;
   const status = filters.status;
+  const customFields = filters.customFields || {};
   const params = [workspaceId, search, search, search];
   let where = "WHERE a.workspace_id = ? AND (a.name LIKE ? OR a.domain LIKE ? OR c.email LIKE ?)";
 
@@ -544,6 +573,19 @@ async function listAccounts(env, url, workspaceId, auth) {
   if (status) {
     where += " AND a.status = ?";
     params.push(status);
+  }
+  for (const [key, value] of Object.entries(customFields)) {
+    where += ` AND EXISTS (
+      SELECT 1
+      FROM custom_fields cf
+      JOIN custom_field_values cfv ON cfv.field_id = cf.id
+      WHERE cf.workspace_id = a.workspace_id
+        AND cf.entity = 'account'
+        AND cf.key = ?
+        AND cfv.entity_id = a.id
+        AND cfv.value = ?
+    )`;
+    params.push(key, value);
   }
 
   const rows = await env.DB.prepare(`
@@ -578,14 +620,26 @@ async function resolveAccountFilters(env, url, workspaceId, auth) {
     q: url.searchParams.get("q"),
     segment: url.searchParams.get("segment"),
     status: url.searchParams.get("status"),
+    customFields: Object.fromEntries([...url.searchParams.entries()]
+      .filter(([key, value]) => key.startsWith("cf_") && cleanNullable(value))
+      .map(([key, value]) => [key.slice(3), cleanNullable(value)])),
   });
 }
 
 function normalizeAccountFilters(input = {}) {
+  const customFields = {};
+  if (input.customFields && typeof input.customFields === "object" && !Array.isArray(input.customFields)) {
+    for (const [key, value] of Object.entries(input.customFields)) {
+      const cleanKey = slugify(key).replaceAll("-", "_");
+      const cleanValue = cleanNullable(value);
+      if (cleanKey && cleanValue) customFields[cleanKey] = cleanValue;
+    }
+  }
   return {
     q: cleanNullable(input.q) || "",
     segment: SEGMENTS.has(input.segment) ? input.segment : "",
     status: ACCOUNT_STATUSES.has(input.status) ? input.status : "",
+    customFields,
   };
 }
 

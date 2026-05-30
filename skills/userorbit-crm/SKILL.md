@@ -150,7 +150,7 @@ Review sales reports:
 GET /api/reports
 ```
 
-The response includes `pipeline`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, and `stalledOpportunities`.
+The response includes `pipeline`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, `stalledOpportunities`, and `customFieldBreakdowns`.
 
 Export accounts for backup or spreadsheet analysis:
 
@@ -205,7 +205,8 @@ POST /api/saved-views
   "filters": {
     "segment": "product",
     "status": "target",
-    "q": ""
+    "q": "",
+    "customFields": { "company_size": "11-50" }
   }
 }
 ```
@@ -229,6 +230,12 @@ Set custom field values by passing `customFields` when creating or updating an a
 
 ```json
 { "customFields": { "company_size": "11-50" } }
+```
+
+Filter accounts by custom fields with `cf_<field_key>` query params:
+
+```http
+GET /api/accounts?cf_company_size=11-50
 ```
 
 Send one manual email:

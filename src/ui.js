@@ -467,7 +467,7 @@ export const appHtml = String.raw`<!doctype html>
         workspaceId: localStorage.getItem("crmWorkspaceId") || "",
         summary: null,
         accounts: [],
-        accountFilters: { q: "", segment: "", status: "" },
+        accountFilters: { q: "", segment: "", status: "", customFields: {} },
         savedViews: [],
         customFields: [],
         selectedSavedViewId: localStorage.getItem("crmSavedViewId") || "",
@@ -581,6 +581,9 @@ export const appHtml = String.raw`<!doctype html>
           if (state.accountFilters.q) params.set("q", state.accountFilters.q);
           if (state.accountFilters.segment) params.set("segment", state.accountFilters.segment);
           if (state.accountFilters.status) params.set("status", state.accountFilters.status);
+          for (const [key, value] of Object.entries(state.accountFilters.customFields || {})) {
+            if (value) params.set("cf_" + key, value);
+          }
         }
         const query = params.toString();
         return query ? "?" + query : "";
@@ -630,6 +633,7 @@ export const appHtml = String.raw`<!doctype html>
                   <label>Search<input id="accountSearch" placeholder="Search accounts" value="\${escapeHtml(state.accountFilters.q)}" /></label>
                   <label>Segment<select id="accountSegment"><option value="">All segments</option><option value="product">Product</option><option value="growth">Growth</option><option value="success">Success</option></select></label>
                   <label>Status<select id="accountStatus"><option value="">All statuses</option><option value="target">Target</option><option value="researching">Researching</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="qualified">Qualified</option><option value="disqualified">Disqualified</option></select></label>
+                  \${customFieldFilterInputs()}
                   <label>View name<input id="savedViewName" placeholder="Product targets" /></label>
                 </div>
                 <div class="toolbar">
@@ -862,7 +866,8 @@ export const appHtml = String.raw`<!doctype html>
               <div class="panel-header"><div class="panel-title">Stalled opportunities</div></div>
               \${reportTable(["Opportunity", "Account", "Stage", "Value", "Last activity"], reports.stalledOpportunities.map((row) => [row.name, row.account_name, row.stage, money(row.value_cents), row.last_activity_at || "No activity"]))}
             </div>
-          </div>\`;
+          </div>
+          \${customFieldReportPanels(reports.customFieldBreakdowns || [])}\`;
       }
 
       function reportTable(headers, rows) {
@@ -1133,6 +1138,10 @@ Content-Type: application/json
         if ($("#savedViewSelect")) $("#savedViewSelect").value = state.selectedSavedViewId;
         if ($("#accountSegment")) $("#accountSegment").value = state.accountFilters.segment;
         if ($("#accountStatus")) $("#accountStatus").value = state.accountFilters.status;
+        for (const [key, value] of Object.entries(state.accountFilters.customFields || {})) {
+          const input = document.querySelector('[data-account-custom-filter="' + CSS.escape(key) + '"]');
+          if (input) input.value = value;
+        }
 
         document.querySelectorAll("[data-view-target]").forEach((node) => node.addEventListener("click", () => {
           state.view = node.dataset.viewTarget;
@@ -1195,7 +1204,7 @@ Content-Type: application/json
           state.selectedSavedViewId = event.currentTarget.value;
           localStorage.setItem("crmSavedViewId", state.selectedSavedViewId);
           const view = state.savedViews.find((item) => item.id === state.selectedSavedViewId);
-          if (view?.filters) state.accountFilters = { q: view.filters.q || "", segment: view.filters.segment || "", status: view.filters.status || "" };
+          if (view?.filters) state.accountFilters = { q: view.filters.q || "", segment: view.filters.segment || "", status: view.filters.status || "", customFields: view.filters.customFields || {} };
           await refresh();
         });
 
@@ -1206,6 +1215,7 @@ Content-Type: application/json
             q: $("#accountSearch").value.trim(),
             segment: $("#accountSegment").value,
             status: $("#accountStatus").value,
+            customFields: accountCustomFiltersFromInputs(),
           };
           await refresh();
         });
@@ -1213,7 +1223,7 @@ Content-Type: application/json
         $("#clearAccountFilters")?.addEventListener("click", async () => {
           state.selectedSavedViewId = "";
           localStorage.removeItem("crmSavedViewId");
-          state.accountFilters = { q: "", segment: "", status: "" };
+          state.accountFilters = { q: "", segment: "", status: "", customFields: {} };
           await refresh();
         });
 
@@ -1224,6 +1234,7 @@ Content-Type: application/json
             q: $("#accountSearch").value.trim(),
             segment: $("#accountSegment").value,
             status: $("#accountStatus").value,
+            customFields: accountCustomFiltersFromInputs(),
           };
           const view = await api("saved-views", { method: "POST", body: JSON.stringify({ name, resource: "accounts", filters }) });
           state.selectedSavedViewId = view.id;
@@ -1396,6 +1407,32 @@ Content-Type: application/json
           if (value !== null && String(value).trim()) values[field.key] = value;
         }
         return values;
+      }
+
+      function accountCustomFiltersFromInputs() {
+        const values = {};
+        document.querySelectorAll("[data-account-custom-filter]").forEach((input) => {
+          const value = input.value.trim();
+          if (value) values[input.dataset.accountCustomFilter] = value;
+        });
+        return values;
+      }
+
+      function customFieldFilterInputs() {
+        if (!state.customFields.length) return "";
+        return state.customFields.map((field) => {
+          const value = state.accountFilters.customFields?.[field.key] || "";
+          const name = 'data-account-custom-filter="' + escapeHtml(field.key) + '"';
+          if (field.type === "select" && field.options?.length) {
+            return '<label>' + escapeHtml(field.name) + '<select ' + name + '><option value="">Any</option>' + field.options.map((option) => '<option value="' + escapeHtml(option) + '"' + (option === value ? " selected" : "") + '>' + escapeHtml(option) + '</option>').join("") + '</select></label>';
+          }
+          return '<label>' + escapeHtml(field.name) + '<input ' + name + ' value="' + escapeHtml(value) + '" placeholder="Any" /></label>';
+        }).join("");
+      }
+
+      function customFieldReportPanels(breakdowns) {
+        if (!breakdowns.length) return "";
+        return '<div class="columns" style="margin-top:14px">' + breakdowns.slice(0, 2).map((field) => '<div class="panel"><div class="panel-header"><div class="panel-title">' + escapeHtml(field.name) + '</div></div>' + reportTable(["Value", "Accounts"], field.values.map((row) => [row.value, row.accounts])) + '</div>').join("") + '</div>';
       }
 
       function pipelineStages() {
