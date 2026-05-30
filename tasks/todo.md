@@ -68,6 +68,7 @@
 - [x] Add compact report drill-downs for pipeline, owner, and source reports.
 - [x] Add scheduled account CSV exports.
 - [x] Add scheduled report JSON exports.
+- [x] Add scheduled report threshold alerts.
 - [x] Add revocable read-only dashboard share links.
 - [x] Add iframe-friendly embedded dashboard share controls.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.

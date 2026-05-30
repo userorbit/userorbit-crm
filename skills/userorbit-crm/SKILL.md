@@ -443,6 +443,23 @@ POST /api/export-schedules
 
 List schedules and recent deliveries with `GET /api/export-schedules`. Run one immediately with `POST /api/export-schedules/<schedule_id>/run`, disable one with `DELETE /api/export-schedules/<schedule_id>`, or use the `run_export_schedule` agent command with `scheduleId`. Supported resources are `accounts` and `reports`; supported frequencies are `daily`, `weekly`, and `monthly`.
 
+Create or run report threshold alerts:
+
+```http
+POST /api/report-alerts
+
+{
+  "name": "Stalled deal alert",
+  "metric": "stalled_opportunities",
+  "operator": "gte",
+  "threshold": 1,
+  "frequency": "daily",
+  "deliveryUrl": "https://hooks.example.com/userorbit/report-alert"
+}
+```
+
+List alerts and recent deliveries with `GET /api/report-alerts`. Run one immediately with `POST /api/report-alerts/<alert_id>/run`, or disable one with `DELETE /api/report-alerts/<alert_id>`. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`.
+
 Import accounts from CSV:
 
 ```http

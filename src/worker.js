@@ -45,6 +45,8 @@ const REPORT_SECTIONS = new Set(["metrics", "pipeline", "forecast", "account_sta
 const DEFAULT_REPORT_SECTIONS = ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"];
 const EXPORT_RESOURCES = new Set(["accounts", "reports"]);
 const EXPORT_FREQUENCIES = new Set(["daily", "weekly", "monthly"]);
+const REPORT_ALERT_METRICS = new Set(["open_pipeline_cents", "weighted_forecast_cents", "overdue_tasks", "stalled_opportunities", "emails_failed"]);
+const REPORT_ALERT_OPERATORS = new Set(["gt", "gte", "lt", "lte", "eq"]);
 
 export default {
   async fetch(request, env) {
@@ -177,6 +179,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listExportSchedules(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "report-alerts") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listReportAlerts(env, workspaceId));
+  }
+
   if (request.method === "GET" && path === "integrations") {
     return json(await listIntegrations(env, workspaceId, auth));
   }
@@ -278,9 +285,19 @@ async function routeApi(request, env, url, auth) {
     return json(await createExportSchedule(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path === "report-alerts") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createReportAlert(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "POST" && path.startsWith("export-schedules/") && path.endsWith("/run")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await runExportSchedule(env, path.split("/")[1], workspaceId, auth), 201);
+  }
+
+  if (request.method === "POST" && path.startsWith("report-alerts/") && path.endsWith("/run")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await runReportAlert(env, path.split("/")[1], workspaceId, auth), 201);
   }
 
   if (request.method === "DELETE" && path.startsWith("webhooks/")) {
@@ -290,6 +307,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "DELETE" && path.startsWith("export-schedules/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await disableExportSchedule(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "DELETE" && path.startsWith("report-alerts/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableReportAlert(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "integrations") {
@@ -1764,6 +1786,152 @@ function nextExportRunAt(frequency, fromIso) {
   else if (frequency === "monthly") date.setUTCMonth(date.getUTCMonth() + 1);
   else date.setUTCDate(date.getUTCDate() + 7);
   return date.toISOString();
+}
+
+async function listReportAlerts(env, workspaceId) {
+  const [alerts, deliveries] = await Promise.all([
+    env.DB.prepare(`
+      SELECT ra.*, u.name AS created_by_name
+      FROM report_alerts ra
+      LEFT JOIN users u ON u.id = ra.created_by_user_id
+      WHERE ra.workspace_id = ?
+      ORDER BY ra.status ASC, ra.created_at DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT rad.*, ra.name AS alert_name
+      FROM report_alert_deliveries rad
+      JOIN report_alerts ra ON ra.id = rad.alert_id
+      WHERE rad.workspace_id = ?
+      ORDER BY rad.created_at DESC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+  ]);
+  return { alerts: alerts.results, deliveries: deliveries.results };
+}
+
+async function createReportAlert(env, input, auth) {
+  requireFields(input, ["name", "metric", "operator", "deliveryUrl"]);
+  if (input.threshold === undefined || input.threshold === null) throw httpError(400, "threshold is required");
+  const metric = normalizeEnum(input.metric, REPORT_ALERT_METRICS, "metric");
+  const operator = normalizeEnum(input.operator, REPORT_ALERT_OPERATORS, "operator");
+  const frequency = normalizeEnum(input.frequency || "daily", EXPORT_FREQUENCIES, "frequency");
+  const threshold = Math.trunc(Number(input.threshold));
+  if (!Number.isFinite(threshold)) throw httpError(400, "threshold must be a number");
+  const deliveryUrl = normalizeWebhookUrl(input.deliveryUrl || input.delivery_url);
+  const now = new Date().toISOString();
+  const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO report_alerts (
+      id, workspace_id, created_by_user_id, name, metric, operator, threshold, frequency, delivery_url,
+      status, last_run_at, next_run_at, last_value, last_triggered_at, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, deliveryUrl, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency } });
+  return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+}
+
+async function disableReportAlert(env, id, workspaceId, auth) {
+  const alert = await getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE report_alerts SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "report_alert.disable", resource: "report_alert", resourceId: id, metadata: { name: alert.name, metric: alert.metric } });
+  return { ok: true };
+}
+
+async function runReportAlert(env, id, workspaceId, auth = null) {
+  const alert = await getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const result = await evaluateReportAlert(env, alert);
+  if (auth?.user?.id) {
+    await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "report_alert.run", resource: "report_alert", resourceId: id, metadata: { metric: alert.metric, triggered: result.triggered, value: result.value } });
+  }
+  return { alert: await getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, workspaceId), evaluation: result };
+}
+
+async function processDueReportAlerts(env, limit = 5) {
+  const now = new Date().toISOString();
+  const rows = await env.DB.prepare(`
+    SELECT * FROM report_alerts
+    WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= ?
+    ORDER BY next_run_at ASC
+    LIMIT ?
+  `).bind(now, limit).all();
+  const results = [];
+  for (const alert of rows.results) {
+    try {
+      results.push(await evaluateReportAlert(env, alert));
+    } catch (error) {
+      results.push({ alertId: alert.id, status: "failed", error: error.message || String(error) });
+    }
+  }
+  return { processed: results.length, results };
+}
+
+async function evaluateReportAlert(env, alert) {
+  const now = new Date().toISOString();
+  const reports = await getReports(env, alert.workspace_id, null);
+  const value = reportAlertMetricValue(alert.metric, reports);
+  const triggered = compareReportAlert(value, alert.operator, alert.threshold);
+  let status = "not_triggered";
+  let statusCode = null;
+  let error = null;
+  if (triggered) {
+    try {
+      const response = await fetch(alert.delivery_url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "UserOrbit-CRM-ReportAlert",
+          "x-userorbit-report-alert-id": alert.id,
+          "x-userorbit-report-alert-metric": alert.metric,
+        },
+        body: JSON.stringify({
+          alertId: alert.id,
+          workspaceId: alert.workspace_id,
+          name: alert.name,
+          metric: alert.metric,
+          operator: alert.operator,
+          threshold: alert.threshold,
+          value,
+          triggeredAt: now,
+        }),
+      });
+      statusCode = response.status;
+      status = response.ok ? "sent" : "failed";
+      if (!response.ok) error = `HTTP ${response.status}`;
+    } catch (caught) {
+      status = "failed";
+      error = caught.message || String(caught);
+    }
+    await env.DB.prepare(`
+      INSERT INTO report_alert_deliveries (id, workspace_id, alert_id, metric, value, threshold, status, status_code, error, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(crypto.randomUUID(), alert.workspace_id, alert.id, alert.metric, value, alert.threshold, status, statusCode, cleanNullable(error), now).run();
+  }
+  const nextRunAt = nextExportRunAt(alert.frequency, now);
+  await env.DB.prepare("UPDATE report_alerts SET last_run_at = ?, next_run_at = ?, last_value = ?, last_triggered_at = ?, last_error = ?, updated_at = ? WHERE id = ?")
+    .bind(now, nextRunAt, value, triggered ? now : cleanNullable(alert.last_triggered_at), cleanNullable(error), now, alert.id)
+    .run();
+  return { alertId: alert.id, status, triggered, value, threshold: alert.threshold, statusCode, error };
+}
+
+function reportAlertMetricValue(metric, reports) {
+  if (metric === "open_pipeline_cents") return (reports.pipeline || []).reduce((sum, row) => sum + Number(row.value_cents || 0), 0);
+  if (metric === "weighted_forecast_cents") return (reports.forecast || []).reduce((sum, row) => sum + Number(row.weighted_value_cents || 0), 0);
+  if (metric === "overdue_tasks") return (reports.taskStatus || []).reduce((sum, row) => sum + Number(row.overdue || 0), 0);
+  if (metric === "stalled_opportunities") return (reports.stalledOpportunities || []).length;
+  if (metric === "emails_failed") return Number(reports.activity?.failed || 0);
+  throw httpError(400, "Unsupported report alert metric");
+}
+
+function compareReportAlert(value, operator, threshold) {
+  if (operator === "gt") return value > threshold;
+  if (operator === "gte") return value >= threshold;
+  if (operator === "lt") return value < threshold;
+  if (operator === "lte") return value <= threshold;
+  if (operator === "eq") return value === threshold;
+  throw httpError(400, "Unsupported report alert operator");
 }
 
 async function getDashboardPreferences(env, workspaceId, auth) {
@@ -4017,13 +4185,14 @@ async function resolveInboundContact(env, input) {
 }
 
 async function processScheduledJobs(env) {
-  const [sequences, warmup, calendar, exports] = await Promise.all([
+  const [sequences, warmup, calendar, exports, reportAlerts] = await Promise.all([
     processDueSequenceEmails(env, { limit: 20 }),
     processDueWarmupEmails(env, { limit: 1 }),
     syncDueCalendarSources(env, 5),
     processDueExportSchedules(env, 5),
+    processDueReportAlerts(env, 5),
   ]);
-  return { sequences, warmup, calendar, exports };
+  return { sequences, warmup, calendar, exports, reportAlerts };
 }
 
 async function getWarmupOverview(env) {

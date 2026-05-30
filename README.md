@@ -556,6 +556,24 @@ curl -X POST http://localhost:8787/api/export-schedules \
 
 Workspace admins can schedule daily, weekly, or monthly exports to a webhook-compatible URL. Use `"resource": "accounts"` for CSV account exports or `"resource": "reports"` for JSON snapshots of pipeline, forecast, activity, task, sequence, owner-performance, source-conversion, stalled-opportunity, and custom-field reports. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`; scheduled Worker jobs also process due exports and record delivery status in Settings.
 
+### Create report alerts
+
+```sh
+curl -X POST http://localhost:8787/api/report-alerts \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Stalled deal alert",
+    "metric": "stalled_opportunities",
+    "operator": "gte",
+    "threshold": 1,
+    "frequency": "daily",
+    "deliveryUrl": "https://hooks.example.com/userorbit/report-alert"
+  }'
+```
+
+Report alerts evaluate daily, weekly, or monthly against report metrics and POST JSON only when the rule triggers. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
+
 ### Import accounts
 
 ```sh

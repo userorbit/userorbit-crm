@@ -657,6 +657,7 @@ export const appHtml = String.raw`<!doctype html>
         workspaceTokens: [],
         teamInvitations: [],
         exportSchedules: { schedules: [], deliveries: [] },
+        reportAlerts: { alerts: [], deliveries: [] },
         dashboardShares: [],
         webhooks: { endpoints: [], deliveries: [] },
         auditLogs: [],
@@ -751,7 +752,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, dashboardShares, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -781,6 +782,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("export-schedules") : Promise.resolve({ schedules: [], deliveries: [] }),
+          canManage ? api("report-alerts") : Promise.resolve({ alerts: [], deliveries: [] }),
           canManage ? api("dashboard/shares") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
@@ -789,7 +791,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
-        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, dashboardShares, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1736,6 +1738,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Enrichment providers</div></div>' + enrichmentProvidersTable(state.enrichmentProviders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Native imports</div></div>' + nativeImportSourcesTable(state.nativeImportSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Scheduled exports</div></div>' + exportSchedulesTable(state.exportSchedules) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Report alerts</div></div>' + reportAlertsTable(state.reportAlerts) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Dashboard shares</div></div>' + dashboardSharesTable(state.dashboardShares) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
@@ -1777,6 +1780,15 @@ Content-Type: application/json
                   <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/userorbit-export" /></label>
                   <label>Next run<input name="nextRunAt" type="datetime-local" /></label>
                   <button class="button primary">Create export schedule</button>
+                </form>
+                <form id="reportAlertForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Pipeline risk alert" /></label>
+                  <label>Metric<select name="metric"><option value="stalled_opportunities">Stalled opportunities</option><option value="overdue_tasks">Overdue tasks</option><option value="open_pipeline_cents">Open pipeline cents</option><option value="weighted_forecast_cents">Weighted forecast cents</option><option value="emails_failed">Failed emails</option></select></label>
+                  <label>Operator<select name="operator"><option value="gte">At least</option><option value="gt">Greater than</option><option value="lte">At most</option><option value="lt">Less than</option><option value="eq">Equals</option></select></label>
+                  <label>Threshold<input name="threshold" type="number" required value="1" /></label>
+                  <label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+                  <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/report-alert" /></label>
+                  <button class="button primary">Create report alert</button>
                 </form>
                 <form id="dashboardShareForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Weekly leadership dashboard" /></label>
@@ -1937,6 +1949,34 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No scheduled exports yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Export deliveries</div></div>' + reportTable(["Schedule", "Resource", "Rows", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.schedule_name, delivery.resource, delivery.row_count || 0, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return scheduleTable + deliveryTable;
+      }
+
+      function reportAlertsTable(reportAlerts) {
+        const alerts = reportAlerts?.alerts || [];
+        const deliveries = reportAlerts?.deliveries || [];
+        const alertTable = alerts.length ? \`<table>
+          <thead><tr><th>Name</th><th>Rule</th><th>Next run</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${alerts.map((alert) => \`
+            <tr>
+              <td>\${escapeHtml(alert.name)}<div class="subtitle">\${escapeHtml(alert.delivery_url)}</div></td>
+              <td>\${escapeHtml(reportAlertMetricLabel(alert.metric) + " " + alert.operator + " " + alert.threshold)}<div class="subtitle">\${escapeHtml(alert.last_value === null || alert.last_value === undefined ? "" : "Last value " + alert.last_value)}</div></td>
+              <td>\${escapeHtml(alert.next_run_at ? formatDateTime(alert.next_run_at) : "Not scheduled")}<div class="subtitle">\${escapeHtml(alert.last_error || (alert.last_triggered_at ? "Triggered " + formatDateTime(alert.last_triggered_at) : ""))}</div></td>
+              <td><span class="pill">\${escapeHtml(alert.status)}</span></td>
+              <td>\${alert.status === "active" ? '<button class="button" data-run-report-alert-id="' + escapeHtml(alert.id) + '">Run</button> <button class="button" data-disable-report-alert-id="' + escapeHtml(alert.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\` : '<div class="empty">No report alerts yet.</div>';
+        const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Report alert deliveries</div></div>' + reportTable(["Alert", "Metric", "Value", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.alert_name, reportAlertMetricLabel(delivery.metric), delivery.value ?? "", delivery.status, delivery.status_code || delivery.error || ""])) : "";
+        return alertTable + deliveryTable;
+      }
+
+      function reportAlertMetricLabel(metric) {
+        return {
+          open_pipeline_cents: "Open pipeline cents",
+          weighted_forecast_cents: "Weighted forecast cents",
+          overdue_tasks: "Overdue tasks",
+          stalled_opportunities: "Stalled opportunities",
+          emails_failed: "Failed emails",
+        }[metric] || metric;
       }
 
       function dashboardSharesTable(shares = []) {
@@ -2745,6 +2785,24 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#reportAlertForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("report-alerts", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              metric: form.get("metric"),
+              operator: form.get("operator"),
+              threshold: Number(form.get("threshold") || 0),
+              frequency: form.get("frequency"),
+              deliveryUrl: form.get("deliveryUrl"),
+            }),
+          });
+          notice("Report alert created.");
+          await refresh();
+        });
+
         $("#dashboardShareForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2828,9 +2886,21 @@ Content-Type: application/json
           await refresh();
         }));
 
+        document.querySelectorAll("[data-run-report-alert-id]").forEach((node) => node.addEventListener("click", async () => {
+          const result = await api("report-alerts/" + encodeURIComponent(node.dataset.runReportAlertId) + "/run", { method: "POST", body: "{}" });
+          notice(result.evaluation?.triggered ? "Report alert triggered." : "Report alert did not trigger.");
+          await refresh();
+        }));
+
         document.querySelectorAll("[data-disable-export-schedule-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("export-schedules/" + encodeURIComponent(node.dataset.disableExportScheduleId), { method: "DELETE" });
           notice("Export schedule disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-report-alert-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("report-alerts/" + encodeURIComponent(node.dataset.disableReportAlertId), { method: "DELETE" });
+          notice("Report alert disabled.");
           await refresh();
         }));
 
