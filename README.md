@@ -25,6 +25,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Workspace token revocation and audit logs for admin operations plus core CRM mutations.
 - Workspace webhooks for account, contact, task, communication, email, and lead form events.
 - Native Slack notifications for selected CRM events.
+- AI account/contact summaries, next steps, risks, and lead scores with optional OpenAI Responses API support.
 - Account custom fields with role-based read/write permissions for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
 - Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, and stalled opportunities.
@@ -41,6 +42,7 @@ After this directory is published to GitHub, the deploy button above can create 
 - Optional public URL: `CRM_PUBLIC_URL` for email open/click tracking links
 - Optional SMTP secrets: `CRM_FROM_EMAIL`, `CRM_FROM_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`
 - Optional OAuth/OIDC secrets: `OAUTH_AUTHORIZATION_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_ALLOWED_DOMAINS`
+- Optional AI secrets: `OPENAI_API_KEY`, `OPENAI_MODEL`
 
 The public repository is available at https://github.com/userorbit/userorbit-crm.
 
@@ -89,6 +91,8 @@ OAUTH_USERINFO_URL="https://accounts.example.com/oauth/userinfo"
 OAUTH_CLIENT_ID="oauth-client-id"
 OAUTH_CLIENT_SECRET="oauth-client-secret"
 OAUTH_ALLOWED_DOMAINS="your-company.com"
+OPENAI_API_KEY="sk-..."
+OPENAI_MODEL="gpt-5-mini"
 ```
 
 Zoho supports SMTP on `smtp.zoho.com` with SSL on port `465` and TLS/STARTTLS on port `587`. If the Zoho account has 2FA enabled, use an application-specific password.
@@ -243,6 +247,17 @@ curl -X POST http://localhost:8787/api/integrations \
 
 Slack integrations are workspace-scoped. They can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
 
+### Generate AI insights
+
+```sh
+curl -X POST http://localhost:8787/api/accounts/account-id/ai-insights \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+Account and contact detail pages include an AI insight panel. The API also supports `POST /api/contacts/<contact_id>/ai-insights` and agent command `generate_ai_insight`. When `OPENAI_API_KEY` is configured, the Worker uses OpenAI's Responses API at `/v1/responses`; otherwise it creates a local deterministic summary from CRM activity.
+
 ### Create a message channel
 
 ```sh
@@ -329,6 +344,7 @@ Supported commands:
 - `enroll_contact`
 - `send_email`
 - `send_message`
+- `generate_ai_insight`
 - `run_sequences`
 - `run_warmup`
 - `create_task`

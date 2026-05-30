@@ -268,6 +268,11 @@ async function routeApi(request, env, url, auth) {
     return json(await getAccount(env, path.split("/")[1], workspaceId, auth));
   }
 
+  if (request.method === "POST" && path.startsWith("accounts/") && path.endsWith("/ai-insights")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createAiInsight(env, { entity: "account", entityId: path.split("/")[1], workspaceId }, auth), 201);
+  }
+
   if (request.method === "POST" && path === "accounts") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createAccount(env, { ...(await readJson(request)), workspaceId, auth, auditUserId: auth.user.id }), 201);
@@ -295,6 +300,11 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path.startsWith("contacts/")) {
     return json(await getContact(env, path.split("/")[1], workspaceId));
+  }
+
+  if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/ai-insights")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createAiInsight(env, { entity: "contact", entityId: path.split("/")[1], workspaceId }, auth), 201);
   }
 
   if (request.method === "POST" && path === "opportunities") {
@@ -2633,6 +2643,177 @@ async function processDueWarmupEmails(env, options = {}) {
   return { processed: items.length, items };
 }
 
+async function createAiInsight(env, input, auth) {
+  const entity = normalizeEnum(input.entity || "account", new Set(["account", "contact"]), "entity");
+  const entityId = cleanNullable(input.entityId || input.accountId || input.contactId);
+  if (!entityId) throw httpError(400, "entityId is required");
+  const context = entity === "account"
+    ? await buildAccountInsightContext(env, entityId, input.workspaceId, auth)
+    : await buildContactInsightContext(env, entityId, input.workspaceId);
+  const generated = await generateAiInsight(env, entity, context);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO ai_insights (
+      id, workspace_id, entity, entity_id, created_by_user_id, provider, model,
+      summary, next_steps_json, risks_json, score, prompt_json, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    entity,
+    entityId,
+    auth.user.id,
+    generated.provider,
+    generated.model || null,
+    generated.summary,
+    JSON.stringify(generated.nextSteps || []),
+    JSON.stringify(generated.risks || []),
+    generated.score ?? null,
+    JSON.stringify(context),
+    now,
+  ).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "ai_insight.create", resource: entity, resourceId: entityId, metadata: { provider: generated.provider, model: generated.model || null } });
+  const insight = await getRequired(env, "SELECT * FROM ai_insights WHERE id = ?", id);
+  return aiInsightResponse(insight);
+}
+
+async function buildAccountInsightContext(env, accountId, workspaceId, auth) {
+  const account = await getAccount(env, accountId, workspaceId, auth);
+  return {
+    account: {
+      id: account.id,
+      name: account.name,
+      domain: account.domain,
+      segment: account.segment,
+      status: account.status,
+      source: account.source,
+      observation: account.observation,
+      owner: account.owner,
+      customFields: account.customFields,
+    },
+    contacts: account.contacts.slice(0, 8).map((contact) => ({ name: contact.name, title: contact.title, status: contact.status, email: contact.email })),
+    opportunities: account.opportunities.slice(0, 8).map((opportunity) => ({ name: opportunity.name, stage: opportunity.stage, valueCents: opportunity.value_cents, confidence: opportunity.confidence, closeDate: opportunity.close_date })),
+    tasks: account.tasks.slice(0, 8).map((task) => ({ title: task.title, kind: task.kind, status: task.status, dueAt: task.due_at })),
+    recentTimeline: account.timeline.slice(0, 12).map((item) => ({ type: item.type, title: item.title, detail: item.detail, happenedAt: item.happenedAt })),
+  };
+}
+
+async function buildContactInsightContext(env, contactId, workspaceId) {
+  const contact = await getContact(env, contactId, workspaceId);
+  return {
+    contact: { id: contact.id, name: contact.name, title: contact.title, status: contact.status, email: contact.email, phone: contact.phone, accountName: contact.account_name },
+    opportunities: contact.opportunities.slice(0, 8).map((opportunity) => ({ name: opportunity.name, stage: opportunity.stage, valueCents: opportunity.value_cents, confidence: opportunity.confidence })),
+    enrollments: contact.enrollments.slice(0, 8).map((item) => ({ sequence: item.sequence_name, status: item.status, step: item.current_step_order, nextSendAt: item.next_send_at })),
+    tasks: contact.tasks.slice(0, 8).map((task) => ({ title: task.title, kind: task.kind, status: task.status, dueAt: task.due_at })),
+    recentTimeline: contact.timeline.slice(0, 12).map((item) => ({ type: item.type, title: item.title, detail: item.detail, happenedAt: item.happenedAt })),
+  };
+}
+
+async function generateAiInsight(env, entity, context) {
+  if (cleanNullable(env.OPENAI_API_KEY)) {
+    const generated = await generateOpenAiInsight(env, entity, context);
+    if (generated) return generated;
+  }
+  return generateFallbackInsight(entity, context);
+}
+
+async function generateOpenAiInsight(env, entity, context) {
+  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const prompt = [
+    "You are helping a CRM user decide the next best sales action.",
+    "Return compact JSON only with keys: summary, nextSteps, risks, score.",
+    "summary must be one short paragraph. nextSteps and risks must be arrays of short strings. score must be an integer 0-100.",
+    `Entity type: ${entity}`,
+    JSON.stringify(context),
+  ].join("\n\n");
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        text: { format: { type: "json_object" } },
+      }),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const text = extractResponseText(payload);
+    const parsed = parseJsonObject(text);
+    if (!cleanNullable(parsed.summary)) return null;
+    return normalizeGeneratedInsight({ ...parsed, provider: "openai", model });
+  } catch {
+    return null;
+  }
+}
+
+function extractResponseText(payload) {
+  if (typeof payload.output_text === "string") return payload.output_text;
+  const parts = [];
+  for (const item of payload.output || []) {
+    for (const content of item.content || []) {
+      if (content.type === "output_text" && content.text) parts.push(content.text);
+      if (content.type === "text" && content.text) parts.push(content.text);
+    }
+  }
+  return parts.join("\n");
+}
+
+function normalizeGeneratedInsight(input) {
+  return {
+    provider: input.provider || "local",
+    model: cleanNullable(input.model),
+    summary: cleanNullable(input.summary) || "No summary was generated.",
+    nextSteps: normalizeStringList(input.nextSteps || input.next_steps).slice(0, 6),
+    risks: normalizeStringList(input.risks).slice(0, 6),
+    score: clampScore(input.score),
+  };
+}
+
+function generateFallbackInsight(entity, context) {
+  const timeline = context.recentTimeline || [];
+  const openTasks = (context.tasks || []).filter((task) => task.status !== "done");
+  const opportunities = context.opportunities || [];
+  const lastTouch = timeline[0]?.title || "No recent activity";
+  const subject = entity === "account" ? context.account?.name : context.contact?.name;
+  const status = entity === "account" ? context.account?.status : context.contact?.status;
+  const nextSteps = [];
+  if (openTasks.length) nextSteps.push(`Complete or reschedule ${openTasks[0].title}.`);
+  if (opportunities.some((opportunity) => !["won", "lost"].includes(opportunity.stage))) nextSteps.push("Review the open opportunity and confirm the next buying milestone.");
+  if (!timeline.some((item) => ["email", "communication", "calendar"].includes(item.type))) nextSteps.push("Create a direct touch with a relevant contact before adding more automation.");
+  if (status === "replied") nextSteps.push("Respond personally while the conversation is warm.");
+  if (!nextSteps.length) nextSteps.push("Add a concrete follow-up task with an owner and due date.");
+  const risks = [];
+  if (!timeline.length) risks.push("There is not enough activity history to infer intent.");
+  if (openTasks.length > 3) risks.push("Several open tasks may indicate stalled execution.");
+  if (!opportunities.length) risks.push("No opportunity is attached yet, so pipeline impact is unclear.");
+  const score = Math.max(10, Math.min(90, 35 + timeline.length * 4 + opportunities.length * 10 - openTasks.length * 3));
+  return normalizeGeneratedInsight({
+    provider: "local",
+    model: "heuristic",
+    summary: `${subject || "This record"} is currently ${status || "unclassified"}. Latest signal: ${lastTouch}.`,
+    nextSteps,
+    risks,
+    score,
+  });
+}
+
+function normalizeStringList(value) {
+  const items = Array.isArray(value) ? value : String(value || "").split(/\n/);
+  return items.map((item) => cleanNullable(item)).filter(Boolean);
+}
+
+function clampScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return null;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 async function recordWarmupInteraction(env, messageId, input) {
   const kind = normalizeEnum(input.kind, WARMUP_INTERACTIONS, "kind");
   await getRequired(env, "SELECT id FROM warmup_messages WHERE id = ?", messageId);
@@ -2673,6 +2854,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "send_message") {
     return { result: await sendProviderMessage(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "generate_ai_insight") {
+    return { result: await createAiInsight(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   if (input.command === "import_calendar_ics") {
     return { result: await importCalendarIcs(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
@@ -3538,7 +3722,7 @@ async function maybeCompleteWarmupPlan(env, planId) {
 
 async function getAccount(env, id, workspaceId, auth = null) {
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, workspaceId);
-  const [contacts, opportunities, tasks, emails, communications, calendarEvents, customFields] = await Promise.all([
+  const [contacts, opportunities, tasks, emails, communications, calendarEvents, customFields, aiInsights] = await Promise.all([
     env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare("SELECT * FROM opportunities WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare(`
@@ -3576,6 +3760,7 @@ async function getAccount(env, id, workspaceId, auth = null) {
       LIMIT 100
     `).bind(id, workspaceId).all(),
     getCustomFieldValues(env, workspaceId, "account", id, auth),
+    listAiInsights(env, workspaceId, "account", id),
   ]);
 
   return {
@@ -3587,6 +3772,7 @@ async function getAccount(env, id, workspaceId, auth = null) {
     communications: communications.results,
     calendarEvents: calendarEvents.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) })),
     customFields,
+    aiInsights,
     timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }),
   };
 }
@@ -3601,7 +3787,7 @@ async function getContact(env, id, workspaceId) {
     id,
     workspaceId,
   );
-  const [tasks, opportunities, enrollments, emails, communications, calendarEvents] = await Promise.all([
+  const [tasks, opportunities, enrollments, emails, communications, calendarEvents, aiInsights] = await Promise.all([
     env.DB.prepare(`
       SELECT * FROM tasks
       WHERE contact_id = ? AND workspace_id = ?
@@ -3643,6 +3829,7 @@ async function getContact(env, id, workspaceId) {
       ORDER BY ce.starts_at DESC
       LIMIT 100
     `).bind(id, workspaceId).all(),
+    listAiInsights(env, workspaceId, "contact", id),
   ]);
   return {
     ...contact,
@@ -3652,7 +3839,28 @@ async function getContact(env, id, workspaceId) {
     emails: emails.results,
     communications: communications.results,
     calendarEvents: calendarEvents.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) })),
+    aiInsights,
     timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }),
+  };
+}
+
+async function listAiInsights(env, workspaceId, entity, entityId) {
+  const rows = await env.DB.prepare(`
+    SELECT ai.*, u.name AS created_by_name
+    FROM ai_insights ai
+    LEFT JOIN users u ON u.id = ai.created_by_user_id
+    WHERE ai.workspace_id = ? AND ai.entity = ? AND ai.entity_id = ?
+    ORDER BY ai.created_at DESC
+    LIMIT 10
+  `).bind(workspaceId, entity, entityId).all();
+  return rows.results.map(aiInsightResponse);
+}
+
+function aiInsightResponse(row) {
+  return {
+    ...row,
+    nextSteps: parseJsonArray(row.next_steps_json),
+    risks: parseJsonArray(row.risks_json),
   };
 }
 

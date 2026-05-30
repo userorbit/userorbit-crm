@@ -902,6 +902,8 @@ export const appHtml = String.raw`<!doctype html>
               \${timelineList(account.timeline)}
             </div>
             <div class="panel">
+              <div class="panel-header"><div class="panel-title">AI insight</div><button id="generateAccountInsight" class="button">Generate</button></div>
+              \${aiInsightsPanel(account.aiInsights)}
               <div class="panel-header"><div class="panel-title">Contacts</div></div>
               \${customFieldsTable(account.customFields)}
               \${contactsTable(account.contacts)}
@@ -940,6 +942,17 @@ export const appHtml = String.raw`<!doctype html>
         </table>\`;
       }
 
+      function aiInsightsPanel(insights = []) {
+        if (!insights.length) return '<div class="empty">No insight generated yet.</div>';
+        const insight = insights[0];
+        return \`<div class="stack" style="padding:0 0 12px">
+          <div><strong>\${escapeHtml(insight.summary)}</strong><div class="subtitle">\${escapeHtml([insight.provider, insight.model, formatDateTime(insight.created_at)].filter(Boolean).join(" / "))}</div></div>
+          <div class="grid metrics">\${metric("Score", insight.score ?? "n/a")}\${metric("Next steps", (insight.nextSteps || []).length)}\${metric("Risks", (insight.risks || []).length)}</div>
+          \${insight.nextSteps?.length ? '<div><strong>Next steps</strong><ul>' + insight.nextSteps.map((item) => '<li>' + escapeHtml(item) + '</li>').join("") + '</ul></div>' : ""}
+          \${insight.risks?.length ? '<div><strong>Risks</strong><ul>' + insight.risks.map((item) => '<li>' + escapeHtml(item) + '</li>').join("") + '</ul></div>' : ""}
+        </div>\`;
+      }
+
       function renderContactDetail() {
         const contact = state.selectedContact;
         if (!contact) return header("Contact", "Open a contact from an account.") + '<div class="panel"><div class="empty">No contact selected.</div></div>';
@@ -962,6 +975,8 @@ export const appHtml = String.raw`<!doctype html>
               \${timelineList(contact.timeline)}
             </div>
             <div class="panel">
+              <div class="panel-header"><div class="panel-title">AI insight</div><button id="generateContactInsight" class="button">Generate</button></div>
+              \${aiInsightsPanel(contact.aiInsights)}
               <div class="panel-header"><div class="panel-title">Sequences</div></div>
               \${reportTable(["Sequence", "Status", "Step", "Next send"], contact.enrollments.map((item) => [item.sequence_name, item.status, item.current_step_order, item.next_send_at || ""]))}
               <div class="panel-header"><div class="panel-title">Opportunities</div></div>
@@ -1794,6 +1809,22 @@ Content-Type: application/json
           });
           notice("Communication logged.");
           await refresh();
+        });
+
+        $("#generateAccountInsight")?.addEventListener("click", async () => {
+          if (!state.selectedAccountId) return;
+          await api("accounts/" + encodeURIComponent(state.selectedAccountId) + "/ai-insights", { method: "POST", body: "{}" });
+          notice("AI insight generated.");
+          state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
+          render();
+        });
+
+        $("#generateContactInsight")?.addEventListener("click", async () => {
+          if (!state.selectedContactId) return;
+          await api("contacts/" + encodeURIComponent(state.selectedContactId) + "/ai-insights", { method: "POST", body: "{}" });
+          notice("AI insight generated.");
+          state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
+          render();
         });
 
         $("#providerMessageForm")?.addEventListener("submit", async (event) => {

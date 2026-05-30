@@ -414,6 +414,22 @@ POST /api/agent/command
 
 The contact must have a phone number unless `payload.to` is provided. The send creates a `communication.created` timeline event and a `message.sent` webhook event with delivery status. For inbound provider replies, use the channel `webhook_path`; do not call authenticated APIs from the provider callback.
 
+Generate an AI account or contact insight:
+
+```http
+POST /api/agent/command
+
+{
+  "command": "generate_ai_insight",
+  "payload": {
+    "entity": "account",
+    "entityId": "account_id"
+  }
+}
+```
+
+Use `entity: "contact"` for a contact-level insight. Insights summarize recent context, next steps, risks, and a 0-100 score. When `OPENAI_API_KEY` is configured the app uses OpenAI's Responses API; otherwise it returns a deterministic local insight from CRM activity.
+
 Capture calendar meetings directly or from an ICS export:
 
 ```http
