@@ -34,6 +34,7 @@
 - [x] Add explicit workspace memberships and workspace-scoped invite access.
 - [x] Add advanced CSV import column mapping.
 - [x] Add communication activity logging for calls, meetings, messages, and notes.
+- [x] Add call and meeting recording/transcript capture.
 - [x] Add calendar meeting capture with ICS import.
 - [x] Add public lead capture forms for inbound website leads.
 - [x] Add read-only viewer roles and enforce workspace write/admin permissions.
@@ -158,3 +159,5 @@ Added report alert notification preferences: admins can suppress repeated thresh
 Added per-user report alert notification preferences: each user can mute trigger and recovery notifications for alerts they created in the active workspace, with Settings controls and `/api/notification/preferences`. Verified local migration, syntax checks, muted trigger delivery, re-enabled trigger delivery, and Settings form markup.
 
 Added report alert escalation policies: admins can configure `escalationAfterRuns` with optional escalation webhook or native integration destinations, and each triggered incident escalates once until recovery. Verified local migration, syntax checks, primary trigger delivery, one-time escalation delivery, suppressed duplicate escalation, and Settings form markup.
+
+Added call and meeting recording/transcript capture: communication logs now store optional recording URLs and transcripts, show recording/transcript availability in Communications, and feed transcripts into AI follow-up notes. Verified local migration, syntax checks, API persistence/listing, AI note generation from transcript content, and form markup.

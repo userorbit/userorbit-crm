@@ -1404,6 +1404,8 @@ export const appHtml = String.raw`<!doctype html>
                   <label>Account<select name="accountId" required>\${state.accounts.map((account) => '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(account.name) + '</option>').join("")}</select></label>
                   <label>Contact ID<input name="contactId" placeholder="Optional contact id" /></label>
                   <label class="full">Subject<input name="subject" required placeholder="Discovery call with Jane" /></label>
+                  <label class="full">Recording URL<input name="recordingUrl" type="url" placeholder="https://recordings.example.com/call.mp3" /></label>
+                  <label class="full">Transcript<textarea name="transcript" placeholder="Paste call or meeting transcript"></textarea></label>
                   <label class="full">Notes<textarea name="body" placeholder="What happened, objections, follow-up, next step"></textarea></label>
                 </div>
                 <button class="button primary">Log activity</button>
@@ -1619,12 +1621,19 @@ export const appHtml = String.raw`<!doctype html>
             <tr>
               <td>\${escapeHtml(formatDateTime(item.occurred_at || item.created_at))}</td>
               <td>\${escapeHtml(item.type)}<div class="subtitle">\${escapeHtml([item.direction, item.outcome].filter(Boolean).join(" / "))}</div></td>
-              <td><strong>\${escapeHtml(item.subject)}</strong><div class="subtitle">\${escapeHtml(item.contact_name || item.contact_email || "")}</div></td>
+              <td><strong>\${escapeHtml(item.subject)}</strong><div class="subtitle">\${escapeHtml(communicationSubtitle(item))}</div></td>
               <td>\${escapeHtml(item.account_name || "")}</td>
               <td>\${item.ai_summary ? escapeHtml(item.ai_summary) + '<div class="subtitle">' + escapeHtml((item.aiNextSteps || []).slice(0, 2).join(" · ")) + '</div>' : '<span class="subtitle">No AI notes yet</span>'}</td>
               <td><button class="button" data-generate-ai-notes-id="\${escapeHtml(item.id)}">Generate</button></td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function communicationSubtitle(item) {
+        const parts = [item.contact_name || item.contact_email || ""];
+        if (item.recording_url) parts.push("recording");
+        if (item.transcript) parts.push("transcript");
+        return parts.filter(Boolean).join(" / ");
       }
 
       function dialerSessionsTable(sessions = []) {
@@ -2410,6 +2419,8 @@ Content-Type: application/json
               accountId: form.get("accountId"),
               contactId: form.get("contactId") || undefined,
               subject: form.get("subject"),
+              recordingUrl: form.get("recordingUrl") || undefined,
+              transcript: form.get("transcript") || undefined,
               body: form.get("body"),
             }),
           });

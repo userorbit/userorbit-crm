@@ -402,6 +402,8 @@ curl -X POST http://localhost:8787/api/communications/communication-id/ai-notes 
 
 The Communications view can turn logged calls, meetings, and notes into a concise follow-up brief with next steps, risks, and a momentum score. The agent command is `generate_ai_notes` with `communicationId`.
 
+Logged calls and meetings can include a `recordingUrl` and `transcript` so teams can retain call evidence alongside notes, generate AI follow-up briefs from richer context, and review recordings from account/contact timelines.
+
 ### Run a power dialer queue
 
 Create a call queue from contacts that have phone numbers:

@@ -2940,6 +2940,8 @@ async function createCommunication(env, input, auth) {
   const type = normalizeEnum(input.type, COMMUNICATION_TYPES, "type");
   const direction = input.direction ? normalizeEnum(input.direction, COMMUNICATION_DIRECTIONS, "direction") : null;
   const outcome = input.outcome ? normalizeEnum(input.outcome, COMMUNICATION_OUTCOMES, "outcome") : null;
+  const recordingUrl = cleanNullable(input.recordingUrl || input.recording_url);
+  if (recordingUrl) normalizeWebhookUrl(recordingUrl);
   const now = new Date().toISOString();
   const occurredAt = cleanNullable(input.occurredAt) || now;
   const id = input.id || crypto.randomUUID();
@@ -2947,9 +2949,9 @@ async function createCommunication(env, input, auth) {
   await env.DB.prepare(`
     INSERT INTO communication_events (
       id, workspace_id, account_id, contact_id, created_by_user_id,
-      type, direction, outcome, subject, body, occurred_at, created_at, updated_at
+      type, direction, outcome, subject, body, recording_url, transcript, occurred_at, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     input.workspaceId,
@@ -2961,6 +2963,8 @@ async function createCommunication(env, input, auth) {
     outcome,
     input.subject.trim(),
     cleanNullable(input.body || input.notes),
+    recordingUrl,
+    cleanNullable(input.transcript),
     occurredAt,
     now,
     now,
@@ -4776,6 +4780,8 @@ async function buildCommunicationNoteContext(env, id, workspaceId) {
       outcome: event.outcome,
       subject: event.subject,
       notes: event.body,
+      recordingUrl: event.recording_url,
+      transcript: event.transcript,
       occurredAt: event.occurred_at,
     },
     account: {
@@ -4971,7 +4977,7 @@ function generateFallbackInsight(entity, context) {
 
 function generateFallbackCommunicationNotes(context) {
   const event = context.communication || {};
-  const notes = cleanNullable(event.notes) || "";
+  const notes = [cleanNullable(event.notes), cleanNullable(event.transcript)].filter(Boolean).join("\n\n");
   const lower = notes.toLowerCase();
   const nextSteps = [];
   if (lower.includes("demo")) nextSteps.push("Send a demo recap and confirm the evaluation criteria.");

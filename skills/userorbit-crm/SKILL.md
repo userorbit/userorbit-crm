@@ -570,11 +570,13 @@ Content-Type: application/json
   "outcome": "connected",
   "subject": "Discovery call",
   "body": "Talked through onboarding launch workflow and next step.",
+  "recordingUrl": "https://recordings.example.com/call.mp3",
+  "transcript": "Jane described the onboarding launch workflow and asked for a pilot plan.",
   "occurredAt": "2026-05-31T10:00:00.000Z"
 }
 ```
 
-Supported `type` values are `call`, `meeting`, `sms`, `whatsapp`, and `note`. The `log_communication` agent command accepts the same fields in `payload`.
+Supported `type` values are `call`, `meeting`, `sms`, `whatsapp`, and `note`. Calls and meetings can include `recordingUrl` and `transcript` for later review and AI note generation. The `log_communication` agent command accepts the same fields in `payload`.
 
 Send SMS or WhatsApp through a configured provider channel:
 
