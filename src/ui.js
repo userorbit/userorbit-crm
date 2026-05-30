@@ -546,6 +546,7 @@ export const appHtml = String.raw`<!doctype html>
         <label>Password<input name="password" type="password" autocomplete="current-password" /></label>
         <label>API token<input name="token" type="password" autocomplete="off" placeholder="Optional setup token" /></label>
         <button class="button primary" style="width:100%; margin-top:14px">Continue</button>
+        <a class="button" style="width:100%; margin-top:10px; text-align:center" href="/api/auth/oauth/start">Continue with OAuth</a>
       </form>
     </div>
     <div id="appShell" class="shell" hidden>

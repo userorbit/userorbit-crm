@@ -38,6 +38,7 @@ After this directory is published to GitHub, the deploy button above can create 
 - Secret: `CRM_API_TOKEN` for the bootstrap admin login
 - Optional public URL: `CRM_PUBLIC_URL` for email open/click tracking links
 - Optional SMTP secrets: `CRM_FROM_EMAIL`, `CRM_FROM_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- Optional OAuth/OIDC secrets: `OAUTH_AUTHORIZATION_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_ALLOWED_DOMAINS`
 
 The public repository is available at https://github.com/userorbit/userorbit-crm.
 
@@ -80,6 +81,12 @@ SMTP_PORT="465"
 SMTP_SECURE="true"
 SMTP_USERNAME="founder@userorbit.com"
 SMTP_PASSWORD="zoho-app-specific-password"
+OAUTH_AUTHORIZATION_URL="https://accounts.example.com/oauth/authorize"
+OAUTH_TOKEN_URL="https://accounts.example.com/oauth/token"
+OAUTH_USERINFO_URL="https://accounts.example.com/oauth/userinfo"
+OAUTH_CLIENT_ID="oauth-client-id"
+OAUTH_CLIENT_SECRET="oauth-client-secret"
+OAUTH_ALLOWED_DOMAINS="your-company.com"
 ```
 
 Zoho supports SMTP on `smtp.zoho.com` with SSL on port `465` and TLS/STARTTLS on port `587`. If the Zoho account has 2FA enabled, use an application-specific password.
@@ -91,6 +98,8 @@ Set `CRM_PUBLIC_URL` to your deployed Worker origin before enabling email open o
 ## API
 
 All `/api/*` endpoints require `Authorization: Bearer <token>` except `POST /api/auth/login`. Use `CRM_API_TOKEN` for bootstrap setup, set a user password in Settings for browser sessions, and create workspace-scoped tokens in Settings for agents and scripts.
+
+OAuth/OIDC login is available at `/api/auth/oauth/start` when the OAuth env vars are configured. The redirect URI to register with your provider is `/api/auth/oauth/callback` on your Worker origin. Existing active users can sign in by OAuth email; new OAuth users are created only when their email domain is listed in `OAUTH_ALLOWED_DOMAINS`.
 
 ### Password sign in
 

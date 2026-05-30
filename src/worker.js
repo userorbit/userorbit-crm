@@ -64,6 +64,14 @@ export default {
         return json(await loginWithPassword(env, await readJson(request)));
       }
 
+      if (request.method === "GET" && url.pathname === "/api/auth/oauth/start") {
+        return await startOAuthLogin(request, env, url);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/auth/oauth/callback") {
+        return await completeOAuthLogin(request, env, url);
+      }
+
       if (url.pathname.startsWith("/api/")) {
         const auth = await requireAuth(request, env);
         return await routeApi(request, env, url, auth);
@@ -2459,6 +2467,79 @@ async function loginWithPassword(env, input) {
   if (!user?.password_hash || !(await verifyPassword(input.password, user.password_hash))) {
     throw httpError(401, "Invalid email or password");
   }
+  return createUserSession(env, user);
+}
+
+async function startOAuthLogin(_request, env, url) {
+  ensureOAuthConfigured(env);
+  const state = crypto.randomUUID().replaceAll("-", "");
+  const authorizationUrl = new URL(env.OAUTH_AUTHORIZATION_URL);
+  authorizationUrl.searchParams.set("response_type", "code");
+  authorizationUrl.searchParams.set("client_id", env.OAUTH_CLIENT_ID);
+  authorizationUrl.searchParams.set("redirect_uri", oauthRedirectUri(env, url));
+  authorizationUrl.searchParams.set("scope", env.OAUTH_SCOPES || "openid email profile");
+  authorizationUrl.searchParams.set("state", state);
+  const headers = new Headers({ location: authorizationUrl.toString() });
+  headers.append("set-cookie", oauthStateCookie(state, url));
+  return new Response(null, { status: 302, headers });
+}
+
+async function completeOAuthLogin(request, env, url) {
+  ensureOAuthConfigured(env);
+  const error = cleanNullable(url.searchParams.get("error"));
+  if (error) throw httpError(401, `OAuth login failed: ${error}`);
+  const code = cleanNullable(url.searchParams.get("code"));
+  const state = cleanNullable(url.searchParams.get("state"));
+  if (!code || !state || state !== readCookie(request, "uocrm_oauth_state")) throw httpError(401, "Invalid OAuth state");
+
+  const tokenResponse = await fetch(env.OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: oauthRedirectUri(env, url),
+      client_id: env.OAUTH_CLIENT_ID,
+      client_secret: env.OAUTH_CLIENT_SECRET,
+    }),
+  });
+  const token = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !token.access_token) throw httpError(401, "OAuth token exchange failed");
+
+  const profileResponse = await fetch(env.OAUTH_USERINFO_URL, {
+    headers: { authorization: `Bearer ${token.access_token}`, "accept": "application/json" },
+  });
+  const profile = await profileResponse.json().catch(() => ({}));
+  if (!profileResponse.ok) throw httpError(401, "OAuth user info failed");
+
+  const email = cleanEmail(profile.email);
+  if (!email) throw httpError(401, "OAuth profile did not include an email");
+  const user = await findOrCreateOAuthUser(env, { email, name: cleanNullable(profile.name) || cleanNullable(profile.given_name) || email.split("@")[0] });
+  const session = await createUserSession(env, user);
+  const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
+  headers.append("set-cookie", oauthStateCookie("", url, 0));
+  return new Response(oauthSuccessHtml(session.token), { headers });
+}
+
+async function findOrCreateOAuthUser(env, input) {
+  await ensureBootstrapIdentity(env);
+  const existing = await env.DB.prepare("SELECT * FROM users WHERE email = ? AND status = 'active'").bind(input.email).first();
+  if (existing) return existing;
+  const allowedDomains = normalizeDomainList(env.OAUTH_ALLOWED_DOMAINS);
+  const domain = input.email.split("@")[1] || "";
+  if (!allowedDomains.includes(domain)) throw httpError(403, "OAuth user is not allowed");
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO users (id, email, name, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'active', ?, ?)
+  `).bind(id, input.email, input.name, now, now).run();
+  const user = await getRequired(env, "SELECT * FROM users WHERE id = ?", id);
+  await createTeam(env, { name: `${input.name}'s Team`, defaultWorkspaceName: "Sales" }, { user });
+  return user;
+}
+
+async function createUserSession(env, user) {
   const token = `uocrm_session_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
@@ -3744,6 +3825,36 @@ function normalizeRoleList(value, fallback) {
   return roles.length ? roles : [...fallback];
 }
 
+function ensureOAuthConfigured(env) {
+  const required = ["OAUTH_AUTHORIZATION_URL", "OAUTH_TOKEN_URL", "OAUTH_USERINFO_URL", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET"];
+  for (const key of required) {
+    if (!cleanNullable(env[key])) throw httpError(400, "OAuth is not configured");
+  }
+}
+
+function oauthRedirectUri(env, url) {
+  const origin = cleanNullable(env.CRM_PUBLIC_URL) || url.origin;
+  return `${origin.replace(/\/$/, "")}/api/auth/oauth/callback`;
+}
+
+function oauthStateCookie(state, url, maxAge = 600) {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return `uocrm_oauth_state=${encodeURIComponent(state)}; Path=/api/auth/oauth; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`;
+}
+
+function readCookie(request, name) {
+  const cookies = String(request.headers.get("cookie") || "").split(/;\s*/);
+  for (const cookie of cookies) {
+    const [key, ...rest] = cookie.split("=");
+    if (key === name) return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+function normalizeDomainList(value) {
+  return String(value || "").split(/[\s,]+/).map((domain) => cleanDomain(domain)).filter(Boolean);
+}
+
 function customFieldReadRoles(field) {
   return normalizeRoleList(parseJsonArray(field.read_roles_json), WORKSPACE_READ_ROLES);
 }
@@ -3791,6 +3902,11 @@ function acceptsHtml(request) {
 
 function htmlResponse(body, status = 200) {
   return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+function oauthSuccessHtml(token) {
+  const escaped = escapeHtmlText(token);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Signed in</title></head><body><script>localStorage.setItem("crmApiToken", "${escaped}"); location.replace("/app");</script><p>Signed in. Redirecting...</p></body></html>`;
 }
 
 function leadFormNotFoundHtml() {

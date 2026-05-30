@@ -40,7 +40,7 @@
 - [x] Add configurable email open/click tracking and engagement reporting.
 - [x] Broaden audit coverage for core CRM and workspace operations.
 - [x] Add field-level read/write permissions for account custom fields.
-- [ ] Add OAuth login.
+- [x] Add OAuth login.
 - [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, native integrations, and provider-backed communication channels.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -104,3 +104,5 @@ Added lead capture forms: workspace admins can create/disable public lead forms,
 Broadened audit coverage: account/contact/opportunity/task creation, account/opportunity/task updates, account imports, custom-field administration, sequence enrollments, manual sends, warmup administration, and relevant agent-command writes now record compact workspace audit events without storing sensitive message bodies.
 
 Added field-level permissions for account custom fields: admins choose read/write roles when creating fields, restricted fields are hidden from unauthorized account detail/filter/report responses, and unauthorized custom-field writes are rejected for app, import, and agent account creation/update flows.
+
+Added generic OAuth/OIDC login: self-hosters can configure authorization/token/userinfo endpoints and client credentials, `/api/auth/oauth/start` redirects to the provider, `/api/auth/oauth/callback` creates a browser session, and new OAuth users are gated by `OAUTH_ALLOWED_DOMAINS`.
