@@ -13,6 +13,8 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - A token-protected REST API for agents and scripts.
 - Auth-gated app access with a bootstrap admin token and workspace-scoped agent tokens.
 - Users, team memberships, teams, and workspaces for separating sales motions, clients, or products.
+- Reporting for pipeline health, activity, task aging, sequence performance, and stalled opportunities.
+- Account CSV export for backups and spreadsheet workflows.
 - A landing page at `/` and the CRM app at `/app`.
 - A lightweight Linear/Coss-inspired UI served by the Worker.
 
@@ -24,14 +26,7 @@ After this directory is published to GitHub, the deploy button above can create 
 - Secret: `CRM_API_TOKEN` for the bootstrap admin login
 - Optional SMTP secrets: `CRM_FROM_EMAIL`, `CRM_FROM_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`
 
-The current local checkout is not a Git repository yet. To publish it:
-
-```sh
-git init
-git add .
-git commit -m "Initial open source CRM"
-gh repo create userorbit/userorbit-crm --public --source=. --push
-```
+The public repository is available at https://github.com/userorbit/userorbit-crm.
 
 ## Cloudflare setup
 
@@ -126,6 +121,21 @@ curl -X POST http://localhost:8787/api/agent/command \
   -H "authorization: Bearer $CRM_API_TOKEN" \
   -H "content-type: application/json" \
   -d '{ "command": "run_sequences", "limit": 20 }'
+```
+
+### Get reports
+
+```sh
+curl http://localhost:8787/api/reports \
+  -H "authorization: Bearer $CRM_API_TOKEN"
+```
+
+### Export accounts
+
+```sh
+curl http://localhost:8787/api/export/accounts.csv \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -o userorbit-accounts.csv
 ```
 
 ## Agent skill contract

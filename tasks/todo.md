@@ -9,12 +9,16 @@
 - [x] Add Settings controls for creating teams, workspaces, and agent tokens.
 - [x] Add a Codex-style agent skill file.
 - [x] Add self-hosting/GitHub deploy instructions.
-- [ ] Initialize and publish the GitHub repository once the final repo owner/name is confirmed.
+- [x] Initialize and publish the GitHub repository.
+- [x] Add reporting dashboards for pipeline, activity, tasks, sequences, and stalled opportunities.
+- [x] Add account CSV export.
 - [ ] Add invitations, password/OAuth login, token revocation UI, and audit logs.
-- [ ] Build the next Close-style CRM gaps: detail timelines, saved views, custom fields, import/export, inbound email sync, reporting dashboards, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: detail timelines, saved views, custom fields, import, inbound email sync, forecast reporting, integrations, and communication channels.
 
 ## Review
 
 Completed the first open-source productization slice: landing page at `/`, auth-gated app at `/app`, tenant foundation with users/team memberships/teams/workspaces, workspace-aware summaries/accounts/tasks/opportunities, `/api/me`, team/workspace creation endpoints, workspace-scoped agent tokens, docs for GitHub/Cloudflare self-hosting, and `skills/userorbit-crm/SKILL.md` for agents.
 
 Verified JavaScript parsing, local D1 migration with Node 22 runtime, landing/API responses on port 8788, and browser-visible landing/auth/dashboard flow. Port 8787 was already occupied by an existing server, so verification used 8788 and then stopped that verification server.
+
+Added the next CRM-depth slice: `/api/reports`, account CSV export, a Reports UI tab, an account export button, and agent/docs coverage for reporting and exports.

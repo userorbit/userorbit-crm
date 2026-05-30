@@ -52,8 +52,8 @@ Close-style CRMs commonly center on:
 
 ## Current UserOrbit CRM coverage
 
-- Present: accounts, contacts, opportunities, tasks, email templates, sequences, manual sends, scheduled sequence processing, mailbox warmup, REST API, agent command API, landing page, token-gated UI, users, team memberships, teams, workspaces, and workspace-scoped agent tokens.
-- Partial: pipeline management exists as opportunity stages but lacks board views, customizable stages, forecast views, and conversion analytics.
+- Present: accounts, contacts, opportunities, tasks, email templates, sequences, manual sends, scheduled sequence processing, mailbox warmup, REST API, agent command API, landing page, token-gated UI, users, team memberships, teams, workspaces, workspace-scoped agent tokens, account CSV export, and reporting for pipeline health/activity/tasks/sequences/stalled opportunities.
+- Partial: pipeline management exists as opportunity stages and stage reports but lacks board views, customizable stages, forecast views, and conversion analytics.
 - Partial: email exists through outbound SMTP and stored events but lacks inbound sync, reply detection, unsubscribe management, tracking, and mailbox rotation.
 - Missing: native calling, power dialer, SMS/WhatsApp, meetings, custom fields, imports/exports, dedupe, saved views, dashboards, role-based access control, audit logs, webhooks, third-party integrations, and AI enrichment/notes.
 
@@ -63,6 +63,6 @@ Close-style CRMs commonly center on:
 2. Harden tenancy and auth: invitations, password or OAuth login, workspace membership overrides, richer roles, token revocation UI, and audit logs.
 3. Build sales workflow depth: account detail timeline, contact detail, opportunity board, configurable stages, saved views, bulk import/export, custom fields, and deduplication.
 4. Build email depth: inbound/reply sync, unsubscribe lists, sequence pause-on-reply, deliverability limits, tracking settings, template variables, and mailbox rotation.
-5. Add reporting: pipeline by stage/value/close date, rep activity, sequence performance, task aging, stalled deals, and forecast views.
+5. Deepen reporting: forecast views, rep-level performance, conversion rates, dashboard customization, and saved report filters.
 6. Add integrations and AI: calendar/meeting capture, webhooks, enrichment providers, AI research summaries, draft generation, call/meeting notes, and next-best actions.
 7. Consider communication expansion: SMS/WhatsApp and dialer integrations before native telephony, because native calling has heavier compliance and infrastructure requirements.

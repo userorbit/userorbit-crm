@@ -77,6 +77,14 @@ async function routeApi(request, env, url, auth) {
     return json(await getSummary(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "reports") {
+    return json(await getReports(env, workspaceId));
+  }
+
+  if (request.method === "GET" && path === "export/accounts.csv") {
+    return csv(await exportAccountsCsv(env, workspaceId), "userorbit-accounts.csv");
+  }
+
   if (request.method === "GET" && path === "accounts") {
     return json(await listAccounts(env, url, workspaceId));
   }
@@ -167,6 +175,135 @@ async function getSummary(env, workspaceId) {
   ]);
 
   return { accounts, contacts, activeEnrollments, dueTasks, openPipelineCents: openPipeline };
+}
+
+async function getReports(env, workspaceId) {
+  const [pipeline, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities] = await Promise.all([
+    env.DB.prepare(`
+      SELECT stage, COUNT(*) AS opportunities, COALESCE(SUM(value_cents), 0) AS value_cents, AVG(confidence) AS avg_confidence
+      FROM opportunities
+      WHERE workspace_id = ?
+      GROUP BY stage
+      ORDER BY CASE stage
+        WHEN 'research' THEN 1
+        WHEN 'conversation' THEN 2
+        WHEN 'demo' THEN 3
+        WHEN 'proposal' THEN 4
+        WHEN 'won' THEN 5
+        WHEN 'lost' THEN 6
+        ELSE 7
+      END
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT status, COUNT(*) AS accounts
+      FROM accounts
+      WHERE workspace_id = ?
+      GROUP BY status
+      ORDER BY accounts DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        status,
+        COUNT(*) AS tasks,
+        SUM(CASE WHEN due_at IS NOT NULL AND due_at < datetime('now') AND status != 'done' THEN 1 ELSE 0 END) AS overdue
+      FROM tasks
+      WHERE workspace_id = ?
+      GROUP BY status
+      ORDER BY tasks DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        s.id,
+        s.name,
+        COUNT(DISTINCT CASE WHEN a.workspace_id = ? THEN se.id END) AS enrollments,
+        SUM(CASE WHEN a.workspace_id = ? AND se.status = 'active' THEN 1 ELSE 0 END) AS active_enrollments,
+        SUM(CASE WHEN a.workspace_id = ? AND se.status = 'completed' THEN 1 ELSE 0 END) AS completed_enrollments,
+        COUNT(ee.id) AS emails,
+        SUM(CASE WHEN ee.status = 'sent' THEN 1 ELSE 0 END) AS sent,
+        SUM(CASE WHEN ee.status = 'drafted' THEN 1 ELSE 0 END) AS drafted,
+        SUM(CASE WHEN ee.status = 'failed' THEN 1 ELSE 0 END) AS failed
+      FROM sequences s
+      LEFT JOIN sequence_enrollments se ON se.sequence_id = s.id
+      LEFT JOIN contacts c ON c.id = se.contact_id
+      LEFT JOIN accounts a ON a.id = c.account_id AND a.workspace_id = ?
+      LEFT JOIN email_events ee ON ee.sequence_id = s.id AND ee.account_id = a.id
+      GROUP BY s.id
+      ORDER BY emails DESC, enrollments DESC
+    `).bind(workspaceId, workspaceId, workspaceId, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        COUNT(*) AS emails,
+        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
+        SUM(CASE WHEN status = 'drafted' THEN 1 ELSE 0 END) AS drafted,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+        MAX(created_at) AS last_activity_at
+      FROM email_events
+      WHERE account_id IN (SELECT id FROM accounts WHERE workspace_id = ?)
+    `).bind(workspaceId).first(),
+    env.DB.prepare(`
+      SELECT o.*, a.name AS account_name, MAX(ee.created_at) AS last_activity_at
+      FROM opportunities o
+      JOIN accounts a ON a.id = o.account_id
+      LEFT JOIN email_events ee ON ee.account_id = a.id
+      WHERE o.workspace_id = ? AND o.stage NOT IN ('won', 'lost')
+      GROUP BY o.id
+      HAVING last_activity_at IS NULL OR last_activity_at < datetime('now', '-14 days')
+      ORDER BY COALESCE(last_activity_at, o.created_at) ASC
+      LIMIT 20
+    `).bind(workspaceId).all(),
+  ]);
+
+  return {
+    pipeline: pipeline.results,
+    accountStatus: accountStatus.results,
+    taskStatus: taskStatus.results,
+    sequencePerformance: sequencePerformance.results,
+    activity,
+    stalledOpportunities: stalledOpportunities.results,
+  };
+}
+
+async function exportAccountsCsv(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT
+      a.id,
+      a.name,
+      a.domain,
+      a.segment,
+      a.status,
+      a.source,
+      a.owner,
+      a.observation,
+      COUNT(DISTINCT c.id) AS contacts_count,
+      COUNT(DISTINCT o.id) AS opportunities_count,
+      COALESCE(SUM(o.value_cents), 0) AS open_pipeline_cents,
+      MAX(ee.created_at) AS last_activity_at,
+      a.created_at,
+      a.updated_at
+    FROM accounts a
+    LEFT JOIN contacts c ON c.account_id = a.id
+    LEFT JOIN opportunities o ON o.account_id = a.id AND o.stage NOT IN ('won', 'lost')
+    LEFT JOIN email_events ee ON ee.account_id = a.id
+    WHERE a.workspace_id = ?
+    GROUP BY a.id
+    ORDER BY a.updated_at DESC
+  `).bind(workspaceId).all();
+  return toCsv(rows.results, [
+    "id",
+    "name",
+    "domain",
+    "segment",
+    "status",
+    "source",
+    "owner",
+    "observation",
+    "contacts_count",
+    "opportunities_count",
+    "open_pipeline_cents",
+    "last_activity_at",
+    "created_at",
+    "updated_at",
+  ]);
 }
 
 async function listAccounts(env, url, workspaceId) {
@@ -1447,6 +1584,24 @@ function smtpConfigured(env) {
 
 function json(payload, status = 200) {
   return new Response(JSON.stringify(payload, null, 2), { status, headers: JSON_HEADERS });
+}
+
+function csv(body, filename) {
+  return new Response(body, {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
+function toCsv(rows, fields) {
+  const escapeCell = (value) => {
+    const cell = value === undefined || value === null ? "" : String(value);
+    return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
+  };
+  return [fields.join(","), ...rows.map((row) => fields.map((field) => escapeCell(row[field])).join(","))].join("\n");
 }
 
 function httpError(status, message) {

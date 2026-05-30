@@ -23,7 +23,8 @@ X-Workspace-Id: <workspace_id>
 
 1. Call `GET /api/health` to verify the app is reachable and whether SMTP is configured.
 2. Call `GET /api/me` to list teams, workspaces, and the current workspace.
-3. Choose the workspace that matches the user request. If none exists, create one.
+3. Call `GET /api/summary` and `GET /api/reports` before recommending pipeline or follow-up actions.
+4. Choose the workspace that matches the user request. If none exists, create one.
 
 Create a team:
 
@@ -112,6 +113,20 @@ Run due sequence emails:
 POST /api/agent/command
 
 { "command": "run_sequences", "limit": 20 }
+```
+
+Review sales reports:
+
+```http
+GET /api/reports
+```
+
+The response includes `pipeline`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, and `stalledOpportunities`.
+
+Export accounts for backup or spreadsheet analysis:
+
+```http
+GET /api/export/accounts.csv
 ```
 
 Send one manual email:

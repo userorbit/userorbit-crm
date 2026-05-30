@@ -444,6 +444,7 @@ export const appHtml = String.raw`<!doctype html>
         <nav class="nav">
           <button class="active" data-view="dashboard">Dashboard</button>
           <button data-view="accounts">Accounts</button>
+          <button data-view="reports">Reports</button>
           <button data-view="sequences">Sequences</button>
           <button data-view="warmup">Warmup</button>
           <button data-view="tasks">Tasks</button>
@@ -465,6 +466,7 @@ export const appHtml = String.raw`<!doctype html>
         workspaceId: localStorage.getItem("crmWorkspaceId") || "",
         summary: null,
         accounts: [],
+        reports: null,
         sequences: [],
         warmup: null,
         tasks: [],
@@ -497,14 +499,15 @@ export const appHtml = String.raw`<!doctype html>
           state.workspaceId = tenant.currentWorkspaceId || tenant.workspaces[0]?.id || "";
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
-        const [summary, accounts, sequences, warmup, tasks] = await Promise.all([
+        const [summary, accounts, reports, sequences, warmup, tasks] = await Promise.all([
           api("summary"),
           api("accounts"),
+          api("reports"),
           api("sequences"),
           api("warmup"),
           api("tasks"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, sequences, warmup, tasks });
+        Object.assign(state, { tenant, summary, accounts, reports, sequences, warmup, tasks });
         render();
       }
 
@@ -518,6 +521,7 @@ export const appHtml = String.raw`<!doctype html>
         const views = {
           dashboard: renderDashboard,
           accounts: renderAccounts,
+          reports: renderReports,
           sequences: renderSequences,
           warmup: renderWarmup,
           tasks: renderTasks,
@@ -567,7 +571,7 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderAccounts() {
-        return header("Accounts", "Target 20-30 high-fit SaaS accounts each week.") + \`
+        return header("Accounts", "Target 20-30 high-fit SaaS accounts each week.", '<button id="exportAccounts" class="button">Export CSV</button>') + \`
           <div class="columns">
             <div class="panel">
               <div class="panel-header">
@@ -607,6 +611,49 @@ export const appHtml = String.raw`<!doctype html>
               <td>\${a.contacts_count || (a.contacts ? a.contacts.length : 0)}</td>
               <td>\${money(a.pipeline_cents || 0)}</td>
             </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function renderReports() {
+        const reports = state.reports || { pipeline: [], accountStatus: [], taskStatus: [], sequencePerformance: [], activity: {}, stalledOpportunities: [] };
+        const pipelineValue = reports.pipeline.reduce((total, row) => total + Number(row.value_cents || 0), 0);
+        const overdueTasks = reports.taskStatus.reduce((total, row) => total + Number(row.overdue || 0), 0);
+        const emails = reports.activity || {};
+        return header("Reports", "Track pipeline health, outbound activity, and stalled deals.") + \`
+          <div class="grid metrics">
+            \${metric("Pipeline value", money(pipelineValue))}
+            \${metric("Emails", emails.emails || 0)}
+            \${metric("Sent", emails.sent || 0)}
+            \${metric("Drafted", emails.drafted || 0)}
+            \${metric("Overdue tasks", overdueTasks)}
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Pipeline by stage</div></div>
+              \${reportTable(["Stage", "Deals", "Value", "Confidence"], reports.pipeline.map((row) => [row.stage, row.opportunities, money(row.value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Account status</div></div>
+              \${reportTable(["Status", "Accounts"], reports.accountStatus.map((row) => [row.status, row.accounts]))}
+            </div>
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Sequence performance</div></div>
+              \${reportTable(["Sequence", "Enrollments", "Sent", "Drafted", "Failed"], reports.sequencePerformance.map((row) => [row.name, row.enrollments || 0, row.sent || 0, row.drafted || 0, row.failed || 0]))}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Stalled opportunities</div></div>
+              \${reportTable(["Opportunity", "Account", "Stage", "Value", "Last activity"], reports.stalledOpportunities.map((row) => [row.name, row.account_name, row.stage, money(row.value_cents), row.last_activity_at || "No activity"]))}
+            </div>
+          </div>\`;
+      }
+
+      function reportTable(headers, rows) {
+        if (!rows.length) return '<div class="empty">No data yet.</div>';
+        return \`<table>
+          <thead><tr>\${headers.map((header) => '<th>' + escapeHtml(header) + '</th>').join("")}</tr></thead>
+          <tbody>\${rows.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("")}</tbody>
         </table>\`;
       }
 
@@ -905,6 +952,20 @@ Content-Type: application/json
           state.workspaceId = event.currentTarget.value;
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
           await refresh();
+        });
+
+        $("#exportAccounts")?.addEventListener("click", async () => {
+          const headers = {};
+          if (state.token) headers.authorization = "Bearer " + state.token;
+          if (state.workspaceId) headers["x-workspace-id"] = state.workspaceId;
+          const response = await fetch("/api/export/accounts.csv", { headers });
+          if (!response.ok) throw new Error("Export failed");
+          const blob = await response.blob();
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = "userorbit-accounts.csv";
+          link.click();
+          URL.revokeObjectURL(link.href);
         });
 
         $("#teamForm")?.addEventListener("submit", async (event) => {
