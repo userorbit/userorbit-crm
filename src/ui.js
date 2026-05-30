@@ -627,7 +627,8 @@ export const appHtml = String.raw`<!doctype html>
         reportViews: [],
         selectedReportViewId: storageGet("crmReportViewId") || "",
         reportFilters: { sections: ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"] },
-        dashboardPreferences: { widgets: ["metrics", "priority_accounts", "due_tasks"] },
+        dashboardPreferences: { widgets: ["metrics", "next_best_actions", "priority_accounts", "due_tasks"] },
+        nextBestActions: [],
         notificationPreferences: { report_alert_trigger_enabled: 1, report_alert_recovery_enabled: 1 },
         customFields: [],
         selectedSavedViewId: storageGet("crmSavedViewId") || "",
@@ -754,8 +755,9 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
+        const [summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
+          api("next-best-actions"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
           api("saved-views?resource=reports"),
@@ -795,7 +797,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
-        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -882,6 +884,10 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Open pipeline", money(s.openPipelineCents || 0))}
           </div>\` : ""}
           <div class="columns" style="margin-top:14px">
+            \${widgets.includes("next_best_actions") ? \`<div class="panel">
+              <div class="panel-header"><div class="panel-title">Next best actions</div><button class="button" data-view-target="tasks">Create task</button></div>
+              \${nextBestActionsTable(state.nextBestActions)}
+            </div>\` : ""}
             \${widgets.includes("priority_accounts") ? \`<div class="panel">
               <div class="panel-header"><div class="panel-title">Priority accounts</div><button class="button" data-view-target="accounts">Add account</button></div>
               \${accountsTable(state.accounts.slice(0, 8))}
@@ -914,6 +920,28 @@ export const appHtml = String.raw`<!doctype html>
 
       function metric(label, value) {
         return '<div class="panel metric"><div class="metric-label">' + label + '</div><div class="metric-value">' + value + '</div></div>';
+      }
+
+      function nextBestActionsTable(actions = []) {
+        if (!actions.length) return '<div class="empty">No recommended actions yet.</div>';
+        return \`<table>
+          <thead><tr><th>Action</th><th>Account</th><th>Score</th></tr></thead>
+          <tbody>\${actions.slice(0, 8).map((item) => \`
+            <tr>
+              <td><strong>\${escapeHtml(item.title)}</strong><div class="subtitle">\${escapeHtml(item.reason || item.action || "")}</div></td>
+              <td>\${escapeHtml(item.accountName || item.contactName || "")}<div class="subtitle">\${escapeHtml(nextBestActionType(item.type))}</div></td>
+              <td><span class="pill">\${Number(item.priority || 0)}</span></td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function nextBestActionType(type) {
+        return {
+          task_due: "Due task",
+          stalled_opportunity: "Stalled opportunity",
+          engaged_contact: "Engaged contact",
+          unworked_account: "Unworked account",
+        }[type] || type || "";
       }
 
       function percent(value, total) {
@@ -3213,6 +3241,7 @@ Content-Type: application/json
       function dashboardWidgetOptions() {
         return [
           { key: "metrics", label: "Metrics" },
+          { key: "next_best_actions", label: "Next best actions" },
           { key: "priority_accounts", label: "Priority accounts" },
           { key: "due_tasks", label: "Due tasks" },
           { key: "pipeline", label: "Pipeline health" },
@@ -3224,7 +3253,7 @@ Content-Type: application/json
       function dashboardWidgets() {
         const allowed = new Set(dashboardWidgetOptions().map((widget) => widget.key));
         const widgets = (state.dashboardPreferences?.widgets || []).filter((widget) => allowed.has(widget));
-        return widgets.length ? widgets : ["metrics", "priority_accounts", "due_tasks"];
+        return widgets.length ? widgets : ["metrics", "next_best_actions", "priority_accounts", "due_tasks"];
       }
 
       function reportSectionOptions() {

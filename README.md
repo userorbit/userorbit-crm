@@ -494,6 +494,15 @@ curl http://localhost:8787/api/reports \
 
 Reports include aggregate pipeline, forecast, activity, owner, source, and stalled-opportunity sections plus compact `drilldowns` for the top records behind pipeline stages, owners, and sources.
 
+### Work next-best actions
+
+```sh
+curl http://localhost:8787/api/next-best-actions \
+  -H "authorization: Bearer $CRM_API_TOKEN"
+```
+
+The action queue ranks overdue tasks, stalled open opportunities, engaged contacts without an open task, and unworked target accounts. It is computed from workspace CRM activity, needs no external AI service, and powers the dashboard's Next best actions widget.
+
 ### Save report views
 
 ```sh
@@ -515,10 +524,10 @@ Report views are scoped to the signed-in user and active workspace. Supported re
 curl -X PATCH http://localhost:8787/api/dashboard/preferences \
   -H "authorization: Bearer $CRM_API_TOKEN" \
   -H "content-type: application/json" \
-  -d '{ "widgets": ["metrics", "priority_accounts", "due_tasks", "pipeline"] }'
+  -d '{ "widgets": ["metrics", "next_best_actions", "priority_accounts", "due_tasks", "pipeline"] }'
 ```
 
-Dashboard preferences are scoped to the signed-in user and active workspace. Supported widgets are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
+Dashboard preferences are scoped to the signed-in user and active workspace. Supported widgets are `metrics`, `next_best_actions`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
 
 ### Customize notifications
 

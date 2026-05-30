@@ -39,8 +39,8 @@ const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid
 const EMAIL_SYNC_SOURCE_PROVIDERS = new Set(["gmail", "microsoft", "imap_bridge"]);
 const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oauth"]);
 const CALENDAR_OAUTH_PROVIDERS = new Set(["google", "microsoft"]);
-const DASHBOARD_WIDGETS = new Set(["metrics", "priority_accounts", "due_tasks", "pipeline", "sequence_performance", "stalled_opportunities"]);
-const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "priority_accounts", "due_tasks"];
+const DASHBOARD_WIDGETS = new Set(["metrics", "next_best_actions", "priority_accounts", "due_tasks", "pipeline", "sequence_performance", "stalled_opportunities"]);
+const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "next_best_actions", "priority_accounts", "due_tasks"];
 const REPORT_SECTIONS = new Set(["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"]);
 const DEFAULT_REPORT_SECTIONS = ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"];
 const EXPORT_RESOURCES = new Set(["accounts", "reports"]);
@@ -387,6 +387,10 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "summary") {
     return json(await getSummary(env, workspaceId));
+  }
+
+  if (request.method === "GET" && path === "next-best-actions") {
+    return json(await getNextBestActions(env, workspaceId));
   }
 
   if (request.method === "GET" && path === "dashboard/preferences") {
@@ -946,6 +950,174 @@ async function getReports(env, workspaceId, auth) {
     sourceConversion: sourceConversion.results,
     drilldowns: reportDrilldowns,
     customFieldBreakdowns,
+  };
+}
+
+async function getNextBestActions(env, workspaceId) {
+  const closedStages = await getClosedOpportunityStages(env, workspaceId);
+  const [overdueTasks, stalledOpportunities, engagedContacts, unworkedAccounts] = await Promise.all([
+    env.DB.prepare(`
+      SELECT
+        t.id,
+        t.title,
+        t.kind,
+        t.due_at,
+        t.account_id,
+        t.contact_id,
+        a.name AS account_name,
+        c.name AS contact_name,
+        c.email AS contact_email
+      FROM tasks t
+      LEFT JOIN accounts a ON a.id = t.account_id
+      LEFT JOIN contacts c ON c.id = t.contact_id
+      WHERE t.workspace_id = ?
+        AND t.status = 'open'
+        AND (t.due_at IS NULL OR t.due_at <= datetime('now'))
+      ORDER BY CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END, t.due_at ASC, t.created_at ASC
+      LIMIT 12
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        o.id,
+        o.name,
+        o.stage,
+        o.value_cents,
+        o.confidence,
+        o.close_date,
+        a.id AS account_id,
+        a.name AS account_name,
+        MAX(COALESCE(ee.sent_at, ee.created_at)) AS last_activity_at
+      FROM opportunities o
+      JOIN accounts a ON a.id = o.account_id
+      LEFT JOIN email_events ee ON ee.account_id = a.id
+      WHERE o.workspace_id = ? AND ${stageNotInClause(closedStages, "o.stage")}
+      GROUP BY o.id
+      HAVING last_activity_at IS NULL OR last_activity_at < datetime('now', '-14 days')
+      ORDER BY o.value_cents DESC, COALESCE(last_activity_at, o.created_at) ASC
+      LIMIT 12
+    `).bind(workspaceId, ...closedStages).all(),
+    env.DB.prepare(`
+      SELECT
+        c.id AS contact_id,
+        c.name AS contact_name,
+        c.email AS contact_email,
+        a.id AS account_id,
+        a.name AS account_name,
+        MAX(COALESCE(ee.last_clicked_at, ee.last_opened_at, ee.sent_at, ee.created_at)) AS last_engagement_at,
+        SUM(COALESCE(ee.open_count, 0)) AS opens,
+        SUM(COALESCE(ee.click_count, 0)) AS clicks
+      FROM contacts c
+      JOIN accounts a ON a.id = c.account_id
+      JOIN email_events ee ON ee.contact_id = c.id
+      WHERE a.workspace_id = ?
+        AND c.status NOT IN ('unsubscribed', 'bounced')
+        AND (ee.open_count > 0 OR ee.click_count > 0)
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks t
+          WHERE t.workspace_id = ?
+            AND t.contact_id = c.id
+            AND t.status = 'open'
+        )
+      GROUP BY c.id
+      ORDER BY clicks DESC, opens DESC, last_engagement_at DESC
+      LIMIT 12
+    `).bind(workspaceId, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        a.id AS account_id,
+        a.name AS account_name,
+        a.domain,
+        a.segment,
+        a.source,
+        a.status,
+        a.owner,
+        a.created_at,
+        COUNT(c.id) AS contacts_count
+      FROM accounts a
+      LEFT JOIN contacts c ON c.account_id = a.id
+      WHERE a.workspace_id = ?
+        AND a.status IN ('target', 'researching')
+        AND NOT EXISTS (SELECT 1 FROM email_events ee WHERE ee.account_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.account_id = a.id AND t.workspace_id = ? AND t.status = 'open')
+      GROUP BY a.id
+      ORDER BY a.updated_at DESC
+      LIMIT 12
+    `).bind(workspaceId, workspaceId).all(),
+  ]);
+
+  const actions = [
+    ...overdueTasks.results.map((row) => nextBestAction({
+      type: "task_due",
+      priority: row.due_at ? 95 : 82,
+      title: row.title,
+      reason: row.due_at ? `Task due ${row.due_at}` : "Open task has no due date",
+      action: "Complete or reschedule task",
+      accountId: row.account_id,
+      accountName: row.account_name,
+      contactId: row.contact_id,
+      contactName: row.contact_name,
+      relatedId: row.id,
+      dueAt: row.due_at,
+    })),
+    ...stalledOpportunities.results.map((row) => nextBestAction({
+      type: "stalled_opportunity",
+      priority: 70 + Math.min(25, Math.round(Number(row.value_cents || 0) / 100000)),
+      title: `Revive ${row.name}`,
+      reason: row.last_activity_at ? `No activity since ${row.last_activity_at}` : "Open opportunity has no recorded activity",
+      action: "Send a follow-up or create a close-plan task",
+      accountId: row.account_id,
+      accountName: row.account_name,
+      relatedId: row.id,
+      valueCents: row.value_cents,
+      lastActivityAt: row.last_activity_at,
+    })),
+    ...engagedContacts.results.map((row) => nextBestAction({
+      type: "engaged_contact",
+      priority: 68 + Math.min(20, Number(row.clicks || 0) * 5 + Number(row.opens || 0)),
+      title: `Follow up with ${row.contact_name}`,
+      reason: `${Number(row.opens || 0)} opens and ${Number(row.clicks || 0)} clicks`,
+      action: "Create a follow-up task or send a reply",
+      accountId: row.account_id,
+      accountName: row.account_name,
+      contactId: row.contact_id,
+      contactName: row.contact_name,
+      contactEmail: row.contact_email,
+      lastActivityAt: row.last_engagement_at,
+    })),
+    ...unworkedAccounts.results.map((row) => nextBestAction({
+      type: "unworked_account",
+      priority: row.contacts_count ? 58 : 50,
+      title: `Research ${row.account_name}`,
+      reason: row.contacts_count ? `${row.contacts_count} contact(s), no outreach yet` : "No outreach or open tasks yet",
+      action: "Research account and create the first outreach task",
+      accountId: row.account_id,
+      accountName: row.account_name,
+      lastActivityAt: row.created_at,
+    })),
+  ];
+
+  return actions
+    .sort((a, b) => b.priority - a.priority || String(b.lastActivityAt || "").localeCompare(String(a.lastActivityAt || "")))
+    .slice(0, 25);
+}
+
+function nextBestAction(input) {
+  return {
+    id: `${input.type}:${input.relatedId || input.contactId || input.accountId}`,
+    type: input.type,
+    priority: Math.max(0, Math.min(100, Number(input.priority || 0))),
+    title: input.title,
+    reason: input.reason,
+    action: input.action,
+    accountId: input.accountId || null,
+    accountName: input.accountName || null,
+    contactId: input.contactId || null,
+    contactName: input.contactName || null,
+    contactEmail: input.contactEmail || null,
+    relatedId: input.relatedId || null,
+    valueCents: input.valueCents || 0,
+    dueAt: input.dueAt || null,
+    lastActivityAt: input.lastActivityAt || null,
   };
 }
 
