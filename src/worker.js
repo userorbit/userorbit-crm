@@ -410,6 +410,29 @@ async function routeApi(request, env, url, auth) {
     return json(await listCommunications(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "dialer/sessions") {
+    return json(await listDialerSessions(env, workspaceId));
+  }
+
+  if (request.method === "POST" && path === "dialer/sessions") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createDialerSession(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "GET" && path.startsWith("dialer/sessions/") && path.endsWith("/next")) {
+    return json(await getNextDialerItem(env, path.split("/")[2], workspaceId));
+  }
+
+  if (request.method === "POST" && path.startsWith("dialer/items/") && path.endsWith("/start")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await startDialerItem(env, path.split("/")[2], workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path.startsWith("dialer/items/") && path.endsWith("/complete")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await completeDialerItem(env, path.split("/")[2], { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "POST" && path.startsWith("communications/") && path.endsWith("/ai-notes")) {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createCommunicationAiNotes(env, path.split("/")[1], workspaceId, auth), 201);
@@ -1869,6 +1892,172 @@ async function createCommunication(env, input, auth) {
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "communication.create", resource: "communication_event", resourceId: id, metadata: { type, accountId: account.id, contactId } });
   await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
   return event;
+}
+
+async function listDialerSessions(env, workspaceId) {
+  const sessions = await env.DB.prepare(`
+    SELECT ds.*,
+      COUNT(dsi.id) AS item_count,
+      SUM(CASE WHEN dsi.status = 'queued' THEN 1 ELSE 0 END) AS queued_count,
+      SUM(CASE WHEN dsi.status = 'calling' THEN 1 ELSE 0 END) AS calling_count,
+      SUM(CASE WHEN dsi.status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+      SUM(CASE WHEN dsi.status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count
+    FROM dialer_sessions ds
+    LEFT JOIN dialer_session_items dsi ON dsi.session_id = ds.id
+    WHERE ds.workspace_id = ?
+    GROUP BY ds.id
+    ORDER BY ds.created_at DESC
+    LIMIT 25
+  `).bind(workspaceId).all();
+  return sessions.results.map(dialerSessionResponse);
+}
+
+async function createDialerSession(env, input, auth) {
+  requireFields(input, ["name"]);
+  const contactIds = normalizeStringList(input.contactIds || input.contact_ids).slice(0, 250);
+  const accountIds = normalizeStringList(input.accountIds || input.account_ids).slice(0, 250);
+  if (!contactIds.length && !accountIds.length) throw httpError(400, "contactIds or accountIds are required");
+  const contacts = await loadDialerContacts(env, input.workspaceId, { contactIds, accountIds });
+  if (!contacts.length) throw httpError(400, "No callable contacts found");
+  const now = new Date().toISOString();
+  const sessionId = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO dialer_sessions (id, workspace_id, created_by_user_id, name, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'active', ?, ?)
+  `).bind(sessionId, input.workspaceId, auth.user.id, input.name.trim(), now, now).run();
+  const insertItem = env.DB.prepare(`
+    INSERT INTO dialer_session_items (
+      id, workspace_id, session_id, account_id, contact_id, phone, status,
+      outcome, communication_event_id, position, started_at, completed_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, NULL, NULL, ?, ?)
+  `);
+  await env.DB.batch(contacts.map((contact, index) => insertItem.bind(
+    crypto.randomUUID(),
+    input.workspaceId,
+    sessionId,
+    contact.account_id,
+    contact.id,
+    contact.phone,
+    index + 1,
+    now,
+    now,
+  )));
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "dialer_session.create", resource: "dialer_session", resourceId: sessionId, metadata: { name: input.name, itemCount: contacts.length } });
+  const session = await getRequired(env, "SELECT * FROM dialer_sessions WHERE id = ? AND workspace_id = ?", sessionId, input.workspaceId);
+  return { ...dialerSessionResponse(session), itemCount: contacts.length, queuedCount: contacts.length, callingCount: 0, completedCount: 0, skippedCount: 0, next: await getNextDialerItem(env, sessionId, input.workspaceId) };
+}
+
+async function loadDialerContacts(env, workspaceId, { contactIds, accountIds }) {
+  const byId = new Map();
+  if (contactIds.length) {
+    for (const contactId of contactIds) {
+      const contact = await env.DB.prepare(`
+        SELECT c.*, a.id AS account_id, a.name AS account_name
+        FROM contacts c
+        JOIN accounts a ON a.id = c.account_id
+        WHERE c.id = ? AND a.workspace_id = ? AND c.phone IS NOT NULL AND c.status != 'unsubscribed'
+      `).bind(contactId, workspaceId).first();
+      if (contact?.phone && !byId.has(contact.id)) byId.set(contact.id, contact);
+    }
+  }
+  if (accountIds.length) {
+    for (const accountId of accountIds) {
+      const rows = await env.DB.prepare(`
+        SELECT c.*, a.id AS account_id, a.name AS account_name
+        FROM contacts c
+        JOIN accounts a ON a.id = c.account_id
+        WHERE a.id = ? AND a.workspace_id = ? AND c.phone IS NOT NULL AND c.status != 'unsubscribed'
+        ORDER BY c.created_at ASC
+      `).bind(accountId, workspaceId).all();
+      for (const contact of rows.results) if (contact.phone && !byId.has(contact.id)) byId.set(contact.id, contact);
+    }
+  }
+  return [...byId.values()];
+}
+
+async function getNextDialerItem(env, sessionId, workspaceId) {
+  const session = await getRequired(env, "SELECT * FROM dialer_sessions WHERE id = ? AND workspace_id = ?", sessionId, workspaceId);
+  const item = await env.DB.prepare(`
+    SELECT dsi.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, c.title AS contact_title, c.status AS contact_status
+    FROM dialer_session_items dsi
+    JOIN accounts a ON a.id = dsi.account_id
+    JOIN contacts c ON c.id = dsi.contact_id
+    WHERE dsi.session_id = ? AND dsi.workspace_id = ? AND dsi.status IN ('calling', 'queued')
+    ORDER BY CASE WHEN dsi.status = 'calling' THEN 0 ELSE 1 END, dsi.position ASC, dsi.created_at ASC
+    LIMIT 1
+  `).bind(session.id, workspaceId).first();
+  return { session: dialerSessionResponse(session), item: item ? dialerItemResponse(item) : null };
+}
+
+async function startDialerItem(env, itemId, workspaceId, auth) {
+  const item = await getRequired(env, "SELECT * FROM dialer_session_items WHERE id = ? AND workspace_id = ? AND status IN ('queued', 'calling')", itemId, workspaceId);
+  if (item.status === "queued") {
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE dialer_session_items SET status = 'calling', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND workspace_id = ?")
+      .bind(now, now, item.id, workspaceId)
+      .run();
+    await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "dialer_item.start", resource: "dialer_session_item", resourceId: item.id, metadata: { sessionId: item.session_id, contactId: item.contact_id } });
+  }
+  const started = await getRequired(env, `
+    SELECT dsi.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, c.title AS contact_title, c.status AS contact_status
+    FROM dialer_session_items dsi
+    JOIN accounts a ON a.id = dsi.account_id
+    JOIN contacts c ON c.id = dsi.contact_id
+    WHERE dsi.id = ? AND dsi.workspace_id = ?
+  `, item.id, workspaceId);
+  return dialerItemResponse(started);
+}
+
+async function completeDialerItem(env, itemId, input, auth) {
+  const item = await getRequired(env, `
+    SELECT dsi.*, a.name AS account_name, c.name AS contact_name
+    FROM dialer_session_items dsi
+    JOIN accounts a ON a.id = dsi.account_id
+    JOIN contacts c ON c.id = dsi.contact_id
+    WHERE dsi.id = ? AND dsi.workspace_id = ? AND dsi.status IN ('queued', 'calling')
+  `, itemId, input.workspaceId);
+  const outcome = normalizeEnum(input.outcome || "completed", COMMUNICATION_OUTCOMES, "outcome");
+  const now = new Date().toISOString();
+  const subject = cleanNullable(input.subject) || `Outbound call to ${item.contact_name}`;
+  const communication = await createCommunication(env, {
+    workspaceId: input.workspaceId,
+    accountId: item.account_id,
+    contactId: item.contact_id,
+    type: "call",
+    direction: "outbound",
+    outcome,
+    subject,
+    body: cleanNullable(input.body || input.notes),
+    occurredAt: cleanNullable(input.occurredAt) || now,
+  }, auth);
+  await env.DB.prepare(`
+    UPDATE dialer_session_items
+    SET status = 'completed', outcome = ?, communication_event_id = ?, started_at = COALESCE(started_at, ?), completed_at = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?
+  `).bind(outcome, communication.id, now, now, now, item.id, input.workspaceId).run();
+  const remaining = await env.DB.prepare("SELECT COUNT(*) AS count FROM dialer_session_items WHERE session_id = ? AND workspace_id = ? AND status IN ('queued', 'calling')")
+    .bind(item.session_id, input.workspaceId)
+    .first();
+  if (!remaining.count) {
+    await env.DB.prepare("UPDATE dialer_sessions SET status = 'completed', updated_at = ? WHERE id = ? AND workspace_id = ?")
+      .bind(now, item.session_id, input.workspaceId)
+      .run();
+  }
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "dialer_item.complete", resource: "dialer_session_item", resourceId: item.id, metadata: { sessionId: item.session_id, contactId: item.contact_id, outcome, communicationId: communication.id } });
+  await deliverWebhooks(env, input.workspaceId, "dialer.call.completed", item.id, { item: { ...item, status: "completed", outcome, communication_event_id: communication.id }, communication });
+  return { item: await getDialerItem(env, item.id, input.workspaceId), communication, next: await getNextDialerItem(env, item.session_id, input.workspaceId) };
+}
+
+async function getDialerItem(env, itemId, workspaceId) {
+  const item = await getRequired(env, `
+    SELECT dsi.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, c.title AS contact_title, c.status AS contact_status
+    FROM dialer_session_items dsi
+    JOIN accounts a ON a.id = dsi.account_id
+    JOIN contacts c ON c.id = dsi.contact_id
+    WHERE dsi.id = ? AND dsi.workspace_id = ?
+  `, itemId, workspaceId);
+  return dialerItemResponse(item);
 }
 
 async function createCommunicationAiNotes(env, id, workspaceId, auth) {
@@ -3764,6 +3953,12 @@ async function runAgentCommand(env, input, auth) {
   if (input.command === "send_message") {
     return { result: await sendProviderMessage(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
+  if (input.command === "create_dialer_session") {
+    return { result: await createDialerSession(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "complete_dialer_call") {
+    return { result: await completeDialerItem(env, cleanNullable(input.itemId || input.payload?.itemId || input.payload?.id), { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
   if (input.command === "generate_ai_insight") {
     return { result: await createAiInsight(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
@@ -4931,6 +5126,24 @@ function communicationResponse(row) {
     ...row,
     aiNextSteps: parseJsonArray(row.ai_next_steps_json),
     aiRisks: parseJsonArray(row.ai_risks_json),
+  };
+}
+
+function dialerSessionResponse(row) {
+  return {
+    ...row,
+    itemCount: Number(row.item_count || row.itemCount || 0),
+    queuedCount: Number(row.queued_count || row.queuedCount || 0),
+    callingCount: Number(row.calling_count || row.callingCount || 0),
+    completedCount: Number(row.completed_count || row.completedCount || 0),
+    skippedCount: Number(row.skipped_count || row.skippedCount || 0),
+  };
+}
+
+function dialerItemResponse(row) {
+  return {
+    ...row,
+    telUrl: row.phone ? `tel:${row.phone}` : null,
   };
 }
 

@@ -443,6 +443,37 @@ POST /api/agent/command
 
 The contact must have a phone number unless `payload.to` is provided. The send creates a `communication.created` timeline event and a `message.sent` webhook event with delivery status. For inbound provider replies, use the channel `webhook_path`; do not call authenticated APIs from the provider callback.
 
+Create and work a power dialer queue:
+
+```http
+POST /api/agent/command
+
+{
+  "command": "create_dialer_session",
+  "payload": {
+    "name": "Today outbound block",
+    "contactIds": ["contact_id_1", "contact_id_2"]
+  }
+}
+```
+
+Use `GET /api/dialer/sessions/<session_id>/next` to fetch the next queued contact. Start a call with `POST /api/dialer/items/<item_id>/start`, then complete it:
+
+```http
+POST /api/agent/command
+
+{
+  "command": "complete_dialer_call",
+  "itemId": "dialer_item_id",
+  "payload": {
+    "outcome": "connected",
+    "body": "Discussed onboarding workflow and next step."
+  }
+}
+```
+
+Completed dialer calls create outbound `call` communication events, update the queue, appear on account/contact timelines, and emit `dialer.call.completed`.
+
 Generate an AI account or contact insight:
 
 ```http

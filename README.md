@@ -383,6 +383,39 @@ curl -X POST http://localhost:8787/api/communications/communication-id/ai-notes 
 
 The Communications view can turn logged calls, meetings, and notes into a concise follow-up brief with next steps, risks, and a momentum score. The agent command is `generate_ai_notes` with `communicationId`.
 
+### Run a power dialer queue
+
+Create a call queue from contacts that have phone numbers:
+
+```sh
+curl -X POST http://localhost:8787/api/dialer/sessions \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Today outbound block",
+    "contactIds": ["contact-id-1", "contact-id-2"]
+  }'
+```
+
+Fetch the next queued call, start it, then complete it with a standard call outcome:
+
+```sh
+curl http://localhost:8787/api/dialer/sessions/session-id/next \
+  -H "authorization: Bearer $CRM_API_TOKEN"
+
+curl -X POST http://localhost:8787/api/dialer/items/item-id/start \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{}'
+
+curl -X POST http://localhost:8787/api/dialer/items/item-id/complete \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{ "outcome": "connected", "body": "Discussed onboarding workflow and next step." }'
+```
+
+Completed dialer calls create outbound `call` communication events, appear on account/contact timelines, emit `dialer.call.completed`, and can be generated through the `create_dialer_session` and `complete_dialer_call` agent commands.
+
 ### Create a message channel
 
 ```sh
@@ -469,6 +502,8 @@ Supported commands:
 - `enroll_contact`
 - `send_email`
 - `send_message`
+- `create_dialer_session`
+- `complete_dialer_call`
 - `generate_ai_insight`
 - `research_account`
 - `enrich_account`

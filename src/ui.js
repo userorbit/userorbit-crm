@@ -600,6 +600,7 @@ export const appHtml = String.raw`<!doctype html>
         warmup: null,
         tasks: [],
         communications: [],
+        dialerSessions: [],
         messageChannels: { channels: [], deliveries: [] },
         calendarEvents: [],
         calendarSources: [],
@@ -657,6 +658,33 @@ export const appHtml = String.raw`<!doctype html>
         setTimeout(() => node.classList.remove("show"), 4200);
       }
 
+      async function loadDialerNext(sessionId) {
+        const container = $("#dialerNext");
+        if (!container) return;
+        const payload = await api("dialer/sessions/" + encodeURIComponent(sessionId) + "/next");
+        container.innerHTML = renderDialerItem(payload);
+        bindDialerItemActions(container, sessionId);
+      }
+
+      function bindDialerItemActions(container, sessionId) {
+        container.querySelector("[data-start-dialer-item-id]")?.addEventListener("click", async (event) => {
+          const itemId = event.currentTarget.dataset.startDialerItemId;
+          await api("dialer/items/" + encodeURIComponent(itemId) + "/start", { method: "POST", body: "{}" });
+        });
+        container.querySelector("[data-complete-dialer-item-id]")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const itemId = event.currentTarget.dataset.completeDialerItemId;
+          await api("dialer/items/" + encodeURIComponent(itemId) + "/complete", {
+            method: "POST",
+            body: JSON.stringify({ outcome: form.get("outcome"), body: form.get("body") }),
+          });
+          notice("Call logged.");
+          await refresh();
+          await loadDialerNext(sessionId);
+        });
+      }
+
       async function refresh() {
         const tenant = await api("me");
         if (!state.workspaceId || !tenant.workspaces.some((workspace) => workspace.id === state.workspaceId)) {
@@ -666,7 +694,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -679,6 +707,7 @@ export const appHtml = String.raw`<!doctype html>
           api("warmup"),
           api("tasks"),
           api("communications"),
+          api("dialer/sessions"),
           canWrite ? api("message-channels") : Promise.resolve({ channels: [], deliveries: [] }),
           api("calendar/events"),
           canWrite ? api("calendar/sources") : Promise.resolve([]),
@@ -693,7 +722,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1195,11 +1224,26 @@ export const appHtml = String.raw`<!doctype html>
 
       function renderCommunications() {
         const channels = state.messageChannels?.channels || [];
+        const callableContacts = state.accounts.flatMap((account) => (account.contacts || [])
+          .filter((contact) => contact.phone)
+          .map((contact) => ({ ...contact, accountName: account.name })));
+        const activeDialer = state.dialerSessions.find((session) => session.status === "active");
         return header("Communications", "Log calls, meetings, messages, and notes against accounts and contacts.") + \`
           <div class="columns">
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Recent activity</div></div>
               \${communicationTable(state.communications)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Power dialer</div></div>
+              \${dialerSessionsTable(state.dialerSessions)}
+              <form id="dialerSessionForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                <label>Name<input name="name" required placeholder="Today's outbound calls" /></label>
+                <label>Contacts<select name="contactIds" multiple size="6" required>\${callableContacts.map((contact) => '<option value="' + escapeHtml(contact.id) + '">' + escapeHtml(contact.name + " / " + contact.accountName + " / " + contact.phone) + '</option>').join("")}</select></label>
+                <button class="button primary" \${callableContacts.length ? "" : "disabled"}>Create dialer queue</button>
+              </form>
+              \${callableContacts.length ? "" : '<div class="empty">Add phone numbers to contacts before creating a dialer queue.</div>'}
+              \${activeDialer ? '<div class="panel-header"><div class="panel-title">Next call</div></div><div id="dialerNext" data-session-id="' + escapeHtml(activeDialer.id) + '" class="empty">Loading next call...</div>' : ""}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Send provider message</div></div>
@@ -1445,6 +1489,42 @@ export const appHtml = String.raw`<!doctype html>
               <td><button class="button" data-generate-ai-notes-id="\${escapeHtml(item.id)}">Generate</button></td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function dialerSessionsTable(sessions = []) {
+        if (!sessions.length) return '<div class="empty">No dialer queues yet.</div>';
+        return \`<table>
+          <thead><tr><th>Queue</th><th>Progress</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${sessions.map((session) => \`
+            <tr>
+              <td><strong>\${escapeHtml(session.name)}</strong><div class="subtitle">\${escapeHtml(formatDateTime(session.created_at))}</div></td>
+              <td>\${escapeHtml(String(session.completedCount || 0))} / \${escapeHtml(String(session.itemCount || 0))}<div class="subtitle">\${escapeHtml(String(session.queuedCount || 0))} queued</div></td>
+              <td><span class="pill">\${escapeHtml(session.status)}</span></td>
+              <td>\${session.status === "active" ? '<button class="button" data-load-dialer-session-id="' + escapeHtml(session.id) + '">Next</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function renderDialerItem(payload) {
+        const item = payload?.item;
+        if (!item) return '<div class="empty">This queue is complete.</div>';
+        return \`
+          <div class="stack">
+            <div>
+              <strong>\${escapeHtml(item.contact_name)}</strong>
+              <div class="subtitle">\${escapeHtml([item.contact_title, item.account_name, item.phone].filter(Boolean).join(" / "))}</div>
+            </div>
+            <div class="toolbar">
+              <a class="button primary" href="\${escapeHtml(item.telUrl || "#")}" data-start-dialer-item-id="\${escapeHtml(item.id)}">Call</a>
+            </div>
+            <form class="stack" data-complete-dialer-item-id="\${escapeHtml(item.id)}">
+              <div class="form-grid">
+                <label>Outcome<select name="outcome"><option value="connected">Connected</option><option value="left_message">Left message</option><option value="no_answer">No answer</option><option value="scheduled">Scheduled</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="neutral">Neutral</option></select></label>
+                <label class="full">Notes<textarea name="body" placeholder="Call notes, objections, and next step"></textarea></label>
+              </div>
+              <button class="button primary">Complete and load next</button>
+            </form>
+          </div>\`;
       }
 
       function calendarTable(items) {
@@ -1924,6 +2004,27 @@ Content-Type: application/json
           notice("Communication logged.");
           await refresh();
         });
+
+        $("#dialerSessionForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const contactIds = Array.from(event.currentTarget.querySelector("[name='contactIds']").selectedOptions).map((option) => option.value);
+          await api("dialer/sessions", {
+            method: "POST",
+            body: JSON.stringify({ name: form.get("name"), contactIds }),
+          });
+          notice("Dialer queue created.");
+          await refresh();
+        });
+
+        document.querySelectorAll("[data-load-dialer-session-id]").forEach((node) => node.addEventListener("click", async () => {
+          await loadDialerNext(node.dataset.loadDialerSessionId);
+        }));
+
+        const activeDialerNode = $("#dialerNext");
+        if (activeDialerNode?.dataset.sessionId) {
+          loadDialerNext(activeDialerNode.dataset.sessionId).catch((error) => notice(error.message));
+        }
 
         $("#generateAccountInsight")?.addEventListener("click", async () => {
           if (!state.selectedAccountId) return;
