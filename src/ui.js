@@ -606,6 +606,7 @@ export const appHtml = String.raw`<!doctype html>
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
         emailSenders: [],
+        emailInboundSources: [],
         integrations: { integrations: [], deliveries: [] },
         workspaceTokens: [],
         teamInvitations: [],
@@ -664,7 +665,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -682,6 +683,7 @@ export const appHtml = String.raw`<!doctype html>
           canWrite ? api("calendar/sources") : Promise.resolve([]),
           api("email/settings"),
           canWrite ? api("email/senders") : Promise.resolve([]),
+          canManage ? api("email/inbound-sources") : Promise.resolve([]),
           canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
@@ -689,7 +691,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1498,6 +1500,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email senders</div></div>' + emailSendersTable(state.emailSenders) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Email inbound sources</div></div>' + emailInboundSourcesTable(state.emailInboundSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Message channels</div></div>' + messageChannelsTable(state.messageChannels) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
@@ -1558,6 +1561,11 @@ Content-Type: application/json
                   <label>Sender name<input name="name" placeholder="Founder" /></label>
                   <label>Daily limit<input name="dailyLimit" type="number" min="1" max="1000" value="100" /></label>
                   <button class="button primary">Add sender</button>
+                </form>
+                <form id="emailInboundSourceForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Inbound source name<input name="name" required placeholder="Sales inbox parser" /></label>
+                  <label>Provider<select name="provider"><option value="generic">Generic</option><option value="postmark">Postmark</option><option value="sendgrid">SendGrid</option><option value="mailgun">Mailgun</option></select></label>
+                  <button class="button primary">Create inbound source</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
@@ -1661,6 +1669,21 @@ Content-Type: application/json
               <td>\${sender.sent_today || 0}<div class="subtitle">\${escapeHtml(sender.sent_on || "")}</div></td>
               <td><span class="pill">\${escapeHtml(sender.status)}</span></td>
               <td>\${sender.status === "active" ? '<button class="button" data-disable-email-sender-id="' + escapeHtml(sender.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function emailInboundSourcesTable(sources = []) {
+        if (!sources.length) return '<div class="empty">No inbound email sources yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Provider</th><th>Last received</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${sources.map((source) => \`
+            <tr>
+              <td>\${escapeHtml(source.name)}<div class="subtitle">\${escapeHtml(source.webhook_path ? window.location.origin + source.webhook_path : source.last_error || "")}</div></td>
+              <td>\${escapeHtml(source.provider)}</td>
+              <td>\${escapeHtml(source.last_received_at || "Never")}</td>
+              <td><span class="pill">\${escapeHtml(source.status)}</span></td>
+              <td>\${source.status === "active" ? '<button class="button" data-disable-email-inbound-source-id="' + escapeHtml(source.id) + '">Disable</button>' : ""}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
       }
@@ -2134,6 +2157,20 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#emailInboundSourceForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("email/inbound-sources", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              provider: form.get("provider"),
+            }),
+          });
+          notice("Inbound email source created.");
+          await refresh();
+        });
+
         $("#integrationForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2178,6 +2215,12 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-email-sender-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("email/senders/" + encodeURIComponent(node.dataset.disableEmailSenderId), { method: "DELETE" });
           notice("Email sender disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-email-inbound-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("email/inbound-sources/" + encodeURIComponent(node.dataset.disableEmailInboundSourceId), { method: "DELETE" });
+          notice("Inbound email source disabled.");
           await refresh();
         }));
 

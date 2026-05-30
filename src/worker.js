@@ -33,6 +33,7 @@ const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer"
 const INTEGRATION_TYPES = new Set(["slack"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
+const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
 const CALENDAR_SOURCE_TYPES = new Set(["ics_feed"]);
 
 export default {
@@ -66,6 +67,10 @@ export default {
 
       if (request.method === "POST" && url.pathname.startsWith("/hooks/messages/")) {
         return await handleInboundMessageWebhook(request, env, url);
+      }
+
+      if (request.method === "POST" && url.pathname.startsWith("/hooks/email/")) {
+        return await handleInboundEmailWebhook(request, env, url);
       }
 
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
@@ -173,6 +178,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listEmailSenders(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "email/inbound-sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listEmailInboundSources(env, workspaceId, true));
+  }
+
   if (request.method === "PATCH" && path === "email/settings") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await updateEmailSettings(env, workspaceId, await readJson(request), auth));
@@ -183,9 +193,19 @@ async function routeApi(request, env, url, auth) {
     return json(await createEmailSender(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path === "email/inbound-sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createEmailInboundSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "DELETE" && path.startsWith("email/senders/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await disableEmailSender(env, path.split("/")[2], workspaceId, auth));
+  }
+
+  if (request.method === "DELETE" && path.startsWith("email/inbound-sources/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableEmailInboundSource(env, path.split("/")[2], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "webhooks") {
@@ -1929,7 +1949,30 @@ async function handleInboundMessageWebhook(request, env, url) {
   return new Response("<Response></Response>", { status: 201, headers: { "content-type": "text/xml; charset=utf-8" } });
 }
 
+async function handleInboundEmailWebhook(request, env, url) {
+  const inboundKey = cleanNullable(url.pathname.split("/").pop());
+  if (!inboundKey) throw httpError(404, "Email webhook not found");
+  const source = await getRequired(env, "SELECT * FROM workspace_email_inbound_sources WHERE inbound_key = ? AND status = 'active'", inboundKey);
+  const input = normalizeInboundEmailPayload(source.provider, await readProviderWebhookPayload(request));
+  try {
+    const result = await ingestInboundEmail(env, { ...input, workspaceId: source.workspace_id }, { userId: null, source });
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE workspace_email_inbound_sources SET last_received_at = ?, last_error = NULL, updated_at = ? WHERE id = ?").bind(now, now, source.id).run();
+    const wantsJson = (request.headers.get("accept") || "").includes("application/json");
+    if (wantsJson) return json({ ...result, sourceId: source.id }, 201);
+    return new Response("ok", { status: 201, headers: { "content-type": "text/plain; charset=utf-8" } });
+  } catch (error) {
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE workspace_email_inbound_sources SET last_error = ?, updated_at = ? WHERE id = ?").bind(error.message || String(error), now, source.id).run();
+    throw error;
+  }
+}
+
 async function readMessageWebhookPayload(request) {
+  return readProviderWebhookPayload(request);
+}
+
+async function readProviderWebhookPayload(request) {
   const contentType = request.headers.get("content-type") || "";
   if (contentType.includes("application/json")) return readJson(request);
   const text = await request.text();
@@ -2475,6 +2518,10 @@ async function markContactReplied(env, id, workspaceId, auth) {
 }
 
 async function recordInboundEmail(env, input, auth) {
+  return ingestInboundEmail(env, input, { userId: auth.user.id });
+}
+
+async function ingestInboundEmail(env, input, options = {}) {
   requireFields(input, ["subject"]);
   const contact = await resolveInboundContact(env, input);
   const now = new Date().toISOString();
@@ -2497,11 +2544,17 @@ async function recordInboundEmail(env, input, auth) {
 
   await recordAuditLog(env, {
     workspaceId: input.workspaceId,
-    userId: auth.user.id,
+    userId: options.userId || null,
     action: "email.inbound",
     resource: "contact",
     resourceId: contact.id,
-    metadata: { email: contact.email, subject: input.subject, providerMessageId: input.providerMessageId || input.messageId || null },
+    metadata: {
+      email: contact.email,
+      subject: input.subject,
+      providerMessageId: input.providerMessageId || input.messageId || null,
+      sourceId: options.source?.id || null,
+      provider: options.source?.provider || null,
+    },
   });
   await deliverWebhooks(env, input.workspaceId, "email.received", email.id, email);
 
@@ -2510,6 +2563,43 @@ async function recordInboundEmail(env, input, auth) {
     await deliverWebhooks(env, input.workspaceId, "contact.replied", contact.id, updated);
   }
   return { contact: updated, email };
+}
+
+function normalizeInboundEmailPayload(provider, payload) {
+  const fromEmail = extractEmailAddress(
+    payload.fromEmail ||
+    payload.FromFull?.Email ||
+    payload.From ||
+    payload.from ||
+    payload.sender ||
+    payload.Sender,
+  );
+  const subject = cleanNullable(payload.Subject || payload.subject) || "(no subject)";
+  const body = cleanNullable(
+    payload.TextBody ||
+    payload["body-plain"] ||
+    payload.text ||
+    payload.body ||
+    payload.HtmlBody ||
+    payload["body-html"] ||
+    payload.html,
+  ) || "";
+  const providerMessageId = cleanNullable(
+    payload.MessageID ||
+    payload["Message-Id"] ||
+    payload["message-id"] ||
+    payload.messageId ||
+    payload.providerMessageId ||
+    payload.id,
+  );
+  return {
+    provider,
+    fromEmail,
+    subject,
+    body,
+    providerMessageId,
+    receivedAt: cleanNullable(payload.receivedAt || payload.Date || payload.date),
+  };
 }
 
 async function resolveInboundContact(env, input) {
@@ -3337,6 +3427,42 @@ async function listEmailSenders(env, workspaceId) {
     ORDER BY wes.status ASC, wes.created_at DESC
   `).bind(workspaceId).all();
   return rows.results;
+}
+
+async function listEmailInboundSources(env, workspaceId, revealWebhook = false) {
+  const rows = await env.DB.prepare(`
+    SELECT eis.*, u.name AS created_by_name
+    FROM workspace_email_inbound_sources eis
+    LEFT JOIN users u ON u.id = eis.created_by_user_id
+    WHERE eis.workspace_id = ?
+    ORDER BY eis.status ASC, eis.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results.map((source) => emailInboundSourceResponse(source, revealWebhook));
+}
+
+async function createEmailInboundSource(env, input, auth) {
+  requireFields(input, ["name"]);
+  const provider = normalizeEnum(input.provider || "generic", EMAIL_INBOUND_SOURCE_PROVIDERS, "provider");
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  const inboundKey = input.inboundKey || crypto.randomUUID().replaceAll("-", "");
+  await env.DB.prepare(`
+    INSERT INTO workspace_email_inbound_sources (
+      id, workspace_id, created_by_user_id, name, provider, inbound_key,
+      status, last_received_at, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), provider, inboundKey, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_inbound_source.create", resource: "workspace_email_inbound_source", resourceId: id, metadata: { name: input.name, provider } });
+  return emailInboundSourceResponse(await getRequired(env, "SELECT * FROM workspace_email_inbound_sources WHERE id = ? AND workspace_id = ?", id, input.workspaceId), true);
+}
+
+async function disableEmailInboundSource(env, id, workspaceId, auth) {
+  const source = await getRequired(env, "SELECT * FROM workspace_email_inbound_sources WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_email_inbound_sources SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_inbound_source.disable", resource: "workspace_email_inbound_source", resourceId: id, metadata: { name: source.name, provider: source.provider } });
+  return { ok: true };
 }
 
 async function createEmailSender(env, input, auth) {
@@ -4643,6 +4769,13 @@ function cleanEmail(value) {
   return cleaned ? cleaned.toLowerCase() : "";
 }
 
+function extractEmailAddress(value) {
+  const cleaned = cleanNullable(value);
+  if (!cleaned) return "";
+  const match = cleaned.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return cleanEmail(match ? match[0] : cleaned);
+}
+
 function cleanDomain(value) {
   const cleaned = cleanNullable(value);
   return cleaned ? cleaned.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "") : "";
@@ -4778,6 +4911,13 @@ function messageChannelResponse(channel, revealWebhook = false) {
     ...channel,
     config: maskMessageChannelConfig(channel.provider, parseJsonObject(channel.config_json)),
     webhook_path: revealWebhook && channel.inbound_key ? `/hooks/messages/${channel.inbound_key}` : null,
+  };
+}
+
+function emailInboundSourceResponse(source, revealWebhook = false) {
+  return {
+    ...source,
+    webhook_path: revealWebhook && source.inbound_key ? `/hooks/email/${source.inbound_key}` : null,
   };
 }
 

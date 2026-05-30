@@ -47,7 +47,8 @@
 - [x] Add AI account/contact summaries, next steps, risks, and scores.
 - [x] Add recurring ICS/webcal calendar source sync.
 - [x] Add workspace email sender rotation with daily caps.
-- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, full Google/Microsoft OAuth calendar sync, broader native integrations, and deeper AI enrichment/notes.
+- [x] Add provider-backed inbound email parse webhooks.
+- [ ] Build the next Close-style CRM gaps: full Google/Microsoft OAuth calendar sync, broader native integrations, and deeper AI enrichment/notes.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.

@@ -195,6 +195,19 @@ POST /api/email/senders
 
 List senders with `GET /api/email/senders`. Manual and sequence sends choose the least-used active sender that has not hit its daily cap. If no sender is configured, UserOrbit falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
 
+Create an inbound email source for provider parse webhooks:
+
+```http
+POST /api/email/inbound-sources
+
+{
+  "name": "Sales inbound parser",
+  "provider": "postmark"
+}
+```
+
+Supported providers are `generic`, `postmark`, `sendgrid`, and `mailgun`. List sources with `GET /api/email/inbound-sources`; owner/admin responses include `webhook_path`. Configure the provider to post inbound parse events to `<base_url><webhook_path>`. Inbound messages match contacts by sender email, create timeline email activity, mark contacts replied, pause active sequence enrollments, and emit `email.received`.
+
 Create a public lead capture form:
 
 ```http

@@ -256,6 +256,20 @@ curl -X POST http://localhost:8787/api/email/senders \
 
 Manual and sequence sends pick the least-used active sender for the workspace and increment usage after successful SMTP delivery. If no sender is configured, the app falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
 
+### Configure inbound email sources
+
+```sh
+curl -X POST http://localhost:8787/api/email/inbound-sources \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Sales inbound parser",
+    "provider": "postmark"
+  }'
+```
+
+Workspace admins can create generic, Postmark, SendGrid, or Mailgun inbound sources. The response includes `webhook_path`; configure the email provider's inbound parse/webhook target to `<base_url><webhook_path>`. Inbound messages match contacts by sender email, create inbound email activity, mark the contact as replied, pause active sequence enrollments, and emit `email.received`.
+
 ### Create a lead form
 
 ```sh
