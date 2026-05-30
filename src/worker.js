@@ -123,6 +123,10 @@ async function routeApi(request, env, url, auth) {
     return csv(await exportAccountsCsv(env, workspaceId), "userorbit-accounts.csv");
   }
 
+  if (request.method === "POST" && path === "import/accounts.csv") {
+    return json(await importAccountsCsv(env, workspaceId, await request.text()), 201);
+  }
+
   if (request.method === "GET" && path === "accounts") {
     return json(await listAccounts(env, url, workspaceId, auth));
   }
@@ -358,6 +362,81 @@ async function exportAccountsCsv(env, workspaceId) {
     "created_at",
     "updated_at",
   ]);
+}
+
+async function importAccountsCsv(env, workspaceId, body) {
+  const rows = parseCsv(body);
+  if (!rows.length) throw httpError(400, "CSV must include a header row and at least one account row");
+  const results = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    try {
+      const name = cleanNullable(row.name || row.account || row.account_name);
+      if (!name) throw new Error("Missing account name");
+      const contactName = cleanNullable(row.contact_name || row.contact || row.name_contact);
+      const contactEmail = cleanEmail(row.contact_email || row.email);
+      const account = await createAccount(env, {
+        workspaceId,
+        name,
+        domain: row.domain,
+        segment: row.segment,
+        status: row.status,
+        source: row.source || "CSV import",
+        owner: row.owner,
+        observation: row.observation || row.notes,
+        contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: row.contact_title || row.title }] : [],
+      });
+      results.push({ row: index + 2, ok: true, accountId: account.id, name: account.name });
+    } catch (error) {
+      results.push({ row: index + 2, ok: false, error: error.message || String(error) });
+    }
+  }
+  return {
+    imported: results.filter((result) => result.ok).length,
+    failed: results.filter((result) => !result.ok).length,
+    results,
+  };
+}
+
+function parseCsv(input) {
+  const text = String(input || "").replace(/^\uFEFF/, "").trim();
+  if (!text) return [];
+  const records = [];
+  let record = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      record.push(field);
+      field = "";
+    } else if (char === "\n") {
+      record.push(field);
+      records.push(record);
+      record = [];
+      field = "";
+    } else if (char !== "\r") {
+      field += char;
+    }
+  }
+  record.push(field);
+  records.push(record);
+  const headers = records.shift().map((header) => slugify(header).replaceAll("-", "_"));
+  return records
+    .filter((row) => row.some((value) => cleanNullable(value)))
+    .map((row) => Object.fromEntries(headers.map((header, index) => [header, cleanNullable(row[index]) || ""])));
 }
 
 async function listSavedViews(env, workspaceId, auth, url) {

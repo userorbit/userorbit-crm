@@ -151,6 +151,17 @@ curl http://localhost:8787/api/export/accounts.csv \
   -o userorbit-accounts.csv
 ```
 
+### Import accounts
+
+```sh
+curl -X POST http://localhost:8787/api/import/accounts.csv \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: text/csv" \
+  --data-binary @accounts.csv
+```
+
+Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, and `contact_title`.
+
 ## Agent skill contract
 
 An agent can manage the CRM through `POST /api/agent/command`. A full Codex-style skill is available at `skills/userorbit-crm/SKILL.md`.

@@ -158,6 +158,18 @@ Export accounts for backup or spreadsheet analysis:
 GET /api/export/accounts.csv
 ```
 
+Import accounts from CSV:
+
+```http
+POST /api/import/accounts.csv
+Content-Type: text/csv
+
+name,domain,segment,status,contact_name,contact_email,contact_title
+Acme,acme.com,product,target,Jane Doe,jane@acme.com,Head of Product
+```
+
+Supported account columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, and `observation`. Optional contact columns are `contact_name`, `contact_email`, and `contact_title`.
+
 Review or move pipeline opportunities:
 
 ```http

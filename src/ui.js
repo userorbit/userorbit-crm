@@ -655,6 +655,10 @@ export const appHtml = String.raw`<!doctype html>
                 </div>
                 <button class="button primary">Create account</button>
               </form>
+              <form id="importAccountsForm" class="stack" style="border-top:1px solid var(--border)">
+                <label>Import CSV<textarea name="csv" placeholder="name,domain,segment,status,contact_name,contact_email&#10;Acme,acme.com,product,target,Jane Doe,jane@acme.com"></textarea></label>
+                <button class="button">Import accounts</button>
+              </form>
             </div>
           </div>\`;
       }
@@ -1165,6 +1169,14 @@ Content-Type: application/json
           };
           await api("accounts", { method: "POST", body: JSON.stringify(payload) });
           notice("Account created.");
+          await refresh();
+        });
+
+        $("#importAccountsForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const csv = new FormData(event.currentTarget).get("csv");
+          const result = await api("import/accounts.csv", { method: "POST", headers: { "content-type": "text/csv" }, body: csv });
+          notice("Imported " + result.imported + " account(s), " + result.failed + " failed.");
           await refresh();
         });
 
