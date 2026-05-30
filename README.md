@@ -301,6 +301,24 @@ curl -X POST http://localhost:8787/api/email/inbound-sources \
 
 Workspace admins can create generic, Postmark, SendGrid, or Mailgun inbound sources. The response includes `webhook_path`; configure the email provider's inbound parse/webhook target to `<base_url><webhook_path>`. Inbound messages match contacts by sender email, create inbound email activity, mark the contact as replied, pause active sequence enrollments, and emit `email.received`.
 
+### Configure native mailbox sync
+
+```sh
+curl -X POST http://localhost:8787/api/email/sync-sources \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Sales Gmail inbox",
+    "provider": "gmail",
+    "accountEmail": "sales@example.com",
+    "accessToken": "oauth-access-token",
+    "labelId": "INBOX",
+    "limit": 25
+  }'
+```
+
+Supported providers are `gmail` and `microsoft`. Gmail sync reads recent messages through the Gmail API `users.messages.list` and `users.messages.get` metadata endpoints. Microsoft sync reads recent Inbox messages through Microsoft Graph `/me/mailFolders/{folder}/messages`. Run a source with `POST /api/email/sync-sources/<source_id>/run` or the `run_email_sync` agent command. Synced messages dedupe by provider message id, match existing contacts by sender email, create inbound email activity, mark contacts replied, pause active sequence enrollments, and emit `email.received`.
+
 ### Create a lead form
 
 ```sh
@@ -545,6 +563,7 @@ Supported commands:
 - `send_message`
 - `start_call`
 - `run_native_import`
+- `run_email_sync`
 - `create_dialer_session`
 - `complete_dialer_call`
 - `generate_ai_insight`

@@ -36,6 +36,7 @@ const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
+const EMAIL_SYNC_SOURCE_PROVIDERS = new Set(["gmail", "microsoft"]);
 const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oauth"]);
 const CALENDAR_OAUTH_PROVIDERS = new Set(["google", "microsoft"]);
 
@@ -204,6 +205,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listEmailInboundSources(env, workspaceId, true));
   }
 
+  if (request.method === "GET" && path === "email/sync-sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listEmailSyncSources(env, workspaceId));
+  }
+
   if (request.method === "PATCH" && path === "email/settings") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await updateEmailSettings(env, workspaceId, await readJson(request), auth));
@@ -219,6 +225,16 @@ async function routeApi(request, env, url, auth) {
     return json(await createEmailInboundSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path === "email/sync-sources") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createEmailSyncSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path.startsWith("email/sync-sources/") && path.endsWith("/run")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await runEmailSyncSource(env, path.split("/")[2], workspaceId, auth), 201);
+  }
+
   if (request.method === "DELETE" && path.startsWith("email/senders/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await disableEmailSender(env, path.split("/")[2], workspaceId, auth));
@@ -227,6 +243,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "DELETE" && path.startsWith("email/inbound-sources/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await disableEmailInboundSource(env, path.split("/")[2], workspaceId, auth));
+  }
+
+  if (request.method === "DELETE" && path.startsWith("email/sync-sources/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableEmailSyncSource(env, path.split("/")[2], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "webhooks") {
@@ -4484,6 +4505,9 @@ async function runAgentCommand(env, input, auth) {
   if (input.command === "run_native_import") {
     return { result: await runNativeImportSource(env, cleanNullable(input.sourceId || input.payload?.sourceId || input.payload?.id), input.workspaceId, auth) };
   }
+  if (input.command === "run_email_sync") {
+    return { result: await runEmailSyncSource(env, cleanNullable(input.sourceId || input.payload?.sourceId || input.payload?.id), input.workspaceId, auth) };
+  }
   if (input.command === "create_dialer_session") {
     return { result: await createDialerSession(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
@@ -4914,6 +4938,162 @@ async function disableEmailInboundSource(env, id, workspaceId, auth) {
   await env.DB.prepare("UPDATE workspace_email_inbound_sources SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
   await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_inbound_source.disable", resource: "workspace_email_inbound_source", resourceId: id, metadata: { name: source.name, provider: source.provider } });
   return { ok: true };
+}
+
+async function listEmailSyncSources(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT ess.*, u.name AS created_by_name
+    FROM workspace_email_sync_sources ess
+    LEFT JOIN users u ON u.id = ess.created_by_user_id
+    WHERE ess.workspace_id = ?
+    ORDER BY ess.status ASC, ess.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results.map(emailSyncSourceResponse);
+}
+
+async function createEmailSyncSource(env, input, auth) {
+  requireFields(input, ["name", "provider", "accessToken"]);
+  const provider = normalizeEnum(input.provider, EMAIL_SYNC_SOURCE_PROVIDERS, "provider");
+  const config = normalizeEmailSyncConfig(provider, input);
+  const accountEmail = cleanEmail(input.accountEmail || input.account_email);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO workspace_email_sync_sources (
+      id, workspace_id, created_by_user_id, provider, name, account_email, config_json,
+      status, last_sync_at, last_result_json, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, provider, input.name.trim(), accountEmail, JSON.stringify(config), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_sync_source.create", resource: "workspace_email_sync_source", resourceId: id, metadata: { provider, name: input.name, accountEmail } });
+  return emailSyncSourceResponse(await getRequired(env, "SELECT * FROM workspace_email_sync_sources WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+}
+
+async function disableEmailSyncSource(env, id, workspaceId, auth) {
+  const source = await getRequired(env, "SELECT * FROM workspace_email_sync_sources WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_email_sync_sources SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_sync_source.disable", resource: "workspace_email_sync_source", resourceId: id, metadata: { name: source.name, provider: source.provider } });
+  return { ok: true };
+}
+
+async function runEmailSyncSource(env, id, workspaceId, auth) {
+  const source = await getRequired(env, "SELECT * FROM workspace_email_sync_sources WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  try {
+    const result = await syncMailboxMessages(env, source, workspaceId, auth);
+    await env.DB.prepare("UPDATE workspace_email_sync_sources SET last_sync_at = ?, last_result_json = ?, last_error = NULL, updated_at = ? WHERE id = ?")
+      .bind(now, JSON.stringify(result), now, source.id)
+      .run();
+    await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_sync_source.run", resource: "workspace_email_sync_source", resourceId: source.id, metadata: { provider: source.provider, ...result.summary } });
+    return { source: emailSyncSourceResponse(await getRequired(env, "SELECT * FROM workspace_email_sync_sources WHERE id = ? AND workspace_id = ?", source.id, workspaceId)), ...result };
+  } catch (error) {
+    await env.DB.prepare("UPDATE workspace_email_sync_sources SET last_sync_at = ?, last_error = ?, updated_at = ? WHERE id = ?")
+      .bind(now, error.message || String(error), now, source.id)
+      .run();
+    throw error;
+  }
+}
+
+async function syncMailboxMessages(env, source, workspaceId, auth) {
+  const config = parseJsonObject(source.config_json);
+  const messages = source.provider === "gmail"
+    ? await fetchGmailMessages(config)
+    : source.provider === "microsoft"
+      ? await fetchMicrosoftMailboxMessages(config)
+      : (() => { throw httpError(400, "Unsupported email sync provider"); })();
+  const summary = { messages: messages.length, imported: 0, duplicates: 0, skipped: 0, failed: 0 };
+  const results = [];
+  for (const message of messages) {
+    const providerMessageId = `${source.provider}:${message.id}`;
+    const fromEmail = cleanEmail(message.fromEmail || extractEmailAddress(message.from || ""));
+    const subject = cleanNullable(message.subject) || "(no subject)";
+    if (!message.id || !fromEmail) {
+      summary.skipped += 1;
+      results.push({ action: "skipped", reason: "missing message id or sender", providerMessageId });
+      continue;
+    }
+    const existing = await env.DB.prepare("SELECT id FROM email_events WHERE provider_message_id = ? LIMIT 1").bind(providerMessageId).first();
+    if (existing) {
+      summary.duplicates += 1;
+      results.push({ action: "duplicate", emailEventId: existing.id, providerMessageId });
+      continue;
+    }
+    try {
+      const email = await ingestInboundEmail(env, {
+        workspaceId,
+        fromEmail,
+        subject,
+        body: cleanNullable(message.body) || "",
+        providerMessageId,
+        receivedAt: cleanNullable(message.receivedAt),
+      }, { userId: auth.user.id, source });
+      summary.imported += 1;
+      results.push({ action: "imported", emailEventId: email.id, providerMessageId, fromEmail });
+    } catch (error) {
+      summary.failed += 1;
+      results.push({ action: "failed", providerMessageId, fromEmail, error: error.message || String(error) });
+    }
+  }
+  return { summary, results };
+}
+
+async function fetchGmailMessages(config) {
+  const baseUrl = (config.apiBaseUrl || "https://gmail.googleapis.com/gmail/v1").replace(/\/+$/, "");
+  const url = new URL(`${baseUrl}/users/me/messages`);
+  url.searchParams.set("maxResults", String(config.limit || 25));
+  if (config.labelId) url.searchParams.append("labelIds", config.labelId);
+  const listResponse = await fetch(url.toString(), { headers: mailboxSyncHeaders(config.accessToken) });
+  const listPayload = await listResponse.json().catch(() => ({}));
+  if (!listResponse.ok) throw httpError(400, `Gmail sync failed: ${listPayload.error?.message || listPayload.message || listResponse.status}`);
+  const ids = (listPayload.messages || []).map((message) => cleanNullable(message.id)).filter(Boolean).slice(0, config.limit || 25);
+  const messages = [];
+  for (const id of ids) {
+    const getUrl = new URL(`${baseUrl}/users/me/messages/${encodeURIComponent(id)}`);
+    getUrl.searchParams.set("format", "metadata");
+    for (const header of ["From", "Subject", "Date"]) getUrl.searchParams.append("metadataHeaders", header);
+    const response = await fetch(getUrl.toString(), { headers: mailboxSyncHeaders(config.accessToken) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw httpError(400, `Gmail message fetch failed: ${payload.error?.message || payload.message || response.status}`);
+    const headers = Object.fromEntries((payload.payload?.headers || []).map((header) => [String(header.name || "").toLowerCase(), header.value || ""]));
+    messages.push({
+      id,
+      from: headers.from || "",
+      fromEmail: extractEmailAddress(headers.from || ""),
+      subject: headers.subject || "",
+      body: payload.snippet || "",
+      receivedAt: normalizeOptionalDateTime(headers.date),
+    });
+  }
+  return messages;
+}
+
+async function fetchMicrosoftMailboxMessages(config) {
+  const baseUrl = (config.apiBaseUrl || "https://graph.microsoft.com/v1.0").replace(/\/+$/, "");
+  const folder = encodeURIComponent(config.folder || "inbox");
+  const url = new URL(`${baseUrl}/me/mailFolders/${folder}/messages`);
+  url.searchParams.set("$top", String(config.limit || 25));
+  url.searchParams.set("$select", "id,from,subject,bodyPreview,receivedDateTime");
+  url.searchParams.set("$orderby", "receivedDateTime desc");
+  const response = await fetch(url.toString(), { headers: mailboxSyncHeaders(config.accessToken) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw httpError(400, `Microsoft mailbox sync failed: ${payload.error?.message || payload.message || response.status}`);
+  return (payload.value || []).slice(0, config.limit || 25).map((message) => ({
+    id: cleanNullable(message.id),
+    from: message.from?.emailAddress?.address || "",
+    fromEmail: cleanEmail(message.from?.emailAddress?.address),
+    subject: cleanNullable(message.subject) || "",
+    body: cleanNullable(message.bodyPreview) || "",
+    receivedAt: cleanNullable(message.receivedDateTime),
+  }));
+}
+
+function mailboxSyncHeaders(accessToken) {
+  return {
+    authorization: `Bearer ${accessToken}`,
+    accept: "application/json",
+    "user-agent": "UserOrbit-CRM-MailboxSync",
+  };
 }
 
 async function createEmailSender(env, input, auth) {
@@ -6555,11 +6735,31 @@ function normalizeNativeImportConfig(provider, input) {
   throw httpError(400, "Unsupported native import provider");
 }
 
+function normalizeEmailSyncConfig(provider, input) {
+  const accessToken = cleanNullable(input.accessToken || input.access_token);
+  if (!accessToken) throw httpError(400, `${provider} accessToken is required`);
+  const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url);
+  if (apiBaseUrl) normalizeWebhookUrl(apiBaseUrl);
+  const config = {
+    accessToken,
+    apiBaseUrl,
+    limit: clampInteger(input.limit || 25, 1, 50, "limit"),
+  };
+  if (provider === "gmail") {
+    return { ...config, labelId: cleanNullable(input.labelId || input.label_id) || "INBOX" };
+  }
+  if (provider === "microsoft") {
+    return { ...config, folder: cleanNullable(input.folder) || "inbox" };
+  }
+  throw httpError(400, "Unsupported email sync provider");
+}
+
 function nativeImportSourceResponse(source) {
+  const { config_json, last_result_json, ...safeSource } = source;
   return {
-    ...source,
-    config: maskNativeImportConfig(source.provider, parseJsonObject(source.config_json)),
-    lastResult: parseJsonObject(source.last_result_json),
+    ...safeSource,
+    config: maskNativeImportConfig(source.provider, parseJsonObject(config_json)),
+    lastResult: parseJsonObject(last_result_json),
   };
 }
 
@@ -6618,6 +6818,26 @@ function emailInboundSourceResponse(source, revealWebhook = false) {
     ...source,
     webhook_path: revealWebhook && source.inbound_key ? `/hooks/email/${source.inbound_key}` : null,
   };
+}
+
+function emailSyncSourceResponse(source) {
+  const { config_json, last_result_json, ...safeSource } = source;
+  return {
+    ...safeSource,
+    config: maskEmailSyncConfig(source.provider, parseJsonObject(config_json)),
+    lastResult: parseJsonObject(last_result_json),
+  };
+}
+
+function maskEmailSyncConfig(provider, config) {
+  const masked = {
+    accessToken: config.accessToken ? "configured" : "",
+    apiBaseUrl: config.apiBaseUrl || "",
+    limit: config.limit || 25,
+  };
+  if (provider === "gmail") return { ...masked, labelId: config.labelId || "INBOX" };
+  if (provider === "microsoft") return { ...masked, folder: config.folder || "inbox" };
+  return masked;
 }
 
 function maskMessageChannelConfig(provider, config) {
@@ -6853,6 +7073,13 @@ function normalizeDateTime(value, field) {
   const date = new Date(String(value || ""));
   if (Number.isNaN(date.getTime())) throw httpError(400, `${field} must be a valid date-time`);
   return date.toISOString();
+}
+
+function normalizeOptionalDateTime(value) {
+  const text = cleanNullable(value);
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function addDaysDate(date, days) {

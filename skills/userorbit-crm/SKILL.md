@@ -212,6 +212,34 @@ POST /api/email/inbound-sources
 
 Supported providers are `generic`, `postmark`, `sendgrid`, and `mailgun`. List sources with `GET /api/email/inbound-sources`; owner/admin responses include `webhook_path`. Configure the provider to post inbound parse events to `<base_url><webhook_path>`. Inbound messages match contacts by sender email, create timeline email activity, mark contacts replied, pause active sequence enrollments, and emit `email.received`.
 
+Create and run a native Gmail or Microsoft 365 mailbox sync source:
+
+```http
+POST /api/email/sync-sources
+
+{
+  "name": "Sales Gmail inbox",
+  "provider": "gmail",
+  "accountEmail": "sales@example.com",
+  "accessToken": "oauth-access-token",
+  "labelId": "INBOX",
+  "limit": 25
+}
+```
+
+Use `provider: "microsoft"` with `folder: "inbox"` for Microsoft Graph. List sources with `GET /api/email/sync-sources`, run one with `POST /api/email/sync-sources/<source_id>/run`, or use the agent command:
+
+```http
+POST /api/agent/command
+
+{
+  "command": "run_email_sync",
+  "sourceId": "email_sync_source_id"
+}
+```
+
+Mailbox sync dedupes by provider message id, only imports replies from known contact email addresses, marks contacts replied, pauses active sequence enrollments, and emits `email.received`.
+
 Create a public lead capture form:
 
 ```http
@@ -798,6 +826,7 @@ When SMTP is not configured, the CRM records emails as `drafted` instead of send
 - Do not invent account research. Store the source and observation used to justify outreach.
 - Treat enrichment provider output as unverified third-party data unless the user has approved the provider.
 - Treat HubSpot/native import output as external CRM data and review duplicates after each import.
+- Treat mailbox sync as an ingestion path for known CRM contacts; create or import contacts before expecting replies to match.
 - Do not send or enroll contacts with `status: "unsubscribed"`.
 - Do not keep contacts in automated sequences after they reply; use `POST /api/contacts/<contact_id>/reply`.
 - Prefer small, personalized batches over bulk imports.

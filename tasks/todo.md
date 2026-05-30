@@ -58,6 +58,7 @@
 - [x] Add native HubSpot CRM company/contact imports.
 - [x] Add native Pipedrive organization/person imports.
 - [x] Add native Salesforce account/contact imports.
+- [x] Add Gmail/Microsoft native mailbox sync for inbound replies.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.

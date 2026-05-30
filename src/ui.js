@@ -608,6 +608,7 @@ export const appHtml = String.raw`<!doctype html>
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
         emailSenders: [],
         emailInboundSources: [],
+        emailSyncSources: [],
         integrations: { integrations: [], deliveries: [] },
         enrichmentProviders: [],
         nativeImportSources: [],
@@ -706,7 +707,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -726,6 +727,7 @@ export const appHtml = String.raw`<!doctype html>
           api("email/settings"),
           canWrite ? api("email/senders") : Promise.resolve([]),
           canManage ? api("email/inbound-sources") : Promise.resolve([]),
+          canManage ? api("email/sync-sources") : Promise.resolve([]),
           canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
           canManage ? api("enrichment-providers") : Promise.resolve([]),
@@ -735,7 +737,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1623,6 +1625,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email senders</div></div>' + emailSendersTable(state.emailSenders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email inbound sources</div></div>' + emailInboundSourcesTable(state.emailInboundSources) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Email sync sources</div></div>' + emailSyncSourcesTable(state.emailSyncSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Message channels</div></div>' + messageChannelsTable(state.messageChannels) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Enrichment providers</div></div>' + enrichmentProvidersTable(state.enrichmentProviders) : ""}
@@ -1710,6 +1713,16 @@ Content-Type: application/json
                   <label>Inbound source name<input name="name" required placeholder="Sales inbox parser" /></label>
                   <label>Provider<select name="provider"><option value="generic">Generic</option><option value="postmark">Postmark</option><option value="sendgrid">SendGrid</option><option value="mailgun">Mailgun</option></select></label>
                   <button class="button primary">Create inbound source</button>
+                </form>
+                <form id="emailSyncSourceForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Mailbox sync name<input name="name" required placeholder="Sales Gmail inbox" /></label>
+                  <label>Provider<select name="provider"><option value="gmail">Gmail</option><option value="microsoft">Microsoft 365</option></select></label>
+                  <label>Account email<input name="accountEmail" type="email" placeholder="sales@example.com" /></label>
+                  <label>Access token<input name="accessToken" type="password" required placeholder="OAuth access token" /></label>
+                  <label>Label or folder<input name="folder" placeholder="INBOX or inbox" /></label>
+                  <label>Sync limit<input name="limit" type="number" min="1" max="50" value="25" /></label>
+                  <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
+                  <button class="button primary">Create mailbox sync</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
@@ -1870,6 +1883,31 @@ Content-Type: application/json
               <td>\${source.status === "active" ? '<button class="button" data-disable-email-inbound-source-id="' + escapeHtml(source.id) + '">Disable</button>' : ""}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function emailSyncSourcesTable(sources = []) {
+        if (!sources.length) return '<div class="empty">No mailbox sync sources yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Provider</th><th>Last sync</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${sources.map((source) => \`
+            <tr>
+              <td>\${escapeHtml(source.name)}<div class="subtitle">\${escapeHtml(source.last_error || syncSummary(source.lastResult))}</div></td>
+              <td>\${escapeHtml(source.provider)}<div class="subtitle">\${escapeHtml(source.account_email || source.config?.apiBaseUrl || "")}</div></td>
+              <td>\${escapeHtml(source.last_sync_at ? formatDateTime(source.last_sync_at) : "Never")}</td>
+              <td><span class="pill">\${escapeHtml(source.status)}</span></td>
+              <td>\${source.status === "active" ? '<button class="button" data-run-email-sync-source-id="' + escapeHtml(source.id) + '">Run</button> <button class="button" data-disable-email-sync-source-id="' + escapeHtml(source.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function syncSummary(result) {
+        const summary = result?.summary || {};
+        const parts = [
+          summary.imported ? summary.imported + " imported" : "",
+          summary.duplicates ? summary.duplicates + " duplicate" + (summary.duplicates === 1 ? "" : "s") : "",
+          summary.failed ? summary.failed + " failed" : "",
+        ].filter(Boolean);
+        return parts.join(", ");
       }
 
       function messageChannelsTable(messageChannels) {
@@ -2430,6 +2468,28 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#emailSyncSourceForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const provider = form.get("provider");
+          const folder = form.get("folder") || undefined;
+          await api("email/sync-sources", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              provider,
+              accountEmail: form.get("accountEmail") || undefined,
+              accessToken: form.get("accessToken"),
+              labelId: provider === "gmail" ? folder : undefined,
+              folder: provider === "microsoft" ? folder : undefined,
+              limit: Number(form.get("limit") || 25),
+              apiBaseUrl: form.get("apiBaseUrl") || undefined,
+            }),
+          });
+          notice("Mailbox sync source created.");
+          await refresh();
+        });
+
         $("#integrationForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2536,6 +2596,18 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-email-inbound-source-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("email/inbound-sources/" + encodeURIComponent(node.dataset.disableEmailInboundSourceId), { method: "DELETE" });
           notice("Inbound email source disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-run-email-sync-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          const result = await api("email/sync-sources/" + encodeURIComponent(node.dataset.runEmailSyncSourceId) + "/run", { method: "POST", body: "{}" });
+          notice("Imported " + (result.summary?.imported || 0) + " email(s).");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-email-sync-source-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("email/sync-sources/" + encodeURIComponent(node.dataset.disableEmailSyncSourceId), { method: "DELETE" });
+          notice("Mailbox sync source disabled.");
           await refresh();
         }));
 
