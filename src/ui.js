@@ -747,7 +747,8 @@ export const appHtml = String.raw`<!doctype html>
       function renderContactDetail() {
         const contact = state.selectedContact;
         if (!contact) return header("Contact", "Open a contact from an account.") + '<div class="panel"><div class="empty">No contact selected.</div></div>';
-        return header(escapeHtml(contact.name), escapeHtml([contact.title, contact.email, contact.account_name].filter(Boolean).join(" · ")), '<button class="button" data-account-id="' + escapeHtml(contact.account_id) + '">Back to account</button>') + \`
+        const action = '<div class="toolbar"><button class="button" data-account-id="' + escapeHtml(contact.account_id) + '">Back to account</button>' + (contact.status === "unsubscribed" ? "" : '<button id="unsubscribeContact" class="button">Unsubscribe</button>') + '</div>';
+        return header(escapeHtml(contact.name), escapeHtml([contact.title, contact.email, contact.account_name].filter(Boolean).join(" · ")), action) + \`
           <div class="grid metrics">
             \${metric("Tasks", contact.tasks.length)}
             \${metric("Opportunities", contact.opportunities.length)}
@@ -1227,6 +1228,12 @@ Content-Type: application/json
           state.view = "contact";
           render();
         }));
+
+        $("#unsubscribeContact")?.addEventListener("click", async () => {
+          await api("contacts/" + encodeURIComponent(state.selectedContactId) + "/unsubscribe", { method: "POST", body: "{}" });
+          notice("Contact unsubscribed.");
+          await refresh();
+        });
 
         document.querySelectorAll("[data-opportunity-stage]").forEach((node) => node.addEventListener("change", async () => {
           await api("opportunities/" + encodeURIComponent(node.dataset.opportunityStage), {

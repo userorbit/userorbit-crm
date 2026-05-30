@@ -25,8 +25,9 @@
 - [x] Add duplicate-aware CSV import and account duplicate watchlist.
 - [x] Add token-based team invitations.
 - [x] Add workspace webhooks and delivery logs.
+- [x] Add unsubscribe handling for contacts, manual sends, and sequences.
 - [ ] Add password/OAuth login, workspace membership overrides, and broader audit coverage.
-- [ ] Build the next Close-style CRM gaps: advanced import mapping UI, merge workflows, inbound email sync, native integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: advanced import mapping UI, merge workflows, inbound email sync/reply detection, native integrations, and communication channels.
 
 ## Review
 
@@ -61,3 +62,5 @@ Added duplicate-aware imports: CSV import matches existing accounts by domain/na
 Added token-based team invitations: owners/admins can invite a teammate from Settings, the invite grants team membership plus an invite token, invite-token auth marks acceptance, and invitation activity is visible in Settings and audit logs.
 
 Added workspace webhooks: admins can create/disable webhook endpoints from Settings, core account/contact/task/email events deliver JSON payloads, and recent delivery status is recorded for troubleshooting.
+
+Added unsubscribe handling: contacts can be unsubscribed from contact detail or API, active sequence enrollments stop, future manual sends/enrollments are blocked, and unsubscribe events are audited and webhooked.

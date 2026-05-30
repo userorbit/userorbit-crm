@@ -179,6 +179,10 @@ async function routeApi(request, env, url, auth) {
     return json(await createContact(env, await readJson(request)), 201);
   }
 
+  if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/unsubscribe")) {
+    return json(await unsubscribeContact(env, path.split("/")[1], workspaceId, auth));
+  }
+
   if (request.method === "GET" && path.startsWith("contacts/")) {
     return json(await getContact(env, path.split("/")[1], workspaceId));
   }
@@ -1069,7 +1073,8 @@ async function listSequences(env) {
 async function enrollContact(env, input) {
   requireFields(input, ["sequenceId", "contactId"]);
   await getRequired(env, "SELECT id FROM sequences WHERE id = ?", input.sequenceId);
-  await getRequired(env, "SELECT id FROM contacts WHERE id = ?", input.contactId);
+  const contact = await getRequired(env, "SELECT id, status FROM contacts WHERE id = ?", input.contactId);
+  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const now = new Date().toISOString();
   const nextSendAt = input.nextSendAt || now;
   const id = input.id || crypto.randomUUID();
@@ -1087,6 +1092,7 @@ async function enrollContact(env, input) {
 async function sendManualEmail(env, input) {
   requireFields(input, ["contactId", "subject", "body"]);
   const contact = await getContactWithAccount(env, input.contactId);
+  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const result = await sendEmail(env, {
     to: contact.email,
     toName: contact.name,
@@ -1130,7 +1136,7 @@ async function processDueSequenceEmails(env, options = {}) {
     JOIN email_templates et ON et.id = ss.template_id
     JOIN contacts c ON c.id = se.contact_id
     JOIN accounts a ON a.id = c.account_id
-    WHERE se.status = 'active' AND se.next_send_at <= ?
+    WHERE se.status = 'active' AND c.status != 'unsubscribed' AND se.next_send_at <= ?
     ORDER BY se.next_send_at ASC
     LIMIT ?
   `)
@@ -1209,6 +1215,25 @@ async function processDueSequenceEmails(env, options = {}) {
   }
 
   return { processed: sent.length, items: sent };
+}
+
+async function unsubscribeContact(env, id, workspaceId, auth) {
+  const contact = await getRequired(
+    env,
+    `SELECT c.*, a.workspace_id
+     FROM contacts c
+     JOIN accounts a ON a.id = c.account_id
+     WHERE c.id = ? AND a.workspace_id = ?`,
+    id,
+    workspaceId,
+  );
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE contacts SET status = 'unsubscribed', updated_at = ? WHERE id = ?").bind(now, id).run();
+  await env.DB.prepare("UPDATE sequence_enrollments SET status = 'unsubscribed', updated_at = ? WHERE contact_id = ? AND status = 'active'").bind(now, id).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "contact.unsubscribe", resource: "contact", resourceId: id, metadata: { email: contact.email } });
+  const updated = await getContact(env, id, workspaceId);
+  await deliverWebhooks(env, workspaceId, "contact.unsubscribed", id, updated);
+  return updated;
 }
 
 async function processScheduledJobs(env) {
