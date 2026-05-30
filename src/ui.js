@@ -1810,12 +1810,12 @@ Content-Type: application/json
                 </form>
                 <form id="emailSyncSourceForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Mailbox sync name<input name="name" required placeholder="Sales Gmail inbox" /></label>
-                  <label>Provider<select name="provider"><option value="gmail">Gmail</option><option value="microsoft">Microsoft 365</option></select></label>
+                  <label>Provider<select name="provider"><option value="gmail">Gmail</option><option value="microsoft">Microsoft 365</option><option value="imap_bridge">IMAP bridge</option></select></label>
                   <label>Account email<input name="accountEmail" type="email" placeholder="sales@example.com" /></label>
-                  <label>Access token<input name="accessToken" type="password" required placeholder="OAuth access token" /></label>
-                  <label>Label or folder<input name="folder" placeholder="INBOX or inbox" /></label>
+                  <label>Access token<input name="accessToken" type="password" required placeholder="OAuth or bridge bearer token" /></label>
+                  <label>Label, folder, or mailbox<input name="folder" placeholder="INBOX or inbox" /></label>
                   <label>Sync limit<input name="limit" type="number" min="1" max="50" value="25" /></label>
-                  <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
+                  <label>API base URL<input name="apiBaseUrl" placeholder="Required for IMAP bridge; optional for API providers" /></label>
                   <button class="button primary">Create mailbox sync</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -2665,6 +2665,7 @@ Content-Type: application/json
               accessToken: form.get("accessToken"),
               labelId: provider === "gmail" ? folder : undefined,
               folder: provider === "microsoft" ? folder : undefined,
+              mailbox: provider === "imap_bridge" ? folder : undefined,
               limit: Number(form.get("limit") || 25),
               apiBaseUrl: form.get("apiBaseUrl") || undefined,
             }),

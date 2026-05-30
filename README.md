@@ -302,7 +302,7 @@ curl -X POST http://localhost:8787/api/email/inbound-sources \
 
 Workspace admins can create generic, Postmark, SendGrid, or Mailgun inbound sources. The response includes `webhook_path`; configure the email provider's inbound parse/webhook target to `<base_url><webhook_path>`. Inbound messages match contacts by sender email, create inbound email activity, mark the contact as replied, pause active sequence enrollments, and emit `email.received`.
 
-### Configure native mailbox sync
+### Configure mailbox sync
 
 ```sh
 curl -X POST http://localhost:8787/api/email/sync-sources \
@@ -318,7 +318,7 @@ curl -X POST http://localhost:8787/api/email/sync-sources \
   }'
 ```
 
-Supported providers are `gmail` and `microsoft`. Gmail sync reads recent messages through the Gmail API `users.messages.list` and `users.messages.get` metadata endpoints. Microsoft sync reads recent Inbox messages through Microsoft Graph `/me/mailFolders/{folder}/messages`. Run a source with `POST /api/email/sync-sources/<source_id>/run` or the `run_email_sync` agent command. Synced messages dedupe by provider message id, match existing contacts by sender email, create inbound email activity, mark contacts replied, pause active sequence enrollments, and emit `email.received`.
+Supported providers are `gmail`, `microsoft`, and `imap_bridge`. Gmail sync reads recent messages through the Gmail API `users.messages.list` and `users.messages.get` metadata endpoints. Microsoft sync reads recent Inbox messages through Microsoft Graph `/me/mailFolders/{folder}/messages`. `imap_bridge` calls a self-hosted HTTPS bridge at `apiBaseUrl` with `{ mailbox, accountEmail, limit }` and expects `{ messages: [{ id, fromEmail, subject, body, receivedAt }] }`. Run a source with `POST /api/email/sync-sources/<source_id>/run` or the `run_email_sync` agent command. Synced messages dedupe by provider message id, match existing contacts by sender email, create inbound email activity, mark contacts replied, pause active sequence enrollments, and emit `email.received`.
 
 ### Create a lead form
 

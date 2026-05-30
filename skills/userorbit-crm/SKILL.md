@@ -212,7 +212,7 @@ POST /api/email/inbound-sources
 
 Supported providers are `generic`, `postmark`, `sendgrid`, and `mailgun`. List sources with `GET /api/email/inbound-sources`; owner/admin responses include `webhook_path`. Configure the provider to post inbound parse events to `<base_url><webhook_path>`. Inbound messages match contacts by sender email, create timeline email activity, mark contacts replied, pause active sequence enrollments, and emit `email.received`.
 
-Create and run a native Gmail or Microsoft 365 mailbox sync source:
+Create and run a Gmail, Microsoft 365, or IMAP bridge mailbox sync source:
 
 ```http
 POST /api/email/sync-sources
@@ -227,7 +227,7 @@ POST /api/email/sync-sources
 }
 ```
 
-Use `provider: "microsoft"` with `folder: "inbox"` for Microsoft Graph. List sources with `GET /api/email/sync-sources`, run one with `POST /api/email/sync-sources/<source_id>/run`, or use the agent command:
+Use `provider: "microsoft"` with `folder: "inbox"` for Microsoft Graph. Use `provider: "imap_bridge"` with `apiBaseUrl`, `accessToken`, and `mailbox` when the workspace has a self-hosted bridge that returns `{ messages: [{ id, fromEmail, subject, body, receivedAt }] }`. List sources with `GET /api/email/sync-sources`, run one with `POST /api/email/sync-sources/<source_id>/run`, or use the agent command:
 
 ```http
 POST /api/agent/command

@@ -36,7 +36,7 @@ const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
-const EMAIL_SYNC_SOURCE_PROVIDERS = new Set(["gmail", "microsoft"]);
+const EMAIL_SYNC_SOURCE_PROVIDERS = new Set(["gmail", "microsoft", "imap_bridge"]);
 const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oauth"]);
 const CALENDAR_OAUTH_PROVIDERS = new Set(["google", "microsoft"]);
 const DASHBOARD_WIDGETS = new Set(["metrics", "priority_accounts", "due_tasks", "pipeline", "sequence_performance", "stalled_opportunities"]);
@@ -5296,7 +5296,9 @@ async function syncMailboxMessages(env, source, workspaceId, auth) {
     ? await fetchGmailMessages(config)
     : source.provider === "microsoft"
       ? await fetchMicrosoftMailboxMessages(config)
-      : (() => { throw httpError(400, "Unsupported email sync provider"); })();
+      : source.provider === "imap_bridge"
+        ? await fetchImapBridgeMessages(config)
+        : (() => { throw httpError(400, "Unsupported email sync provider"); })();
   const summary = { messages: messages.length, imported: 0, duplicates: 0, skipped: 0, failed: 0 };
   const results = [];
   for (const message of messages) {
@@ -5380,6 +5382,34 @@ async function fetchMicrosoftMailboxMessages(config) {
     subject: cleanNullable(message.subject) || "",
     body: cleanNullable(message.bodyPreview) || "",
     receivedAt: cleanNullable(message.receivedDateTime),
+  }));
+}
+
+async function fetchImapBridgeMessages(config) {
+  const endpointUrl = cleanNullable(config.apiBaseUrl);
+  if (!endpointUrl) throw httpError(400, "IMAP bridge sync requires an apiBaseUrl");
+  const response = await fetch(endpointUrl, {
+    method: "POST",
+    headers: {
+      ...mailboxSyncHeaders(config.accessToken),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      mailbox: config.mailbox || "INBOX",
+      accountEmail: config.accountEmail || null,
+      limit: config.limit || 25,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw httpError(400, `IMAP bridge sync failed: ${payload.error || payload.message || response.status}`);
+  const rawMessages = Array.isArray(payload) ? payload : Array.isArray(payload.messages) ? payload.messages : [];
+  return rawMessages.slice(0, config.limit || 25).map((message) => ({
+    id: cleanNullable(message.id || message.uid || message.messageId || message.message_id),
+    from: cleanNullable(message.from) || cleanNullable(message.fromEmail || message.from_email) || "",
+    fromEmail: cleanEmail(message.fromEmail || message.from_email || extractEmailAddress(message.from || "")),
+    subject: cleanNullable(message.subject) || "",
+    body: cleanNullable(message.body || message.text || message.snippet) || "",
+    receivedAt: normalizeOptionalDateTime(message.receivedAt || message.received_at || message.date),
   }));
 }
 
@@ -7120,6 +7150,10 @@ function normalizeEmailSyncConfig(provider, input) {
   if (provider === "microsoft") {
     return { ...config, folder: cleanNullable(input.folder) || "inbox" };
   }
+  if (provider === "imap_bridge") {
+    if (!apiBaseUrl) throw httpError(400, "imap_bridge apiBaseUrl is required");
+    return { ...config, mailbox: cleanNullable(input.mailbox || input.folder) || "INBOX", accountEmail: cleanEmail(input.accountEmail || input.account_email) };
+  }
   throw httpError(400, "Unsupported email sync provider");
 }
 
@@ -7206,6 +7240,7 @@ function maskEmailSyncConfig(provider, config) {
   };
   if (provider === "gmail") return { ...masked, labelId: config.labelId || "INBOX" };
   if (provider === "microsoft") return { ...masked, folder: config.folder || "inbox" };
+  if (provider === "imap_bridge") return { ...masked, mailbox: config.mailbox || "INBOX", accountEmail: config.accountEmail || "" };
   return masked;
 }
 
