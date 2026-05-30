@@ -444,6 +444,7 @@ export const appHtml = String.raw`<!doctype html>
         <nav class="nav">
           <button class="active" data-view="dashboard">Dashboard</button>
           <button data-view="accounts">Accounts</button>
+          <button data-view="pipeline">Pipeline</button>
           <button data-view="reports">Reports</button>
           <button data-view="sequences">Sequences</button>
           <button data-view="warmup">Warmup</button>
@@ -473,6 +474,7 @@ export const appHtml = String.raw`<!doctype html>
         selectedAccountId: localStorage.getItem("crmSelectedAccountId") || "",
         selectedAccount: null,
         reports: null,
+        opportunities: [],
         sequences: [],
         warmup: null,
         tasks: [],
@@ -506,17 +508,18 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, sequences, warmup, tasks] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
           api("custom-fields?entity=account"),
           api("reports"),
+          api("opportunities"),
           api("sequences"),
           api("warmup"),
           api("tasks"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, sequences, warmup, tasks });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -534,6 +537,7 @@ export const appHtml = String.raw`<!doctype html>
           dashboard: renderDashboard,
           accounts: renderAccounts,
           account: renderAccountDetail,
+          pipeline: renderPipeline,
           reports: renderReports,
           sequences: renderSequences,
           warmup: renderWarmup,
@@ -723,6 +727,40 @@ export const appHtml = String.raw`<!doctype html>
             <div class="subtitle">\${escapeHtml(item.detail || "")}</div>
             <div class="subtitle">\${escapeHtml(formatDateTime(item.happenedAt))}</div>
           </div>\`).join("") + '</div>';
+      }
+
+      function renderPipeline() {
+        const stages = ["research", "conversation", "demo", "proposal", "won", "lost"];
+        return header("Pipeline", "Move opportunities through the sales process.") + \`
+          <div class="grid" style="grid-template-columns:repeat(6,minmax(180px,1fr)); align-items:start; overflow:auto">
+            \${stages.map((stage) => pipelineColumn(stage, state.opportunities.filter((opportunity) => opportunity.stage === stage))).join("")}
+          </div>\`;
+      }
+
+      function pipelineColumn(stage, opportunities) {
+        const total = opportunities.reduce((sum, opportunity) => sum + Number(opportunity.value_cents || 0), 0);
+        return \`<div class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">\${escapeHtml(stage)}</div>
+              <div class="subtitle">\${opportunities.length} deal(s) · \${money(total)}</div>
+            </div>
+          </div>
+          <div class="stack">
+            \${opportunities.map((opportunity) => pipelineCard(opportunity)).join("") || '<div class="empty">No deals.</div>'}
+          </div>
+        </div>\`;
+      }
+
+      function pipelineCard(opportunity) {
+        return \`<div style="border:1px solid var(--border); border-radius:8px; padding:10px; background:#fff">
+          <strong>\${escapeHtml(opportunity.name)}</strong>
+          <div class="subtitle">\${escapeHtml(opportunity.account_name || "")}</div>
+          <div class="subtitle">\${money(opportunity.value_cents)} · \${Number(opportunity.confidence || 0)}% confidence</div>
+          <label style="margin-top:8px">Stage<select data-opportunity-stage="\${escapeHtml(opportunity.id)}">
+            \${["research", "conversation", "demo", "proposal", "won", "lost"].map((stage) => '<option value="' + stage + '"' + (stage === opportunity.stage ? " selected" : "") + ">" + stage + "</option>").join("")}
+          </select></label>
+        </div>\`;
       }
 
       function renderReports() {
@@ -999,6 +1037,15 @@ Content-Type: application/json
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
           state.view = "account";
           render();
+        }));
+
+        document.querySelectorAll("[data-opportunity-stage]").forEach((node) => node.addEventListener("change", async () => {
+          await api("opportunities/" + encodeURIComponent(node.dataset.opportunityStage), {
+            method: "PATCH",
+            body: JSON.stringify({ stage: node.value }),
+          });
+          notice("Opportunity moved.");
+          await refresh();
         }));
 
         $("#accountForm")?.addEventListener("submit", async (event) => {

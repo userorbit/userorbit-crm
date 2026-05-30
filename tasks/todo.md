@@ -15,8 +15,9 @@
 - [x] Add account detail timelines with contacts, opportunities, tasks, and email activity.
 - [x] Add saved account views for reusable search, segment, and status filters.
 - [x] Add account custom fields and values.
+- [x] Add opportunity pipeline board and stage movement.
 - [ ] Add invitations, password/OAuth login, token revocation UI, and audit logs.
-- [ ] Build the next Close-style CRM gaps: contact detail, opportunity board, custom-field filtering/reporting, import, inbound email sync, forecast reporting, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: contact detail, configurable stages, custom-field filtering/reporting, import, inbound email sync, forecast reporting, integrations, and communication channels.
 
 ## Review
 
@@ -31,3 +32,5 @@ Added account detail timelines: `GET /api/accounts/:id`, an Account UI view from
 Added saved account views: D1-backed saved filters, account list filtering by saved view, UI controls to apply/save/delete views, and agent/docs coverage.
 
 Added account custom fields: workspace-scoped field definitions, account value storage, account detail display, account creation inputs, Settings field creation, and agent/docs coverage.
+
+Added pipeline board: `GET /api/opportunities`, `PATCH /api/opportunities/:id`, Pipeline UI columns by stage, stage movement controls, and agent/docs coverage.

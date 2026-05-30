@@ -135,6 +135,14 @@ async function routeApi(request, env, url, auth) {
     return json(await createOpportunity(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
+  if (request.method === "GET" && path === "opportunities") {
+    return json(await listOpportunities(env, workspaceId));
+  }
+
+  if (request.method === "PATCH" && path.startsWith("opportunities/")) {
+    return json(await updateOpportunity(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }));
+  }
+
   if (request.method === "GET" && path === "tasks") {
     return json(await listTasks(env, workspaceId));
   }
@@ -603,6 +611,54 @@ async function createOpportunity(env, input) {
 
   await touchAccount(env, input.accountId);
   return getRequired(env, "SELECT * FROM opportunities WHERE id = ?", id);
+}
+
+async function listOpportunities(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT
+      o.*,
+      a.name AS account_name,
+      a.domain AS account_domain,
+      c.name AS contact_name,
+      c.email AS contact_email,
+      MAX(ee.created_at) AS last_activity_at
+    FROM opportunities o
+    JOIN accounts a ON a.id = o.account_id
+    LEFT JOIN contacts c ON c.id = o.contact_id
+    LEFT JOIN email_events ee ON ee.account_id = a.id
+    WHERE o.workspace_id = ?
+    GROUP BY o.id
+    ORDER BY
+      CASE o.stage
+        WHEN 'research' THEN 1
+        WHEN 'conversation' THEN 2
+        WHEN 'demo' THEN 3
+        WHEN 'proposal' THEN 4
+        WHEN 'won' THEN 5
+        WHEN 'lost' THEN 6
+        ELSE 7
+      END,
+      o.updated_at DESC
+  `).bind(workspaceId).all();
+  return rows.results;
+}
+
+async function updateOpportunity(env, id, input) {
+  const existing = await getRequired(env, "SELECT * FROM opportunities WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+  const next = {
+    name: input.name?.trim() || existing.name,
+    stage: input.stage ? normalizeEnum(input.stage, OPPORTUNITY_STAGES, "stage") : existing.stage,
+    valueCents: input.valueCents !== undefined ? Number(input.valueCents || 0) : existing.value_cents,
+    confidence: input.confidence !== undefined ? Number(input.confidence || 0) : existing.confidence,
+    closeDate: input.closeDate !== undefined ? cleanNullable(input.closeDate) : existing.close_date,
+  };
+  await env.DB.prepare(`
+    UPDATE opportunities
+    SET name = ?, stage = ?, value_cents = ?, confidence = ?, close_date = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?
+  `).bind(next.name, next.stage, next.valueCents, next.confidence, next.closeDate, new Date().toISOString(), id, input.workspaceId).run();
+  await touchAccount(env, existing.account_id);
+  return getRequired(env, "SELECT * FROM opportunities WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
 async function listTasks(env, workspaceId) {

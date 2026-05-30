@@ -137,6 +137,18 @@ Export accounts for backup or spreadsheet analysis:
 GET /api/export/accounts.csv
 ```
 
+Review or move pipeline opportunities:
+
+```http
+GET /api/opportunities
+```
+
+```http
+PATCH /api/opportunities/<opportunity_id>
+
+{ "stage": "demo" }
+```
+
 Create a saved account view for repeat work:
 
 ```http
