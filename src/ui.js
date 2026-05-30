@@ -835,13 +835,15 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderReports() {
-        const reports = state.reports || { pipeline: [], accountStatus: [], taskStatus: [], sequencePerformance: [], activity: {}, stalledOpportunities: [] };
+        const reports = state.reports || { pipeline: [], forecast: [], accountStatus: [], taskStatus: [], sequencePerformance: [], activity: {}, stalledOpportunities: [] };
         const pipelineValue = reports.pipeline.reduce((total, row) => total + Number(row.value_cents || 0), 0);
+        const forecastValue = reports.forecast.reduce((total, row) => total + Number(row.weighted_value_cents || 0), 0);
         const overdueTasks = reports.taskStatus.reduce((total, row) => total + Number(row.overdue || 0), 0);
         const emails = reports.activity || {};
-        return header("Reports", "Track pipeline health, outbound activity, and stalled deals.") + \`
+        return header("Reports", "Track pipeline health, forecast, outbound activity, and stalled deals.") + \`
           <div class="grid metrics">
             \${metric("Pipeline value", money(pipelineValue))}
+            \${metric("Weighted forecast", money(forecastValue))}
             \${metric("Emails", emails.emails || 0)}
             \${metric("Sent", emails.sent || 0)}
             \${metric("Drafted", emails.drafted || 0)}
@@ -853,15 +855,21 @@ export const appHtml = String.raw`<!doctype html>
               \${reportTable(["Stage", "Deals", "Value", "Confidence"], reports.pipeline.map((row) => [row.stage_label || row.stage, row.opportunities, money(row.value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
             </div>
             <div class="panel">
-              <div class="panel-header"><div class="panel-title">Account status</div></div>
-              \${reportTable(["Status", "Accounts"], reports.accountStatus.map((row) => [row.status, row.accounts]))}
+              <div class="panel-header"><div class="panel-title">Forecast by close month</div></div>
+              \${reportTable(["Close month", "Deals", "Value", "Weighted", "Confidence"], reports.forecast.map((row) => [row.period, row.opportunities, money(row.value_cents), money(row.weighted_value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
             </div>
           </div>
           <div class="columns" style="margin-top:14px">
             <div class="panel">
+              <div class="panel-header"><div class="panel-title">Account status</div></div>
+              \${reportTable(["Status", "Accounts"], reports.accountStatus.map((row) => [row.status, row.accounts]))}
+            </div>
+            <div class="panel">
               <div class="panel-header"><div class="panel-title">Sequence performance</div></div>
               \${reportTable(["Sequence", "Enrollments", "Sent", "Drafted", "Failed"], reports.sequencePerformance.map((row) => [row.name, row.enrollments || 0, row.sent || 0, row.drafted || 0, row.failed || 0]))}
             </div>
+          </div>
+          <div class="columns" style="margin-top:14px">
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Stalled opportunities</div></div>
               \${reportTable(["Opportunity", "Account", "Stage", "Value", "Last activity"], reports.stalledOpportunities.map((row) => [row.name, row.account_name, row.stage, money(row.value_cents), row.last_activity_at || "No activity"]))}

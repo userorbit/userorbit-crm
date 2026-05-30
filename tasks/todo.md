@@ -21,8 +21,9 @@
 - [x] Add account CSV import.
 - [x] Add workspace-configurable pipeline stages.
 - [x] Add custom-field account filtering and reporting.
+- [x] Add weighted forecast reporting.
 - [ ] Add invitations, password/OAuth login, workspace membership overrides, and broader audit coverage.
-- [ ] Build the next Close-style CRM gaps: advanced import mapping/dedupe, inbound email sync, forecast reporting, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: advanced import mapping/dedupe, inbound email sync, integrations, and communication channels.
 
 ## Review
 
@@ -49,3 +50,5 @@ Added account CSV import: UI textarea import, `POST /api/import/accounts.csv`, p
 Added workspace-configurable pipeline stages: D1-backed stage definitions, seeded default stages, API/UI creation, dynamic board columns/selectors, stage-aware reports, and agent/docs coverage.
 
 Added custom-field account filtering and reporting: `cf_<field_key>` account filters, saved view persistence, custom-field filter UI, and report breakdowns by field value.
+
+Added weighted forecast reporting: `/api/reports` now groups open opportunities by close month with raw and confidence-weighted values, and the Reports UI surfaces the forecast table and metric.

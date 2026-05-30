@@ -253,7 +253,7 @@ async function getSummary(env, workspaceId) {
 
 async function getReports(env, workspaceId) {
   const closedStages = await getClosedOpportunityStages(env, workspaceId);
-  const [pipeline, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, customFieldBreakdowns] = await Promise.all([
+  const [pipeline, forecast, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, customFieldBreakdowns] = await Promise.all([
     env.DB.prepare(`
       SELECT o.stage, COALESCE(os.label, o.stage) AS stage_label, COUNT(*) AS opportunities, COALESCE(SUM(o.value_cents), 0) AS value_cents, AVG(o.confidence) AS avg_confidence
       FROM opportunities o
@@ -262,6 +262,18 @@ async function getReports(env, workspaceId) {
       GROUP BY o.stage
       ORDER BY COALESCE(os.position, 999), o.stage
     `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        COALESCE(substr(close_date, 1, 7), 'No close date') AS period,
+        COUNT(*) AS opportunities,
+        COALESCE(SUM(value_cents), 0) AS value_cents,
+        COALESCE(SUM(value_cents * confidence / 100), 0) AS weighted_value_cents,
+        AVG(confidence) AS avg_confidence
+      FROM opportunities
+      WHERE workspace_id = ? AND ${stageNotInClause(closedStages)}
+      GROUP BY period
+      ORDER BY CASE WHEN period = 'No close date' THEN 1 ELSE 0 END, period ASC
+    `).bind(workspaceId, ...closedStages).all(),
     env.DB.prepare(`
       SELECT status, COUNT(*) AS accounts
       FROM accounts
@@ -324,6 +336,7 @@ async function getReports(env, workspaceId) {
 
   return {
     pipeline: pipeline.results,
+    forecast: forecast.results,
     accountStatus: accountStatus.results,
     taskStatus: taskStatus.results,
     sequencePerformance: sequencePerformance.results,
