@@ -473,6 +473,8 @@ export const appHtml = String.raw`<!doctype html>
         selectedSavedViewId: localStorage.getItem("crmSavedViewId") || "",
         selectedAccountId: localStorage.getItem("crmSelectedAccountId") || "",
         selectedAccount: null,
+        selectedContactId: localStorage.getItem("crmSelectedContactId") || "",
+        selectedContact: null,
         reports: null,
         opportunities: [],
         sequences: [],
@@ -523,6 +525,9 @@ export const appHtml = String.raw`<!doctype html>
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
+        if (state.view === "contact" && state.selectedContactId) {
+          state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
+        }
         render();
       }
 
@@ -537,6 +542,7 @@ export const appHtml = String.raw`<!doctype html>
           dashboard: renderDashboard,
           accounts: renderAccounts,
           account: renderAccountDetail,
+          contact: renderContactDetail,
           pipeline: renderPipeline,
           reports: renderReports,
           sequences: renderSequences,
@@ -684,7 +690,7 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Contacts</div></div>
               \${customFieldsTable(account.customFields)}
-              \${reportTable(["Name", "Title", "Email", "Status"], account.contacts.map((contact) => [contact.name, contact.title || "", contact.email, contact.status]))}
+              \${contactsTable(account.contacts)}
               <div class="panel-header"><div class="panel-title">Opportunities</div></div>
               \${reportTable(["Name", "Stage", "Value", "Confidence"], account.opportunities.map((opportunity) => [opportunity.name, opportunity.stage, money(opportunity.value_cents), opportunity.confidence + "%"]))}
             </div>
@@ -697,6 +703,56 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
               \${reportTable(["Subject", "Contact", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
+            </div>
+          </div>\`;
+      }
+
+      function contactsTable(contacts) {
+        if (!contacts.length) return '<div class="empty">No contacts yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Title</th><th>Email</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${contacts.map((contact) => \`
+            <tr>
+              <td>\${escapeHtml(contact.name)}</td>
+              <td>\${escapeHtml(contact.title || "")}</td>
+              <td>\${escapeHtml(contact.email)}</td>
+              <td>\${escapeHtml(contact.status)}</td>
+              <td><button class="button" data-contact-id="\${escapeHtml(contact.id)}">Open</button></td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function renderContactDetail() {
+        const contact = state.selectedContact;
+        if (!contact) return header("Contact", "Open a contact from an account.") + '<div class="panel"><div class="empty">No contact selected.</div></div>';
+        return header(escapeHtml(contact.name), escapeHtml([contact.title, contact.email, contact.account_name].filter(Boolean).join(" · ")), '<button class="button" data-account-id="' + escapeHtml(contact.account_id) + '">Back to account</button>') + \`
+          <div class="grid metrics">
+            \${metric("Tasks", contact.tasks.length)}
+            \${metric("Opportunities", contact.opportunities.length)}
+            \${metric("Sequences", contact.enrollments.length)}
+            \${metric("Emails", contact.emails.length)}
+            \${metric("Status", escapeHtml(contact.status))}
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Timeline</div></div>
+              \${timelineList(contact.timeline)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Sequences</div></div>
+              \${reportTable(["Sequence", "Status", "Step", "Next send"], contact.enrollments.map((item) => [item.sequence_name, item.status, item.current_step_order, item.next_send_at || ""]))}
+              <div class="panel-header"><div class="panel-title">Opportunities</div></div>
+              \${reportTable(["Name", "Stage", "Value", "Confidence"], contact.opportunities.map((opportunity) => [opportunity.name, opportunity.stage, money(opportunity.value_cents), opportunity.confidence + "%"]))}
+            </div>
+          </div>
+          <div class="columns" style="margin-top:14px">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Tasks</div></div>
+              \${reportTable(["Title", "Kind", "Status", "Due"], contact.tasks.map((task) => [task.title, task.kind, task.status, task.due_at || ""]))}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Email activity</div></div>
+              \${reportTable(["Subject", "Status", "Sequence", "When"], contact.emails.map((email) => [email.subject, email.status, email.sequence_name || "", formatDateTime(email.sent_at || email.created_at)]))}
             </div>
           </div>\`;
       }
@@ -1036,6 +1092,14 @@ Content-Type: application/json
           localStorage.setItem("crmSelectedAccountId", state.selectedAccountId);
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
           state.view = "account";
+          render();
+        }));
+
+        document.querySelectorAll("[data-contact-id]").forEach((node) => node.addEventListener("click", async () => {
+          state.selectedContactId = node.dataset.contactId;
+          localStorage.setItem("crmSelectedContactId", state.selectedContactId);
+          state.selectedContact = await api("contacts/" + encodeURIComponent(state.selectedContactId));
+          state.view = "contact";
           render();
         }));
 

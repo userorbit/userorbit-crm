@@ -13,11 +13,12 @@
 - [x] Add reporting dashboards for pipeline, activity, tasks, sequences, and stalled opportunities.
 - [x] Add account CSV export.
 - [x] Add account detail timelines with contacts, opportunities, tasks, and email activity.
+- [x] Add contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
 - [x] Add saved account views for reusable search, segment, and status filters.
 - [x] Add account custom fields and values.
 - [x] Add opportunity pipeline board and stage movement.
 - [ ] Add invitations, password/OAuth login, token revocation UI, and audit logs.
-- [ ] Build the next Close-style CRM gaps: contact detail, configurable stages, custom-field filtering/reporting, import, inbound email sync, forecast reporting, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: configurable stages, custom-field filtering/reporting, import, inbound email sync, forecast reporting, integrations, and communication channels.
 
 ## Review
 
@@ -28,6 +29,8 @@ Verified JavaScript parsing, local D1 migration with Node 22 runtime, landing/AP
 Added the next CRM-depth slice: `/api/reports`, account CSV export, a Reports UI tab, an account export button, and agent/docs coverage for reporting and exports.
 
 Added account detail timelines: `GET /api/accounts/:id`, an Account UI view from account rows, timeline composition from account/contact/opportunity/task/email activity, and agent/docs coverage for using account context before follow-up actions.
+
+Added contact detail timelines: `GET /api/contacts/:id`, Contact UI view from account contacts, timeline composition from contact/task/opportunity/enrollment/email activity, and agent/docs coverage for avoiding duplicate follow-up.
 
 Added saved account views: D1-backed saved filters, account list filtering by saved view, UI controls to apply/save/delete views, and agent/docs coverage.
 

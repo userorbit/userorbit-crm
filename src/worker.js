@@ -131,6 +131,10 @@ async function routeApi(request, env, url, auth) {
     return json(await createContact(env, await readJson(request)), 201);
   }
 
+  if (request.method === "GET" && path.startsWith("contacts/")) {
+    return json(await getContact(env, path.split("/")[1], workspaceId));
+  }
+
   if (request.method === "POST" && path === "opportunities") {
     return json(await createOpportunity(env, { ...(await readJson(request)), workspaceId }), 201);
   }
@@ -1535,6 +1539,53 @@ async function getAccount(env, id, workspaceId) {
   };
 }
 
+async function getContact(env, id, workspaceId) {
+  const contact = await getRequired(
+    env,
+    `SELECT c.*, a.name AS account_name, a.domain AS account_domain, a.status AS account_status, a.segment AS account_segment
+     FROM contacts c
+     JOIN accounts a ON a.id = c.account_id
+     WHERE c.id = ? AND a.workspace_id = ?`,
+    id,
+    workspaceId,
+  );
+  const [tasks, opportunities, enrollments, emails] = await Promise.all([
+    env.DB.prepare(`
+      SELECT * FROM tasks
+      WHERE contact_id = ? AND workspace_id = ?
+      ORDER BY COALESCE(due_at, created_at) ASC
+    `).bind(id, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT * FROM opportunities
+      WHERE contact_id = ? AND workspace_id = ?
+      ORDER BY updated_at DESC
+    `).bind(id, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT se.*, s.name AS sequence_name, s.description AS sequence_description
+      FROM sequence_enrollments se
+      JOIN sequences s ON s.id = se.sequence_id
+      WHERE se.contact_id = ?
+      ORDER BY se.updated_at DESC
+    `).bind(id).all(),
+    env.DB.prepare(`
+      SELECT ee.*, s.name AS sequence_name
+      FROM email_events ee
+      LEFT JOIN sequences s ON s.id = ee.sequence_id
+      WHERE ee.contact_id = ?
+      ORDER BY ee.created_at DESC
+      LIMIT 100
+    `).bind(id).all(),
+  ]);
+  return {
+    ...contact,
+    tasks: tasks.results,
+    opportunities: opportunities.results,
+    enrollments: enrollments.results,
+    emails: emails.results,
+    timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results }),
+  };
+}
+
 async function getCustomFieldValues(env, workspaceId, entity, entityId) {
   const rows = await env.DB.prepare(`
     SELECT cf.id, cf.name, cf.key, cf.type, cf.options_json, cfv.value
@@ -1611,6 +1662,47 @@ function buildAccountTimeline({ account, contacts, opportunities, tasks, emails 
       type: "email",
       title: `${email.status}: ${email.subject}`,
       detail: [email.contact_name || email.contact_email, email.sequence_name].filter(Boolean).join(" · "),
+      happenedAt: email.sent_at || email.created_at,
+    })),
+  ];
+  return items.sort((a, b) => String(b.happenedAt || "").localeCompare(String(a.happenedAt || "")));
+}
+
+function buildContactTimeline({ contact, tasks, opportunities, enrollments, emails }) {
+  const items = [
+    {
+      id: `contact:${contact.id}`,
+      type: "contact",
+      title: "Contact created",
+      detail: [contact.title, contact.email, contact.account_name].filter(Boolean).join(" · "),
+      happenedAt: contact.created_at,
+    },
+    ...tasks.map((task) => ({
+      id: `task:${task.id}`,
+      type: "task",
+      title: `Task: ${task.title}`,
+      detail: [task.status, task.kind, task.due_at ? `due ${task.due_at}` : ""].filter(Boolean).join(" · "),
+      happenedAt: task.updated_at || task.created_at,
+    })),
+    ...opportunities.map((opportunity) => ({
+      id: `opportunity:${opportunity.id}`,
+      type: "opportunity",
+      title: `Opportunity: ${opportunity.name}`,
+      detail: `${opportunity.stage} · ${formatCents(opportunity.value_cents)} · ${opportunity.confidence}% confidence`,
+      happenedAt: opportunity.updated_at || opportunity.created_at,
+    })),
+    ...enrollments.map((enrollment) => ({
+      id: `enrollment:${enrollment.id}`,
+      type: "sequence",
+      title: `Sequence: ${enrollment.sequence_name}`,
+      detail: `${enrollment.status} · step ${enrollment.current_step_order}`,
+      happenedAt: enrollment.updated_at || enrollment.created_at,
+    })),
+    ...emails.map((email) => ({
+      id: `email:${email.id}`,
+      type: "email",
+      title: `${email.status}: ${email.subject}`,
+      detail: email.sequence_name || "",
       happenedAt: email.sent_at || email.created_at,
     })),
   ];

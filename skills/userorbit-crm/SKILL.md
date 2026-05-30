@@ -83,6 +83,14 @@ GET /api/accounts/<account_id>
 
 Use the returned `timeline`, `contacts`, `opportunities`, `tasks`, and `emails` arrays to understand current context before creating follow-up work or sending email.
 
+Open a contact timeline before enrolling, emailing, or creating person-specific tasks:
+
+```http
+GET /api/contacts/<contact_id>
+```
+
+Use the returned `timeline`, `tasks`, `opportunities`, `enrollments`, and `emails` arrays to avoid duplicate follow-up.
+
 Create a follow-up task:
 
 ```http
