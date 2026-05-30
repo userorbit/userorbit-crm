@@ -32,8 +32,9 @@
 - [x] Add password login with user-managed session tokens.
 - [x] Add explicit workspace memberships and workspace-scoped invite access.
 - [x] Add advanced CSV import column mapping.
+- [x] Add communication activity logging for calls, meetings, messages, and notes.
 - [ ] Add OAuth login, finer-grained permissions, and broader audit coverage.
-- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, native integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, native integrations, and provider-backed communication channels.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.
@@ -80,3 +81,5 @@ Added reply handling: contacts can be marked replied from contact detail or API,
 Restyled the app/lab against Campsite's current open-source design system: neutral gray tokens, 240px workspace sidebar, compact titlebar, dense panels, small rounded buttons, subtle Campsite-style shadows, table/pill/input treatments, and orange brand accent. Verified `src/ui.js` parsing, loaded `/`, unauthenticated `/app`, authenticated dashboard, and Settings on 390px mobile at `http://localhost:8788`, and fixed mobile tables so wide settings/audit tables scroll inside panels without page overflow.
 
 Added advanced CSV import mapping: `POST /api/import/accounts.csv` now accepts JSON `{ csv, mapping }` while keeping `text/csv` compatibility, the Accounts import form exposes column mapping for account/contact/custom fields, and mapped imports still dedupe by domain/name before creating records.
+
+Added communication activity logging: `communication_events` stores calls, meetings, SMS, WhatsApp, and notes, `/api/communications` and `log_communication` create entries, the Communications UI logs/reviews activity, and account/contact timelines include those events.

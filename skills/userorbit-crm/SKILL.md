@@ -79,7 +79,7 @@ POST /api/webhooks
 {
   "name": "Zapier catch hook",
   "url": "https://hooks.example.com/userorbit",
-  "events": ["account.created", "contact.created", "task.created", "email.created"]
+  "events": ["account.created", "contact.created", "task.created", "communication.created", "email.created"]
 }
 ```
 
@@ -269,6 +269,26 @@ Content-Type: application/json
 ```
 
 The merge moves contacts, opportunities, tasks, email activity, and account custom fields that do not already exist on the target account, then deletes the source account.
+
+Log calls, meetings, messages, or notes:
+
+```http
+POST /api/communications
+Content-Type: application/json
+
+{
+  "accountId": "account_id",
+  "contactId": "optional_contact_id",
+  "type": "call",
+  "direction": "outbound",
+  "outcome": "connected",
+  "subject": "Discovery call",
+  "body": "Talked through onboarding launch workflow and next step.",
+  "occurredAt": "2026-05-31T10:00:00.000Z"
+}
+```
+
+Supported `type` values are `call`, `meeting`, `sms`, `whatsapp`, and `note`. The `log_communication` agent command accepts the same fields in `payload`.
 
 Record a parsed inbound reply from an email provider, Cloudflare Email Worker, automation, or agent:
 

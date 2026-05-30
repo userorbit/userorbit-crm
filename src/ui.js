@@ -562,6 +562,7 @@ export const appHtml = String.raw`<!doctype html>
           <button data-view="sequences">Sequences</button>
           <button data-view="warmup">Warmup</button>
           <button data-view="tasks">Tasks</button>
+          <button data-view="communications">Comms</button>
           <button data-view="api">Agent API</button>
           <button data-view="settings">Settings</button>
         </nav>
@@ -595,6 +596,7 @@ export const appHtml = String.raw`<!doctype html>
         sequences: [],
         warmup: null,
         tasks: [],
+        communications: [],
         workspaceTokens: [],
         teamInvitations: [],
         webhooks: { endpoints: [], deliveries: [] },
@@ -650,7 +652,7 @@ export const appHtml = String.raw`<!doctype html>
           storageSet("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -662,12 +664,13 @@ export const appHtml = String.raw`<!doctype html>
           api("sequences"),
           api("warmup"),
           api("tasks"),
+          api("communications"),
           api("workspace-tokens"),
           api("team-invitations"),
           api("webhooks"),
           api("audit-logs"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -694,6 +697,7 @@ export const appHtml = String.raw`<!doctype html>
           sequences: renderSequences,
           warmup: renderWarmup,
           tasks: renderTasks,
+          communications: renderCommunications,
           api: renderApi,
           settings: renderSettings,
         };
@@ -851,6 +855,7 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opportunities", account.opportunities.length)}
             \${metric("Tasks", account.tasks.length)}
             \${metric("Emails", account.emails.length)}
+            \${metric("Comms", account.communications.length)}
             \${metric("Status", escapeHtml(account.status))}
           </div>
           <div class="columns" style="margin-top:14px">
@@ -874,6 +879,8 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
               \${reportTable(["Subject", "Contact", "Direction", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.direction || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
+              <div class="panel-header"><div class="panel-title">Communication activity</div></div>
+              \${communicationTable(account.communications)}
             </div>
           </div>\`;
       }
@@ -903,6 +910,7 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opportunities", contact.opportunities.length)}
             \${metric("Sequences", contact.enrollments.length)}
             \${metric("Emails", contact.emails.length)}
+            \${metric("Comms", contact.communications.length)}
             \${metric("Status", escapeHtml(contact.status))}
           </div>
           <div class="columns" style="margin-top:14px">
@@ -925,6 +933,8 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
               \${reportTable(["Subject", "Direction", "Status", "Sequence", "When"], contact.emails.map((email) => [email.subject, email.direction || "", email.status, email.sequence_name || "", formatDateTime(email.sent_at || email.created_at)]))}
+              <div class="panel-header"><div class="panel-title">Communication activity</div></div>
+              \${communicationTable(contact.communications)}
             </div>
           </div>\`;
       }
@@ -1088,6 +1098,32 @@ export const appHtml = String.raw`<!doctype html>
           </div>\`;
       }
 
+      function renderCommunications() {
+        return header("Communications", "Log calls, meetings, messages, and notes against accounts and contacts.") + \`
+          <div class="columns">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Recent activity</div></div>
+              \${communicationTable(state.communications)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Log activity</div></div>
+              <form id="communicationForm" class="stack">
+                <div class="form-grid">
+                  <label>Type<select name="type"><option value="call">Call</option><option value="meeting">Meeting</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="note">Note</option></select></label>
+                  <label>Direction<select name="direction"><option value="">Not set</option><option value="outbound">Outbound</option><option value="inbound">Inbound</option><option value="internal">Internal</option></select></label>
+                  <label>Outcome<select name="outcome"><option value="">Not set</option><option value="connected">Connected</option><option value="left_message">Left message</option><option value="no_answer">No answer</option><option value="scheduled">Scheduled</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option><option value="positive">Positive</option><option value="negative">Negative</option><option value="neutral">Neutral</option></select></label>
+                  <label>Occurred at<input name="occurredAt" type="datetime-local" /></label>
+                  <label>Account<select name="accountId" required>\${state.accounts.map((account) => '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(account.name) + '</option>').join("")}</select></label>
+                  <label>Contact ID<input name="contactId" placeholder="Optional contact id" /></label>
+                  <label class="full">Subject<input name="subject" required placeholder="Discovery call with Jane" /></label>
+                  <label class="full">Notes<textarea name="body" placeholder="What happened, objections, follow-up, next step"></textarea></label>
+                </div>
+                <button class="button primary">Log activity</button>
+              </form>
+            </div>
+          </div>\`;
+      }
+
       function renderWarmup() {
         const warmup = state.warmup || { mailboxes: [], plans: [], recentMessages: [], summary: {} };
         const summary = warmup.summary || {};
@@ -1175,7 +1211,19 @@ export const appHtml = String.raw`<!doctype html>
             <td><strong>\${escapeHtml(t.title)}</strong><div class="subtitle">\${escapeHtml(t.account_name || t.kind || "")}</div></td>
             <td><span class="pill">\${escapeHtml(t.status)}</span></td>
             <td>\${escapeHtml(t.due_at || "")}</td>
-          </tr>\`).join("")}</tbody></table>\`;
+        </tr>\`).join("")}</tbody></table>\`;
+      }
+
+      function communicationTable(items) {
+        if (!items?.length) return '<div class="empty">No communication activity yet.</div>';
+        return reportTable(["When", "Type", "Subject", "Account", "Contact", "Outcome"], items.map((item) => [
+          formatDateTime(item.occurred_at || item.created_at),
+          item.type,
+          item.subject,
+          item.account_name || "",
+          item.contact_name || item.contact_email || "",
+          [item.direction, item.outcome].filter(Boolean).join(" / "),
+        ]));
       }
 
       function renderApi() {
@@ -1267,7 +1315,7 @@ Content-Type: application/json
                 <form id="webhookForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Zapier catch hook" /></label>
                   <label>URL<input name="url" type="url" required placeholder="https://hooks.example.com/userorbit" /></label>
-                  <label>Events<textarea name="events" placeholder="account.created&#10;contact.created&#10;task.created&#10;email.created"></textarea></label>
+                  <label>Events<textarea name="events" placeholder="account.created&#10;contact.created&#10;task.created&#10;communication.created&#10;email.created"></textarea></label>
                   <button class="button primary">Create webhook</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -1493,6 +1541,26 @@ Content-Type: application/json
           const form = new FormData(event.currentTarget);
           await api("tasks", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           notice("Task created.");
+          await refresh();
+        });
+
+        $("#communicationForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("communications", {
+            method: "POST",
+            body: JSON.stringify({
+              type: form.get("type"),
+              direction: form.get("direction") || undefined,
+              outcome: form.get("outcome") || undefined,
+              occurredAt: form.get("occurredAt") || undefined,
+              accountId: form.get("accountId"),
+              contactId: form.get("contactId") || undefined,
+              subject: form.get("subject"),
+              body: form.get("body"),
+            }),
+          });
+          notice("Communication logged.");
           await refresh();
         });
 

@@ -9,6 +9,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Accounts, contacts, opportunities, and tasks.
 - Account detail timelines with contacts, opportunities, tasks, and email activity.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
+- Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
 - Pipeline board with workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending, inbound reply capture, and scheduled sequence processing.
@@ -18,7 +19,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Auth-gated app access with a bootstrap admin token and workspace-scoped agent tokens.
 - Users, team memberships, workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
 - Workspace token revocation and audit logs for admin operations.
-- Workspace webhooks for account, contact, task, and email events.
+- Workspace webhooks for account, contact, task, communication, and email events.
 - Account custom fields for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
 - Reporting for pipeline health, weighted forecast, activity, task aging, sequence performance, and stalled opportunities.
@@ -221,5 +222,6 @@ Supported commands:
 - `run_sequences`
 - `run_warmup`
 - `create_task`
+- `log_communication`
 
 When SMTP credentials are missing, emails are recorded with status `drafted` instead of being sent. This keeps local development safe.

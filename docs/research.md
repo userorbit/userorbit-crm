@@ -52,10 +52,10 @@ Close-style CRMs commonly center on:
 
 ## Current UserOrbit CRM coverage
 
-- Present: accounts, account custom fields, custom-field filtering/reporting, contacts, account detail timelines, contact detail timelines, saved account views, duplicate-aware CSV import/export with column mapping, duplicate account watchlist and merge workflow, opportunities, workspace-configurable pipeline stages, pipeline board, tasks, email templates, sequences, manual sends, parsed inbound reply capture, scheduled sequence processing, unsubscribe handling, manual reply detection, sequence pause-on-reply, mailbox warmup, REST API, agent command API, webhooks, landing page, token-gated UI, password login, users, team memberships, workspace memberships, team invitations, teams, workspaces, workspace-scoped agent tokens, token revocation, audit logs, and reporting for pipeline health/forecast/activity/tasks/sequences/stalled opportunities.
+- Present: accounts, account custom fields, custom-field filtering/reporting, contacts, account detail timelines, contact detail timelines, saved account views, duplicate-aware CSV import/export with column mapping, duplicate account watchlist and merge workflow, opportunities, workspace-configurable pipeline stages, pipeline board, tasks, communication activity logging, email templates, sequences, manual sends, parsed inbound reply capture, scheduled sequence processing, unsubscribe handling, manual reply detection, sequence pause-on-reply, mailbox warmup, REST API, agent command API, webhooks, landing page, token-gated UI, password login, users, team memberships, workspace memberships, team invitations, teams, workspaces, workspace-scoped agent tokens, token revocation, audit logs, and reporting for pipeline health/forecast/activity/tasks/sequences/stalled opportunities.
 - Partial: pipeline management exists as a configurable board with stage and forecast reports but lacks conversion analytics.
 - Partial: email exists through outbound SMTP, stored events, parsed inbound reply ingestion, unsubscribe handling, and manual reply handling but lacks provider-native IMAP/Gmail/Outlook sync, tracking, and mailbox rotation.
-- Missing: native calling, power dialer, SMS/WhatsApp, meetings, OAuth login, fine-grained field/action permissions, native third-party integrations, and AI enrichment/notes.
+- Missing: native calling, power dialer, provider-native SMS/WhatsApp, meeting/calendar sync, OAuth login, fine-grained field/action permissions, native third-party integrations, and AI enrichment/notes.
 
 ## Recommended build order
 
@@ -65,4 +65,4 @@ Close-style CRMs commonly center on:
 4. Build email depth: provider-native inbound sync, deliverability limits, tracking settings, template variables, and mailbox rotation.
 5. Deepen reporting: rep-level performance, conversion rates, dashboard customization, and saved report filters.
 6. Add integrations and AI: calendar/meeting capture, enrichment providers, AI research summaries, draft generation, call/meeting notes, and next-best actions.
-7. Consider communication expansion: SMS/WhatsApp and dialer integrations before native telephony, because native calling has heavier compliance and infrastructure requirements.
+7. Consider communication expansion: SMS/WhatsApp and dialer provider integrations before native telephony, because native calling has heavier compliance and infrastructure requirements.

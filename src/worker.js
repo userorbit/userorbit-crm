@@ -24,6 +24,9 @@ const WARMUP_INTERACTIONS = new Set(["inbox", "spam", "not_spam", "reply", "impo
 const CUSTOM_FIELD_ENTITIES = new Set(["account"]);
 const CUSTOM_FIELD_TYPES = new Set(["text", "number", "date", "select", "url"]);
 const TEAM_ROLES = new Set(["owner", "admin", "member"]);
+const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
+const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
+const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 
 export default {
   async fetch(request, env) {
@@ -233,6 +236,14 @@ async function routeApi(request, env, url, auth) {
     return json(await createTask(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
+  if (request.method === "GET" && path === "communications") {
+    return json(await listCommunications(env, workspaceId));
+  }
+
+  if (request.method === "POST" && path === "communications") {
+    return json(await createCommunication(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
   if (request.method === "PATCH" && path.startsWith("tasks/")) {
     return json(await updateTask(env, path.split("/")[1], await readJson(request)));
   }
@@ -283,7 +294,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "agent/command") {
-    return json(await runAgentCommand(env, { ...(await readJson(request)), workspaceId }));
+    return json(await runAgentCommand(env, { ...(await readJson(request)), workspaceId }, auth));
   }
 
   return json({ error: "Not found" }, 404);
@@ -1163,6 +1174,62 @@ async function createTask(env, input) {
   return task;
 }
 
+async function listCommunications(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT ce.*, a.name AS account_name, c.name AS contact_name, c.email AS contact_email, u.name AS created_by_name
+    FROM communication_events ce
+    JOIN accounts a ON a.id = ce.account_id
+    LEFT JOIN contacts c ON c.id = ce.contact_id
+    LEFT JOIN users u ON u.id = ce.created_by_user_id
+    WHERE ce.workspace_id = ?
+    ORDER BY ce.occurred_at DESC
+    LIMIT 100
+  `).bind(workspaceId).all();
+  return rows.results;
+}
+
+async function createCommunication(env, input, auth) {
+  requireFields(input, ["accountId", "type", "subject"]);
+  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
+  const contactId = cleanNullable(input.contactId);
+  if (contactId) {
+    await getRequired(env, "SELECT id FROM contacts WHERE id = ? AND account_id = ?", contactId, account.id);
+  }
+  const type = normalizeEnum(input.type, COMMUNICATION_TYPES, "type");
+  const direction = input.direction ? normalizeEnum(input.direction, COMMUNICATION_DIRECTIONS, "direction") : null;
+  const outcome = input.outcome ? normalizeEnum(input.outcome, COMMUNICATION_OUTCOMES, "outcome") : null;
+  const now = new Date().toISOString();
+  const occurredAt = cleanNullable(input.occurredAt) || now;
+  const id = input.id || crypto.randomUUID();
+
+  await env.DB.prepare(`
+    INSERT INTO communication_events (
+      id, workspace_id, account_id, contact_id, created_by_user_id,
+      type, direction, outcome, subject, body, occurred_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    account.id,
+    contactId,
+    auth.user.id,
+    type,
+    direction,
+    outcome,
+    input.subject.trim(),
+    cleanNullable(input.body || input.notes),
+    occurredAt,
+    now,
+    now,
+  ).run();
+
+  const event = await getRequired(env, "SELECT * FROM communication_events WHERE id = ?", id);
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "communication.create", resource: "communication_event", resourceId: id, metadata: { type, accountId: account.id, contactId } });
+  await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
+  return event;
+}
+
 async function updateTask(env, id, input) {
   const task = await getRequired(env, "SELECT * FROM tasks WHERE id = ?", id);
   await env.DB.prepare(`
@@ -1714,7 +1781,7 @@ async function recordWarmupInteraction(env, messageId, input) {
   return getRequired(env, "SELECT * FROM warmup_interactions WHERE id = ?", id);
 }
 
-async function runAgentCommand(env, input) {
+async function runAgentCommand(env, input, auth) {
   if (input.command === "create_account") {
     return { result: await createAccount(env, { ...(input.account || input.payload || {}), workspaceId: input.workspaceId }) };
   }
@@ -1732,6 +1799,9 @@ async function runAgentCommand(env, input) {
   }
   if (input.command === "create_task") {
     return { result: await createTask(env, { ...(input.payload || {}), workspaceId: input.workspaceId }) };
+  }
+  if (input.command === "log_communication") {
+    return { result: await createCommunication(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   throw httpError(400, "Unsupported agent command");
 }
@@ -2304,7 +2374,7 @@ async function maybeCompleteWarmupPlan(env, planId) {
 
 async function getAccount(env, id, workspaceId) {
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, workspaceId);
-  const [contacts, opportunities, tasks, emails, customFields] = await Promise.all([
+  const [contacts, opportunities, tasks, emails, communications, customFields] = await Promise.all([
     env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare("SELECT * FROM opportunities WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
     env.DB.prepare(`
@@ -2323,6 +2393,15 @@ async function getAccount(env, id, workspaceId) {
       ORDER BY ee.created_at DESC
       LIMIT 100
     `).bind(id).all(),
+    env.DB.prepare(`
+      SELECT ce.*, c.name AS contact_name, c.email AS contact_email, u.name AS created_by_name
+      FROM communication_events ce
+      LEFT JOIN contacts c ON c.id = ce.contact_id
+      LEFT JOIN users u ON u.id = ce.created_by_user_id
+      WHERE ce.account_id = ? AND ce.workspace_id = ?
+      ORDER BY ce.occurred_at DESC
+      LIMIT 100
+    `).bind(id, workspaceId).all(),
     getCustomFieldValues(env, workspaceId, "account", id),
   ]);
 
@@ -2332,8 +2411,9 @@ async function getAccount(env, id, workspaceId) {
     opportunities: opportunities.results,
     tasks: tasks.results,
     emails: emails.results,
+    communications: communications.results,
     customFields,
-    timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results }),
+    timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results, communications: communications.results }),
   };
 }
 
@@ -2347,7 +2427,7 @@ async function getContact(env, id, workspaceId) {
     id,
     workspaceId,
   );
-  const [tasks, opportunities, enrollments, emails] = await Promise.all([
+  const [tasks, opportunities, enrollments, emails, communications] = await Promise.all([
     env.DB.prepare(`
       SELECT * FROM tasks
       WHERE contact_id = ? AND workspace_id = ?
@@ -2373,6 +2453,14 @@ async function getContact(env, id, workspaceId) {
       ORDER BY ee.created_at DESC
       LIMIT 100
     `).bind(id).all(),
+    env.DB.prepare(`
+      SELECT ce.*, u.name AS created_by_name
+      FROM communication_events ce
+      LEFT JOIN users u ON u.id = ce.created_by_user_id
+      WHERE ce.contact_id = ? AND ce.workspace_id = ?
+      ORDER BY ce.occurred_at DESC
+      LIMIT 100
+    `).bind(id, workspaceId).all(),
   ]);
   return {
     ...contact,
@@ -2380,7 +2468,8 @@ async function getContact(env, id, workspaceId) {
     opportunities: opportunities.results,
     enrollments: enrollments.results,
     emails: emails.results,
-    timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results }),
+    communications: communications.results,
+    timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results, communications: communications.results }),
   };
 }
 
@@ -2425,7 +2514,7 @@ function normalizeCustomFieldValue(field, value) {
   return String(value).trim();
 }
 
-function buildAccountTimeline({ account, contacts, opportunities, tasks, emails }) {
+function buildAccountTimeline({ account, contacts, opportunities, tasks, emails, communications = [] }) {
   const items = [
     {
       id: `account:${account.id}`,
@@ -2462,11 +2551,18 @@ function buildAccountTimeline({ account, contacts, opportunities, tasks, emails 
       detail: [email.contact_name || email.contact_email, email.sequence_name].filter(Boolean).join(" · "),
       happenedAt: email.sent_at || email.created_at,
     })),
+    ...communications.map((event) => ({
+      id: `communication:${event.id}`,
+      type: event.type,
+      title: event.subject,
+      detail: [event.contact_name || event.contact_email, event.direction, event.outcome, event.created_by_name].filter(Boolean).join(" · "),
+      happenedAt: event.occurred_at || event.created_at,
+    })),
   ];
   return items.sort((a, b) => String(b.happenedAt || "").localeCompare(String(a.happenedAt || "")));
 }
 
-function buildContactTimeline({ contact, tasks, opportunities, enrollments, emails }) {
+function buildContactTimeline({ contact, tasks, opportunities, enrollments, emails, communications = [] }) {
   const items = [
     {
       id: `contact:${contact.id}`,
@@ -2502,6 +2598,13 @@ function buildContactTimeline({ contact, tasks, opportunities, enrollments, emai
       title: `${email.status}: ${email.subject}`,
       detail: email.sequence_name || "",
       happenedAt: email.sent_at || email.created_at,
+    })),
+    ...communications.map((event) => ({
+      id: `communication:${event.id}`,
+      type: event.type,
+      title: event.subject,
+      detail: [event.direction, event.outcome, event.created_by_name].filter(Boolean).join(" · "),
+      happenedAt: event.occurred_at || event.created_at,
     })),
   ];
   return items.sort((a, b) => String(b.happenedAt || "").localeCompare(String(a.happenedAt || "")));
