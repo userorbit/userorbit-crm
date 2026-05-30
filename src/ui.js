@@ -564,6 +564,7 @@ export const appHtml = String.raw`<!doctype html>
           <button data-view="tasks">Tasks</button>
           <button data-view="communications">Comms</button>
           <button data-view="calendar">Calendar</button>
+          <button data-view="forms">Forms</button>
           <button data-view="api">Agent API</button>
           <button data-view="settings">Settings</button>
         </nav>
@@ -599,6 +600,7 @@ export const appHtml = String.raw`<!doctype html>
         tasks: [],
         communications: [],
         calendarEvents: [],
+        leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
         workspaceTokens: [],
         teamInvitations: [],
@@ -656,7 +658,7 @@ export const appHtml = String.raw`<!doctype html>
         }
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -671,12 +673,13 @@ export const appHtml = String.raw`<!doctype html>
           api("communications"),
           api("calendar/events"),
           api("email/settings"),
+          canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -705,6 +708,7 @@ export const appHtml = String.raw`<!doctype html>
           tasks: renderTasks,
           communications: renderCommunications,
           calendar: renderCalendar,
+          forms: renderForms,
           api: renderApi,
           settings: renderSettings,
         };
@@ -1212,6 +1216,48 @@ export const appHtml = String.raw`<!doctype html>
           </div>\`;
       }
 
+      function renderForms() {
+        const canManage = canManageCurrentWorkspace();
+        if (!canManage) return header("Forms", "Capture inbound leads from public forms.") + '<div class="panel"><div class="empty">Only workspace owners and admins can manage lead forms.</div></div>';
+        return header("Forms", "Create public lead capture forms that route submissions into this workspace.") + \`
+          <div class="columns">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Lead forms</div></div>
+              \${leadFormsTable(state.leadForms)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Create form</div></div>
+              <form id="leadFormCreate" class="stack">
+                <div class="form-grid">
+                  <label>Name<input name="name" required placeholder="Website demo request" /></label>
+                  <label>Source<input name="source" placeholder="Website form" /></label>
+                  <label>Default owner<input name="defaultOwner" placeholder="Sales" /></label>
+                  <label>Segment<select name="defaultSegment"><option value="growth">Growth</option><option value="product">Product</option><option value="success">Success</option></select></label>
+                  <label>Status<select name="defaultStatus"><option value="target">Target</option><option value="researching">Researching</option><option value="contacted">Contacted</option><option value="qualified">Qualified</option></select></label>
+                </div>
+                <button class="button primary">Create form</button>
+              </form>
+            </div>
+          </div>\`;
+      }
+
+      function leadFormsTable(forms) {
+        if (!forms.length) return '<div class="empty">No lead forms yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>URL</th><th>Defaults</th><th>Submissions</th><th></th></tr></thead>
+          <tbody>\${forms.map((form) => {
+            const url = location.origin + "/forms/" + encodeURIComponent(form.public_key);
+            return \`<tr>
+              <td>\${escapeHtml(form.name)}<div class="subtitle">\${escapeHtml(form.status)}</div></td>
+              <td><a href="\${escapeHtml(url)}" target="_blank" rel="noreferrer">\${escapeHtml(url)}</a></td>
+              <td>\${escapeHtml([form.source, form.default_segment, form.default_status].filter(Boolean).join(" / "))}</td>
+              <td>\${escapeHtml(form.submissions || 0)}</td>
+              <td>\${form.status === "active" ? '<button class="button" data-disable-lead-form-id="' + escapeHtml(form.id) + '">Disable</button>' : ""}</td>
+            </tr>\`;
+          }).join("")}</tbody>
+        </table>\`;
+      }
+
       function renderWarmup() {
         const warmup = state.warmup || { mailboxes: [], plans: [], recentMessages: [], summary: {} };
         const summary = warmup.summary || {};
@@ -1700,6 +1746,29 @@ Content-Type: application/json
           notice("Imported " + result.imported + " calendar event(s).");
           await refresh();
         });
+
+        $("#leadFormCreate")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("lead-forms", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              source: form.get("source") || undefined,
+              defaultOwner: form.get("defaultOwner") || undefined,
+              defaultSegment: form.get("defaultSegment"),
+              defaultStatus: form.get("defaultStatus"),
+            }),
+          });
+          notice("Lead form created.");
+          await refresh();
+        });
+
+        document.querySelectorAll("[data-disable-lead-form-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("lead-forms/" + encodeURIComponent(node.dataset.disableLeadFormId), { method: "DELETE" });
+          notice("Lead form disabled.");
+          await refresh();
+        }));
 
         $("#enrollForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();

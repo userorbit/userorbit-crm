@@ -56,6 +56,10 @@ export default {
         return await recordEmailClick(env, url.pathname.split("/").pop(), url.searchParams.get("u"));
       }
 
+      if (url.pathname.startsWith("/forms/")) {
+        return await handlePublicLeadForm(request, env, url);
+      }
+
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
         return json(await loginWithPassword(env, await readJson(request)));
       }
@@ -119,6 +123,20 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "webhooks") {
     return json(await listWebhooks(env, workspaceId, auth));
+  }
+
+  if (request.method === "GET" && path === "lead-forms") {
+    return json(await listLeadForms(env, workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "lead-forms") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createLeadForm(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("lead-forms/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableLeadForm(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "GET" && path === "email/settings") {
@@ -848,6 +866,68 @@ async function createSavedView(env, input, auth) {
   return { ...(await getRequired(env, "SELECT * FROM saved_views WHERE id = ?", id)), filters };
 }
 
+async function listLeadForms(env, workspaceId, auth) {
+  await requireWorkspaceAdmin(env, auth, workspaceId);
+  const rows = await env.DB.prepare(`
+    SELECT lf.*, COUNT(lfs.id) AS submissions
+    FROM lead_forms lf
+    LEFT JOIN lead_form_submissions lfs ON lfs.form_id = lf.id
+    WHERE lf.workspace_id = ?
+    GROUP BY lf.id
+    ORDER BY lf.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results;
+}
+
+async function createLeadForm(env, input, auth) {
+  requireFields(input, ["name"]);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  const slug = await uniqueLeadFormSlug(env, input.workspaceId, input.slug || input.name);
+  const publicKey = crypto.randomUUID().replaceAll("-", "");
+  const segment = normalizeEnum(input.defaultSegment || input.default_segment || "growth", SEGMENTS, "defaultSegment");
+  const status = normalizeEnum(input.defaultStatus || input.default_status || "target", ACCOUNT_STATUSES, "defaultStatus");
+  await env.DB.prepare(`
+    INSERT INTO lead_forms (id, workspace_id, created_by_user_id, name, slug, public_key, source, default_owner, default_segment, default_status, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    auth.user.id,
+    input.name.trim(),
+    slug,
+    publicKey,
+    cleanNullable(input.source),
+    cleanNullable(input.defaultOwner || input.default_owner),
+    segment,
+    status,
+    now,
+    now,
+  ).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "lead_form.create", resource: "lead_form", resourceId: id, metadata: { name: input.name, slug } });
+  return getRequired(env, "SELECT * FROM lead_forms WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+}
+
+async function disableLeadForm(env, id, workspaceId, auth) {
+  const existing = await getRequired(env, "SELECT * FROM lead_forms WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  await env.DB.prepare("UPDATE lead_forms SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?")
+    .bind(new Date().toISOString(), id, workspaceId)
+    .run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "lead_form.disable", resource: "lead_form", resourceId: id, metadata: { name: existing.name } });
+  return { ok: true };
+}
+
+async function uniqueLeadFormSlug(env, workspaceId, value) {
+  const base = slugify(value || "lead-form");
+  let candidate = base;
+  for (let index = 2; index < 100; index += 1) {
+    const existing = await env.DB.prepare("SELECT id FROM lead_forms WHERE workspace_id = ? AND slug = ?").bind(workspaceId, candidate).first();
+    if (!existing) return candidate;
+    candidate = `${base}-${index}`;
+  }
+  return `${base}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
 async function deleteSavedView(env, id, workspaceId, auth) {
   await env.DB.prepare("DELETE FROM saved_views WHERE id = ? AND workspace_id = ? AND user_id = ?")
     .bind(id, workspaceId, auth.user.id)
@@ -1149,6 +1229,72 @@ async function createAccount(env, input) {
   const account = await getAccount(env, id, workspaceId);
   await deliverWebhooks(env, workspaceId, "account.created", account.id, account);
   return account;
+}
+
+async function handlePublicLeadForm(request, env, url) {
+  if (!["GET", "POST"].includes(request.method)) return json({ error: "Not found" }, 404);
+  const key = decodeURIComponent(url.pathname.replace(/^\/forms\/?/, "").split("/")[0] || "");
+  const form = await env.DB.prepare("SELECT * FROM lead_forms WHERE (public_key = ? OR slug = ?) AND status = 'active' ORDER BY created_at ASC LIMIT 1").bind(key, key).first();
+  if (!form) return request.method === "GET" ? htmlResponse(leadFormNotFoundHtml()) : json({ error: "Lead form not found" }, 404);
+  if (request.method === "GET") return htmlResponse(publicLeadFormHtml(form));
+  const input = await readLeadFormSubmission(request);
+  const result = await submitLeadForm(env, form, input, request);
+  if (acceptsHtml(request)) return htmlResponse(leadFormSuccessHtml(form));
+  return json(result, 201);
+}
+
+async function readLeadFormSubmission(request) {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return readJson(request);
+  const form = await request.formData();
+  return Object.fromEntries(form.entries());
+}
+
+async function submitLeadForm(env, form, input, request) {
+  if (cleanNullable(input.website)) return { ok: true, skipped: true };
+  const accountName = cleanNullable(input.accountName || input.company || input.name);
+  const domain = cleanDomain(input.domain || input.websiteUrl);
+  const contactName = cleanNullable(input.contactName || input.fullName || input.personName);
+  const email = cleanEmail(input.email);
+  if (!accountName && !domain) throw httpError(400, "Company name or domain is required");
+  if (!contactName) throw httpError(400, "Contact name is required");
+  if (!email) throw httpError(400, "Email is required");
+  const accountInput = {
+    name: accountName || domain,
+    domain,
+    segment: form.default_segment,
+    status: form.default_status,
+    source: form.source || `Lead form: ${form.name}`,
+    owner: form.default_owner,
+    observation: cleanNullable(input.message || input.notes),
+  };
+  const existing = await findImportAccountMatch(env, form.workspace_id, accountInput);
+  const account = existing || await createAccount(env, { ...accountInput, workspaceId: form.workspace_id });
+  const contactResult = await createImportContactIfMissing(env, form.workspace_id, account.id, {
+    name: contactName,
+    email,
+    title: cleanNullable(input.title),
+  });
+  const submissionId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO lead_form_submissions (id, workspace_id, form_id, account_id, contact_id, payload_json, remote_ip, user_agent, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    submissionId,
+    form.workspace_id,
+    form.id,
+    account.id,
+    contactResult.id || null,
+    JSON.stringify({ ...input, email }),
+    cleanNullable(request.headers.get("cf-connecting-ip")),
+    cleanNullable(request.headers.get("user-agent")),
+    now,
+  ).run();
+  await recordAuditLog(env, { workspaceId: form.workspace_id, userId: null, action: "lead_form.submit", resource: "lead_form_submission", resourceId: submissionId, metadata: { formId: form.id, accountId: account.id, contactId: contactResult.id || null, contactAction: contactResult.action } });
+  const payload = { id: submissionId, form, account, contact: contactResult, submittedAt: now };
+  await deliverWebhooks(env, form.workspace_id, "lead_form.submitted", submissionId, payload);
+  return { ok: true, submissionId, accountId: account.id, contactId: contactResult.id || null, accountAction: existing ? "matched" : "created", contactAction: contactResult.action };
 }
 
 async function updateAccount(env, id, input) {
@@ -3499,6 +3645,61 @@ function cleanDomain(value) {
   return cleaned ? cleaned.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "") : "";
 }
 
+function acceptsHtml(request) {
+  return (request.headers.get("accept") || "").includes("text/html");
+}
+
+function htmlResponse(body, status = 200) {
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+function leadFormNotFoundHtml() {
+  return "<!doctype html><html><head><meta charset=\"utf-8\"><title>Lead form not found</title></head><body><h1>Lead form not found</h1></body></html>";
+}
+
+function publicLeadFormHtml(form) {
+  const title = escapeHtmlText(form.name);
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f4ef; color: #1f2933; }
+    main { max-width: 560px; margin: 8vh auto; padding: 24px; }
+    form { display: grid; gap: 14px; background: #fff; border: 1px solid #d9d5ca; border-radius: 8px; padding: 24px; }
+    h1 { margin: 0 0 18px; font-size: 30px; }
+    label { display: grid; gap: 6px; font-size: 14px; font-weight: 650; }
+    input, textarea { box-sizing: border-box; width: 100%; border: 1px solid #c7c1b5; border-radius: 6px; padding: 11px 12px; font: inherit; }
+    textarea { min-height: 110px; resize: vertical; }
+    button { border: 0; border-radius: 6px; padding: 12px 14px; background: #0f766e; color: #fff; font: inherit; font-weight: 750; cursor: pointer; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${title}</h1>
+    <form method="post">
+      <label>Company<input name="company" required autocomplete="organization" /></label>
+      <label>Domain<input name="domain" placeholder="example.com" /></label>
+      <label>Your name<input name="contactName" required autocomplete="name" /></label>
+      <label>Email<input name="email" type="email" required autocomplete="email" /></label>
+      <label>Title<input name="title" autocomplete="organization-title" /></label>
+      <label>Message<textarea name="message"></textarea></label>
+      <label class="hidden">Website<input name="website" tabindex="-1" autocomplete="off" /></label>
+      <button>Submit</button>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+function leadFormSuccessHtml(form) {
+  const title = escapeHtmlText(form.name);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>body{font-family:Inter,ui-sans-serif,system-ui;margin:0;background:#f6f4ef;color:#1f2933}main{max-width:560px;margin:10vh auto;padding:24px}section{background:#fff;border:1px solid #d9d5ca;border-radius:8px;padding:24px}h1{margin-top:0}</style></head><body><main><section><h1>Thanks</h1><p>Your details were sent.</p></section></main></body></html>`;
+}
+
 function safeTrackingRedirect(value) {
   const decoded = cleanNullable(value);
   if (!decoded) return null;
@@ -3529,6 +3730,10 @@ function slugify(value) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 48) || "workspace";
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
 function clampInteger(value, min, max, field) {

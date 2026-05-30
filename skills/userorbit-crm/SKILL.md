@@ -81,7 +81,7 @@ POST /api/webhooks
 {
   "name": "Zapier catch hook",
   "url": "https://hooks.example.com/userorbit",
-  "events": ["account.created", "contact.created", "task.created", "communication.created", "email.created"]
+  "events": ["account.created", "contact.created", "task.created", "communication.created", "email.created", "lead_form.submitted"]
 }
 ```
 
@@ -126,6 +126,44 @@ Content-Type: application/json
 ```
 
 Tracking is off by default. Enable it only when the workspace has a correct public Worker URL configured with `CRM_PUBLIC_URL` so sequence emails can produce valid tracking links.
+
+Create a public lead capture form:
+
+```http
+POST /api/lead-forms
+
+{
+  "name": "Website demo request",
+  "source": "Website form",
+  "defaultOwner": "Sales",
+  "defaultSegment": "growth",
+  "defaultStatus": "target"
+}
+```
+
+List forms and share the returned `/forms/<public_key>` URL:
+
+```http
+GET /api/lead-forms
+```
+
+Public form submissions do not require authentication. Browser users can submit the hosted form, and agents or external sites can send JSON to the same URL:
+
+```http
+POST /forms/<public_key>
+Content-Type: application/json
+
+{
+  "company": "Acme SaaS",
+  "domain": "acme.com",
+  "contactName": "Jane Doe",
+  "email": "jane@acme.com",
+  "title": "Head of Product",
+  "message": "Interested in a demo"
+}
+```
+
+Submissions match existing accounts by domain/name, create the contact when the email is new, record an audit event, and emit `lead_form.submitted` webhooks. Disable a form with `DELETE /api/lead-forms/<form_id>`.
 
 ## Core Workflow
 

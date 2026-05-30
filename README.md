@@ -11,6 +11,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
 - Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
 - Calendar meeting capture with manual entry and ICS import.
+- Public lead capture forms that create or match accounts and contacts.
 - Pipeline board with workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending, inbound reply capture, and scheduled sequence processing.
@@ -21,7 +22,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Auth-gated app access with a bootstrap admin token and workspace-scoped agent tokens.
 - Users, role-based team/workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
 - Workspace token revocation and audit logs for admin operations.
-- Workspace webhooks for account, contact, task, communication, and email events.
+- Workspace webhooks for account, contact, task, communication, email, and lead form events.
 - Account custom fields for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
 - Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, and stalled opportunities.
@@ -198,6 +199,22 @@ curl -X PATCH http://localhost:8787/api/email/settings \
 ```
 
 Email tracking is workspace-scoped and off by default. Opens and clicks are counted on email activity, account/contact detail, and reports.
+
+### Create a lead form
+
+```sh
+curl -X POST http://localhost:8787/api/lead-forms \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Website demo request",
+    "source": "Website form",
+    "defaultSegment": "growth",
+    "defaultStatus": "target"
+  }'
+```
+
+Share the returned `/forms/<public_key>` URL. Public submissions create or match an account by domain/name, add the contact when the email is new, record a submission, and emit `lead_form.submitted` webhooks.
 
 ### Get reports
 
