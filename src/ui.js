@@ -605,6 +605,9 @@ export const appHtml = String.raw`<!doctype html>
         accounts: [],
         accountFilters: { q: "", segment: "", status: "", customFields: {} },
         savedViews: [],
+        reportViews: [],
+        selectedReportViewId: storageGet("crmReportViewId") || "",
+        reportFilters: { sections: ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"] },
         dashboardPreferences: { widgets: ["metrics", "priority_accounts", "due_tasks"] },
         customFields: [],
         selectedSavedViewId: storageGet("crmSavedViewId") || "",
@@ -727,10 +730,11 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
+          api("saved-views?resource=reports"),
           api("dashboard/preferences"),
           api("custom-fields?entity=account"),
           api("reports"),
@@ -758,7 +762,11 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        if (state.selectedReportViewId && !reportViews.some((view) => view.id === state.selectedReportViewId)) {
+          state.selectedReportViewId = "";
+          storageRemove("crmReportViewId");
+        }
+        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1157,12 +1165,30 @@ export const appHtml = String.raw`<!doctype html>
 
       function renderReports() {
         const reports = state.reports || { pipeline: [], forecast: [], accountStatus: [], taskStatus: [], sequencePerformance: [], activity: {}, stalledOpportunities: [], ownerPerformance: [], sourceConversion: [] };
+        const sections = reportSections();
         const pipelineValue = reports.pipeline.reduce((total, row) => total + Number(row.value_cents || 0), 0);
         const forecastValue = reports.forecast.reduce((total, row) => total + Number(row.weighted_value_cents || 0), 0);
         const overdueTasks = reports.taskStatus.reduce((total, row) => total + Number(row.overdue || 0), 0);
         const emails = reports.activity || {};
         return header("Reports", "Track pipeline health, forecast, outbound activity, and stalled deals.") + \`
-          <div class="grid metrics">
+          <div class="panel" style="margin:16px">
+            <div class="panel-header"><div class="panel-title">Report view</div></div>
+            <form id="reportViewForm" class="stack" style="padding:0">
+              <div class="toolbar">
+                <select id="reportViewSelect">
+                  <option value="">Current sections</option>
+                  \${state.reportViews.map((view) => '<option value="' + escapeHtml(view.id) + '">' + escapeHtml(view.name) + '</option>').join("")}
+                </select>
+                <input name="name" placeholder="Save as..." />
+                <button class="button primary">Save view</button>
+                \${state.selectedReportViewId ? '<button type="button" class="button" id="deleteReportView">Delete view</button>' : ""}
+              </div>
+              <div class="form-grid">
+                \${reportSectionOptions().map((section) => '<label><input name="sections" type="checkbox" value="' + escapeHtml(section.key) + '"' + (sections.includes(section.key) ? " checked" : "") + " /> " + escapeHtml(section.label) + '</label>').join("")}
+              </div>
+            </form>
+          </div>
+          \${sections.includes("metrics") ? \`<div class="grid metrics">
             \${metric("Pipeline value", money(pipelineValue))}
             \${metric("Weighted forecast", money(forecastValue))}
             \${metric("Emails", emails.emails || 0)}
@@ -1170,44 +1196,50 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opens", emails.opens || 0)}
             \${metric("Clicks", emails.clicks || 0)}
             \${metric("Overdue tasks", overdueTasks)}
-          </div>
-          <div class="columns" style="margin-top:14px">
+          </div>\` : ""}
+          \${sections.some((section) => ["pipeline", "forecast"].includes(section)) ? \`<div class="columns" style="margin-top:14px">
+            \${sections.includes("pipeline") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Pipeline by stage</div></div>
               \${reportTable(["Stage", "Deals", "Value", "Confidence"], reports.pipeline.map((row) => [row.stage_label || row.stage, row.opportunities, money(row.value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
-            </div>
+            </div>\` : ""}
+            \${sections.includes("forecast") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Forecast by close month</div></div>
               \${reportTable(["Close month", "Deals", "Value", "Weighted", "Confidence"], reports.forecast.map((row) => [row.period, row.opportunities, money(row.value_cents), money(row.weighted_value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
-            </div>
-          </div>
-          <div class="columns" style="margin-top:14px">
+            </div>\` : ""}
+          </div>\` : ""}
+          \${sections.some((section) => ["account_status", "sequence_performance"].includes(section)) ? \`<div class="columns" style="margin-top:14px">
+            \${sections.includes("account_status") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Account status</div></div>
               \${reportTable(["Status", "Accounts"], reports.accountStatus.map((row) => [row.status, row.accounts]))}
-            </div>
+            </div>\` : ""}
+            \${sections.includes("sequence_performance") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Sequence performance</div></div>
               \${reportTable(["Sequence", "Enrollments", "Sent", "Opened", "Clicked", "Failed"], reports.sequencePerformance.map((row) => [row.name, row.enrollments || 0, row.sent || 0, row.opened || 0, row.clicked || 0, row.failed || 0]))}
-            </div>
-          </div>
-          <div class="columns" style="margin-top:14px">
+            </div>\` : ""}
+          </div>\` : ""}
+          \${sections.some((section) => ["owner_performance", "source_conversion"].includes(section)) ? \`<div class="columns" style="margin-top:14px">
+            \${sections.includes("owner_performance") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Owner performance</div></div>
               \${reportTable(["Owner", "Accounts", "Contacts", "Emails", "Open pipeline", "Won", "Open tasks"], reports.ownerPerformance.map((row) => [row.owner, row.accounts || 0, row.contacts || 0, row.emails || 0, money(row.open_pipeline_cents || 0), money(row.won_value_cents || 0), row.open_tasks || 0]))}
-            </div>
+            </div>\` : ""}
+            \${sections.includes("source_conversion") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Source conversion</div></div>
               \${reportTable(["Source", "Accounts", "Contacted", "Replied", "Qualified", "Won", "Won value"], reports.sourceConversion.map((row) => [row.source, row.accounts || 0, percent(row.contacted_accounts, row.accounts), percent(row.replied_accounts, row.accounts), percent(row.qualified_accounts, row.accounts), row.won_opportunities || 0, money(row.won_value_cents || 0)]))}
-            </div>
-          </div>
-          <div class="columns" style="margin-top:14px">
+            </div>\` : ""}
+          </div>\` : ""}
+          \${sections.includes("stalled_opportunities") ? \`<div class="columns" style="margin-top:14px">
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Stalled opportunities</div></div>
               \${reportTable(["Opportunity", "Account", "Stage", "Value", "Last activity"], reports.stalledOpportunities.map((row) => [row.name, row.account_name, row.stage, money(row.value_cents), row.last_activity_at || "No activity"]))}
             </div>
-          </div>
-          \${customFieldReportPanels(reports.customFieldBreakdowns || [])}\`;
+          </div>\` : ""}
+          \${sections.includes("custom_fields") ? customFieldReportPanels(reports.customFieldBreakdowns || []) : ""}\`;
       }
 
       function reportTable(headers, rows) {
@@ -1986,6 +2018,7 @@ Content-Type: application/json
 
       function bind() {
         if ($("#savedViewSelect")) $("#savedViewSelect").value = state.selectedSavedViewId;
+        if ($("#reportViewSelect")) $("#reportViewSelect").value = state.selectedReportViewId;
         if ($("#accountSegment")) $("#accountSegment").value = state.accountFilters.segment;
         if ($("#accountStatus")) $("#accountStatus").value = state.accountFilters.status;
         for (const [key, value] of Object.entries(state.accountFilters.customFields || {})) {
@@ -2045,6 +2078,43 @@ Content-Type: application/json
             body: JSON.stringify({ widgets: form.getAll("widgets") }),
           });
           notice("Dashboard saved.");
+          await refresh();
+        });
+
+        $("#reportViewSelect")?.addEventListener("change", (event) => {
+          state.selectedReportViewId = event.currentTarget.value;
+          storageSet("crmReportViewId", state.selectedReportViewId);
+          render();
+        });
+
+        $("#reportViewForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const sections = form.getAll("sections");
+          state.reportFilters.sections = sections;
+          const name = String(form.get("name") || "").trim();
+          if (!name) {
+            state.selectedReportViewId = "";
+            storageRemove("crmReportViewId");
+            notice("Report sections updated.");
+            render();
+            return;
+          }
+          const view = await api("saved-views", {
+            method: "POST",
+            body: JSON.stringify({ name, resource: "reports", filters: { sections } }),
+          });
+          state.selectedReportViewId = view.id;
+          storageSet("crmReportViewId", view.id);
+          notice("Report view saved.");
+          await refresh();
+        });
+
+        $("#deleteReportView")?.addEventListener("click", async () => {
+          await api("saved-views/" + encodeURIComponent(state.selectedReportViewId), { method: "DELETE" });
+          state.selectedReportViewId = "";
+          storageRemove("crmReportViewId");
+          notice("Report view deleted.");
           await refresh();
         });
 
@@ -2822,6 +2892,27 @@ Content-Type: application/json
         const allowed = new Set(dashboardWidgetOptions().map((widget) => widget.key));
         const widgets = (state.dashboardPreferences?.widgets || []).filter((widget) => allowed.has(widget));
         return widgets.length ? widgets : ["metrics", "priority_accounts", "due_tasks"];
+      }
+
+      function reportSectionOptions() {
+        return [
+          { key: "metrics", label: "Metrics" },
+          { key: "pipeline", label: "Pipeline by stage" },
+          { key: "forecast", label: "Forecast" },
+          { key: "account_status", label: "Account status" },
+          { key: "sequence_performance", label: "Sequence performance" },
+          { key: "owner_performance", label: "Owner performance" },
+          { key: "source_conversion", label: "Source conversion" },
+          { key: "stalled_opportunities", label: "Stalled opportunities" },
+          { key: "custom_fields", label: "Custom fields" },
+        ];
+      }
+
+      function reportSections() {
+        const allowed = new Set(reportSectionOptions().map((section) => section.key));
+        const selectedView = state.reportViews.find((view) => view.id === state.selectedReportViewId);
+        const sections = (selectedView?.filters?.sections || state.reportFilters.sections || []).filter((section) => allowed.has(section));
+        return sections.length ? sections : reportSectionOptions().map((section) => section.key);
       }
 
       function bindPipelineDragAndDrop() {

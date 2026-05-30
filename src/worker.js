@@ -41,6 +41,8 @@ const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oa
 const CALENDAR_OAUTH_PROVIDERS = new Set(["google", "microsoft"]);
 const DASHBOARD_WIDGETS = new Set(["metrics", "priority_accounts", "due_tasks", "pipeline", "sequence_performance", "stalled_opportunities"]);
 const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "priority_accounts", "due_tasks"];
+const REPORT_SECTIONS = new Set(["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"]);
+const DEFAULT_REPORT_SECTIONS = ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"];
 
 export default {
   async fetch(request, env) {
@@ -1475,8 +1477,8 @@ async function listSavedViews(env, workspaceId, auth, url) {
 async function createSavedView(env, input, auth) {
   requireFields(input, ["name"]);
   const resource = input.resource || "accounts";
-  if (resource !== "accounts") throw httpError(400, "Only account saved views are supported");
-  const filters = normalizeAccountFilters(input.filters || {});
+  if (!["accounts", "reports"].includes(resource)) throw httpError(400, "Only account and report saved views are supported");
+  const filters = resource === "reports" ? normalizeReportFilters(input.filters || {}) : normalizeAccountFilters(input.filters || {});
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
@@ -1484,6 +1486,12 @@ async function createSavedView(env, input, auth) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), resource, JSON.stringify(filters), now, now).run();
   return { ...(await getRequired(env, "SELECT * FROM saved_views WHERE id = ?", id)), filters };
+}
+
+function normalizeReportFilters(input) {
+  const sectionsInput = Array.isArray(input.sections) ? input.sections : DEFAULT_REPORT_SECTIONS;
+  const sections = sectionsInput.map((section) => cleanNullable(section)).filter((section) => REPORT_SECTIONS.has(section));
+  return { sections: sections.length ? [...new Set(sections)] : [...DEFAULT_REPORT_SECTIONS] };
 }
 
 async function getDashboardPreferences(env, workspaceId, auth) {

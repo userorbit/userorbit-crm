@@ -490,6 +490,21 @@ curl http://localhost:8787/api/reports \
   -H "authorization: Bearer $CRM_API_TOKEN"
 ```
 
+### Save report views
+
+```sh
+curl -X POST http://localhost:8787/api/saved-views \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Pipeline review",
+    "resource": "reports",
+    "filters": { "sections": ["metrics", "pipeline", "forecast", "stalled_opportunities"] }
+  }'
+```
+
+Report views are scoped to the signed-in user and active workspace. Supported report sections are `metrics`, `pipeline`, `forecast`, `account_status`, `sequence_performance`, `owner_performance`, `source_conversion`, `stalled_opportunities`, and `custom_fields`.
+
 ### Customize the dashboard
 
 ```sh

@@ -381,6 +381,20 @@ GET /api/reports
 
 The response includes `pipeline`, `forecast`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, `ownerPerformance`, `sourceConversion`, `stalledOpportunities`, and `customFieldBreakdowns`. `forecast` groups open opportunities by close month with raw and confidence-weighted value.
 
+Create a saved report view for repeated analysis:
+
+```http
+POST /api/saved-views
+
+{
+  "name": "Pipeline review",
+  "resource": "reports",
+  "filters": { "sections": ["metrics", "pipeline", "forecast", "stalled_opportunities"] }
+}
+```
+
+List saved report views with `GET /api/saved-views?resource=reports`. Delete one with `DELETE /api/saved-views/<view_id>`. Supported report sections are `metrics`, `pipeline`, `forecast`, `account_status`, `sequence_performance`, `owner_performance`, `source_conversion`, `stalled_opportunities`, and `custom_fields`.
+
 Review or update the current user's dashboard widgets for the active workspace:
 
 ```http

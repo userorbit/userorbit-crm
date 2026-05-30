@@ -61,6 +61,7 @@
 - [x] Add Gmail/Microsoft native mailbox sync for inbound replies.
 - [x] Add drag-and-drop movement to the pipeline board.
 - [x] Add per-user dashboard widget customization.
+- [x] Add saved report section views.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
