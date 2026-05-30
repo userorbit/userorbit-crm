@@ -44,6 +44,7 @@ After this directory is published to GitHub, the deploy button above can create 
 - Optional public URL: `CRM_PUBLIC_URL` for email open/click tracking links
 - Optional SMTP secrets: `CRM_FROM_EMAIL`, `CRM_FROM_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`
 - Optional OAuth/OIDC secrets: `OAUTH_AUTHORIZATION_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_ALLOWED_DOMAINS`
+- Optional calendar OAuth secrets: `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`, `MICROSOFT_CALENDAR_CLIENT_ID`, `MICROSOFT_CALENDAR_CLIENT_SECRET`, `MICROSOFT_CALENDAR_TENANT`
 - Optional AI secrets: `OPENAI_API_KEY`, `OPENAI_MODEL`
 
 The public repository is available at https://github.com/userorbit/userorbit-crm.
@@ -93,6 +94,11 @@ OAUTH_USERINFO_URL="https://accounts.example.com/oauth/userinfo"
 OAUTH_CLIENT_ID="oauth-client-id"
 OAUTH_CLIENT_SECRET="oauth-client-secret"
 OAUTH_ALLOWED_DOMAINS="your-company.com"
+GOOGLE_CALENDAR_CLIENT_ID="google-client-id"
+GOOGLE_CALENDAR_CLIENT_SECRET="google-client-secret"
+MICROSOFT_CALENDAR_CLIENT_ID="microsoft-client-id"
+MICROSOFT_CALENDAR_CLIENT_SECRET="microsoft-client-secret"
+MICROSOFT_CALENDAR_TENANT="common"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-5-mini"
 ```
@@ -229,6 +235,31 @@ curl -X POST http://localhost:8787/api/calendar/sources/source-id/run \
 ```
 
 Active sources are also checked by the scheduled Worker. Feed events are upserted by ICS UID and attached to account/contact timelines.
+
+### Connect Google or Microsoft calendar OAuth
+
+Configure the calendar OAuth secrets above, then register this redirect URI with the provider:
+
+```text
+https://your-worker.example.workers.dev/api/calendar/oauth/callback
+```
+
+The Calendar view can start Google Calendar or Microsoft Outlook OAuth. Programmatically, owners/admins can request the authorization URL:
+
+```sh
+curl -X POST http://localhost:8787/api/calendar/oauth/start \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "provider": "google",
+    "name": "Primary Google calendar",
+    "accountId": "account-id",
+    "calendarId": "primary",
+    "syncIntervalMinutes": 1440
+  }'
+```
+
+After callback, UserOrbit stores the refresh token on the calendar source, syncs Google Calendar `events.list` or Microsoft Graph `calendarView`, and upserts meetings on the account/contact timelines.
 
 ### Configure email tracking
 

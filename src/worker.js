@@ -34,7 +34,8 @@ const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
-const CALENDAR_SOURCE_TYPES = new Set(["ics_feed"]);
+const CALENDAR_SOURCE_TYPES = new Set(["ics_feed", "google_oauth", "microsoft_oauth"]);
+const CALENDAR_OAUTH_PROVIDERS = new Set(["google", "microsoft"]);
 
 export default {
   async fetch(request, env) {
@@ -83,6 +84,10 @@ export default {
 
       if (request.method === "GET" && url.pathname === "/api/auth/oauth/callback") {
         return await completeOAuthLogin(request, env, url);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/calendar/oauth/callback") {
+        return await completeCalendarOAuth(request, env, url);
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -416,6 +421,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "POST" && path === "calendar/sources") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createCalendarSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path === "calendar/oauth/start") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await startCalendarOAuth(env, { ...(await readJson(request)), workspaceId, baseUrl: url.origin }, auth), 201);
   }
 
   if (request.method === "POST" && path.startsWith("calendar/sources/") && path.endsWith("/run")) {
@@ -2125,24 +2135,44 @@ async function listCalendarSources(env, workspaceId) {
 }
 
 async function createCalendarSource(env, input, auth) {
-  requireFields(input, ["name", "accountId", "url"]);
+  requireFields(input, ["name", "accountId"]);
   const type = normalizeEnum(input.type || "ics_feed", CALENDAR_SOURCE_TYPES, "type");
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
   const contactId = cleanNullable(input.contactId);
   if (contactId) {
     await getRequired(env, "SELECT id FROM contacts WHERE id = ? AND account_id = ?", contactId, account.id);
   }
-  const url = normalizeCalendarSourceUrl(input.url);
+  const url = type === "ics_feed" ? normalizeCalendarSourceUrl(input.url) : normalizeCalendarApiBaseUrl(type, input.apiBaseUrl || input.url);
+  const token = normalizeCalendarSourceToken(type, input);
+  const calendarId = cleanNullable(input.calendarId || input.calendar_id) || "primary";
   const interval = Math.max(15, Math.min(10080, Number(input.syncIntervalMinutes || input.sync_interval_minutes || 1440)));
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
     INSERT INTO calendar_sources (
       id, workspace_id, account_id, contact_id, created_by_user_id, name, type, url, provider,
-      status, sync_interval_minutes, last_synced_at, last_error, created_at, updated_at
+      status, sync_interval_minutes, last_synced_at, last_error, token_json, token_expires_at,
+      external_calendar_id, external_account, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, ?, ?)
-  `).bind(id, input.workspaceId, account.id, contactId, auth.user.id, input.name.trim(), type, url, cleanNullable(input.provider) || type, interval, now, now).run();
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    account.id,
+    contactId,
+    auth.user.id,
+    input.name.trim(),
+    type,
+    url,
+    cleanNullable(input.provider) || type,
+    interval,
+    token ? JSON.stringify(token) : null,
+    token?.expiresAt || null,
+    type === "ics_feed" ? null : calendarId,
+    cleanNullable(input.externalAccount || input.external_account),
+    now,
+    now,
+  ).run();
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "calendar_source.create", resource: "calendar_source", resourceId: id, metadata: { accountId: account.id, contactId, type } });
   return getRequired(env, "SELECT * FROM calendar_sources WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
@@ -2159,16 +2189,9 @@ async function syncCalendarSource(env, id, workspaceId, auth = null) {
   const source = await getRequired(env, "SELECT * FROM calendar_sources WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
   const now = new Date().toISOString();
   try {
-    const response = await fetch(source.url, { headers: { "user-agent": "UserOrbit-CRM-CalendarSync" } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const ics = await response.text();
-    const result = await importCalendarIcs(env, {
-      workspaceId,
-      accountId: source.account_id,
-      contactId: source.contact_id,
-      provider: `calendar_source:${source.id}`,
-      ics,
-    }, auth || { user: { id: source.created_by_user_id || null } });
+    const result = source.type === "ics_feed"
+      ? await syncIcsCalendarSource(env, source, workspaceId, auth)
+      : await syncOAuthCalendarSource(env, source, workspaceId, auth);
     await env.DB.prepare("UPDATE calendar_sources SET last_synced_at = ?, last_error = NULL, updated_at = ? WHERE id = ?").bind(now, now, source.id).run();
     if (auth?.user?.id) {
       await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "calendar_source.sync", resource: "calendar_source", resourceId: source.id, metadata: { imported: result.imported } });
@@ -2179,6 +2202,139 @@ async function syncCalendarSource(env, id, workspaceId, auth = null) {
     await env.DB.prepare("UPDATE calendar_sources SET last_synced_at = ?, last_error = ?, updated_at = ? WHERE id = ?").bind(now, message, now, source.id).run();
     throw httpError(400, `Calendar sync failed: ${message}`);
   }
+}
+
+async function syncIcsCalendarSource(env, source, workspaceId, auth = null) {
+  const response = await fetch(source.url, { headers: { "user-agent": "UserOrbit-CRM-CalendarSync" } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const ics = await response.text();
+  return importCalendarIcs(env, {
+    workspaceId,
+    accountId: source.account_id,
+    contactId: source.contact_id,
+    provider: `calendar_source:${source.id}`,
+    ics,
+  }, auth || { user: { id: source.created_by_user_id || null } });
+}
+
+async function syncOAuthCalendarSource(env, source, workspaceId, auth = null) {
+  const accessToken = await getCalendarAccessToken(env, source);
+  const events = source.type === "google_oauth"
+    ? await fetchGoogleCalendarEvents(source, accessToken)
+    : await fetchMicrosoftCalendarEvents(source, accessToken);
+  const created = [];
+  for (const event of events) {
+    if (!event.startsAt) continue;
+    created.push(await createCalendarEvent(env, {
+      workspaceId,
+      accountId: source.account_id,
+      contactId: source.contact_id,
+      provider: `calendar_source:${source.id}`,
+      externalId: event.id,
+      title: event.title || "Calendar event",
+      description: event.description,
+      location: event.location,
+      meetingUrl: event.meetingUrl,
+      attendeeEmails: event.attendeeEmails,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+    }, auth || { user: { id: source.created_by_user_id || null } }));
+  }
+  return { imported: created.length, events: created };
+}
+
+async function getCalendarAccessToken(env, source) {
+  const token = normalizeStoredCalendarToken(source.token_json);
+  if (token.accessToken && token.expiresAt && new Date(token.expiresAt) > new Date(Date.now() + 60 * 1000)) return token.accessToken;
+  if (!token.refreshToken) {
+    if (token.accessToken) return token.accessToken;
+    throw new Error("Calendar source has no OAuth token");
+  }
+  const refreshed = await refreshCalendarToken(env, source, token);
+  await env.DB.prepare("UPDATE calendar_sources SET token_json = ?, token_expires_at = ?, updated_at = ? WHERE id = ?")
+    .bind(JSON.stringify(refreshed), refreshed.expiresAt, new Date().toISOString(), source.id)
+    .run();
+  return refreshed.accessToken;
+}
+
+function normalizeStoredCalendarToken(value) {
+  const parsed = parseJsonObject(value);
+  return {
+    accessToken: cleanNullable(parsed.accessToken || parsed.access_token),
+    refreshToken: cleanNullable(parsed.refreshToken || parsed.refresh_token),
+    expiresAt: cleanNullable(parsed.expiresAt || parsed.expires_at),
+  };
+}
+
+async function refreshCalendarToken(env, source, token) {
+  const provider = source.type === "google_oauth" ? "google" : "microsoft";
+  const clientId = provider === "google" ? env.GOOGLE_CALENDAR_CLIENT_ID || env.GOOGLE_CLIENT_ID : env.MICROSOFT_CALENDAR_CLIENT_ID || env.MICROSOFT_CLIENT_ID;
+  const clientSecret = provider === "google" ? env.GOOGLE_CALENDAR_CLIENT_SECRET || env.GOOGLE_CLIENT_SECRET : env.MICROSOFT_CALENDAR_CLIENT_SECRET || env.MICROSOFT_CLIENT_SECRET;
+  if (!cleanNullable(clientId) || !cleanNullable(clientSecret)) throw new Error(`${provider} calendar OAuth credentials are not configured`);
+  const tokenUrl = provider === "google"
+    ? "https://oauth2.googleapis.com/token"
+    : `https://login.microsoftonline.com/${encodeURIComponent(cleanNullable(env.MICROSOFT_CALENDAR_TENANT || env.MICROSOFT_TENANT) || "common")}/oauth2/v2.0/token`;
+  const response = await fetch(tokenUrl, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: token.refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`Token refresh failed: ${payload.error_description || payload.error || response.status}`);
+  return calendarTokenFromPayload(payload, token);
+}
+
+async function fetchGoogleCalendarEvents(source, accessToken) {
+  const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const end = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString();
+  const calendarId = source.external_calendar_id || "primary";
+  const url = new URL(`${source.url}/calendars/${encodeURIComponent(calendarId)}/events`);
+  url.searchParams.set("singleEvents", "true");
+  url.searchParams.set("orderBy", "startTime");
+  url.searchParams.set("timeMin", start);
+  url.searchParams.set("timeMax", end);
+  url.searchParams.set("maxResults", "250");
+  const response = await fetch(url.toString(), { headers: { authorization: `Bearer ${accessToken}`, "user-agent": "UserOrbit-CRM-CalendarSync" } });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(`Google calendar sync failed: ${payload.error?.message || response.status}`);
+  return (payload.items || []).map((event) => ({
+    id: event.id,
+    title: event.summary,
+    description: event.description,
+    location: event.location,
+    meetingUrl: event.hangoutLink || event.conferenceData?.entryPoints?.find((entry) => entry.uri)?.uri,
+    attendeeEmails: (event.attendees || []).map((attendee) => attendee.email).filter(Boolean),
+    startsAt: event.start?.dateTime || (event.start?.date ? `${event.start.date}T00:00:00.000Z` : null),
+    endsAt: event.end?.dateTime || (event.end?.date ? `${event.end.date}T00:00:00.000Z` : null),
+  }));
+}
+
+async function fetchMicrosoftCalendarEvents(source, accessToken) {
+  const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const end = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString();
+  const calendarId = source.external_calendar_id && source.external_calendar_id !== "primary" ? `/calendars/${encodeURIComponent(source.external_calendar_id)}` : "/calendar";
+  const url = new URL(`${source.url}/me${calendarId}/calendarView`);
+  url.searchParams.set("startDateTime", start);
+  url.searchParams.set("endDateTime", end);
+  url.searchParams.set("$top", "250");
+  const response = await fetch(url.toString(), { headers: { authorization: `Bearer ${accessToken}`, "user-agent": "UserOrbit-CRM-CalendarSync" } });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(`Microsoft calendar sync failed: ${payload.error?.message || response.status}`);
+  return (payload.value || []).map((event) => ({
+    id: event.id,
+    title: event.subject,
+    description: event.bodyPreview,
+    location: event.location?.displayName,
+    meetingUrl: event.onlineMeeting?.joinUrl || event.webLink,
+    attendeeEmails: (event.attendees || []).map((attendee) => attendee.emailAddress?.address).filter(Boolean),
+    startsAt: event.start?.dateTime ? new Date(`${event.start.dateTime}${event.start.dateTime.endsWith("Z") ? "" : "Z"}`).toISOString() : null,
+    endsAt: event.end?.dateTime ? new Date(`${event.end.dateTime}${event.end.dateTime.endsWith("Z") ? "" : "Z"}`).toISOString() : null,
+  }));
 }
 
 async function syncDueCalendarSources(env, limit = 10) {
@@ -2295,6 +2451,60 @@ async function importCalendarIcs(env, input, auth) {
     }, auth));
   }
   return { imported: created.length, events: created };
+}
+
+async function startCalendarOAuth(env, input, auth) {
+  requireFields(input, ["provider", "name", "accountId"]);
+  const provider = normalizeEnum(input.provider, CALENDAR_OAUTH_PROVIDERS, "provider");
+  const account = await getRequired(env, "SELECT id FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
+  const contactId = cleanNullable(input.contactId);
+  if (contactId) await getRequired(env, "SELECT id FROM contacts WHERE id = ? AND account_id = ?", contactId, account.id);
+  const now = new Date();
+  const state = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+  const interval = Math.max(15, Math.min(10080, Number(input.syncIntervalMinutes || input.sync_interval_minutes || 1440)));
+  await env.DB.prepare(`
+    INSERT INTO calendar_oauth_states (
+      id, state, workspace_id, account_id, contact_id, user_id, provider, name, calendar_id,
+      sync_interval_minutes, created_at, expires_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    state,
+    input.workspaceId,
+    account.id,
+    contactId,
+    auth.user.id,
+    provider,
+    input.name.trim(),
+    cleanNullable(input.calendarId || input.calendar_id) || "primary",
+    interval,
+    now.toISOString(),
+    new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+  ).run();
+  return { authorizationUrl: calendarOAuthAuthorizationUrl(env, provider, state, input.baseUrl), state };
+}
+
+async function completeCalendarOAuth(_request, env, url) {
+  const code = cleanNullable(url.searchParams.get("code"));
+  const state = cleanNullable(url.searchParams.get("state"));
+  if (!code || !state) throw httpError(400, "Missing calendar OAuth code or state");
+  const pending = await getRequired(env, "SELECT * FROM calendar_oauth_states WHERE state = ? AND expires_at > ?", state, new Date().toISOString());
+  const token = await exchangeCalendarOAuthCode(env, pending.provider, code, url.origin);
+  const source = await createCalendarSource(env, {
+    workspaceId: pending.workspace_id,
+    name: pending.name,
+    accountId: pending.account_id,
+    contactId: pending.contact_id,
+    type: `${pending.provider}_oauth`,
+    provider: pending.provider,
+    calendarId: pending.calendar_id || "primary",
+    syncIntervalMinutes: pending.sync_interval_minutes,
+    token,
+  }, { user: { id: pending.user_id } });
+  await env.DB.prepare("DELETE FROM calendar_oauth_states WHERE state = ?").bind(state).run();
+  await recordAuditLog(env, { workspaceId: pending.workspace_id, userId: pending.user_id, action: "calendar_oauth.connect", resource: "calendar_source", resourceId: source.id, metadata: { provider: pending.provider } });
+  return htmlResponse("<!doctype html><html><head><meta charset=\"utf-8\"><title>Calendar connected</title></head><body><script>location.replace('/app')</script><p>Calendar connected. Redirecting...</p></body></html>");
 }
 
 async function updateTask(env, id, input) {
@@ -5241,6 +5451,84 @@ function normalizeCalendarSourceUrl(value) {
   const normalized = raw.replace(/^webcal:\/\//i, "https://");
   if (!/^https?:\/\//i.test(normalized)) throw httpError(400, "Calendar URL must start with https://, http://, or webcal://");
   return normalized;
+}
+
+function normalizeCalendarApiBaseUrl(type, value) {
+  const fallback = type === "google_oauth" ? "https://www.googleapis.com/calendar/v3" : "https://graph.microsoft.com/v1.0";
+  const url = cleanNullable(value) || fallback;
+  if (!/^https?:\/\//i.test(url)) throw httpError(400, "Calendar API base URL must start with http:// or https://");
+  return url.replace(/\/+$/, "");
+}
+
+function normalizeCalendarSourceToken(type, input) {
+  if (type === "ics_feed") return null;
+  const supplied = input.token && typeof input.token === "object" ? input.token : input.tokenJson || input.token_json;
+  const token = typeof supplied === "string" ? parseJsonObject(supplied) : supplied && typeof supplied === "object" ? supplied : {};
+  const accessToken = cleanNullable(input.accessToken || input.access_token || token.accessToken || token.access_token);
+  const refreshToken = cleanNullable(input.refreshToken || input.refresh_token || token.refreshToken || token.refresh_token);
+  if (!accessToken && !refreshToken) throw httpError(400, "OAuth calendar sources require an accessToken or refreshToken");
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt: cleanNullable(input.expiresAt || input.expires_at || token.expiresAt || token.expires_at),
+  };
+}
+
+function calendarOAuthAuthorizationUrl(env, provider, state, baseUrl) {
+  const redirectUri = `${baseUrl.replace(/\/$/, "")}/api/calendar/oauth/callback`;
+  if (provider === "google") {
+    const clientId = cleanNullable(env.GOOGLE_CALENDAR_CLIENT_ID || env.GOOGLE_CLIENT_ID);
+    if (!clientId) throw httpError(400, "GOOGLE_CALENDAR_CLIENT_ID is not configured");
+    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("scope", "https://www.googleapis.com/auth/calendar.readonly");
+    url.searchParams.set("access_type", "offline");
+    url.searchParams.set("prompt", "consent");
+    url.searchParams.set("state", state);
+    return url.toString();
+  }
+  const clientId = cleanNullable(env.MICROSOFT_CALENDAR_CLIENT_ID || env.MICROSOFT_CLIENT_ID);
+  if (!clientId) throw httpError(400, "MICROSOFT_CALENDAR_CLIENT_ID is not configured");
+  const tenant = cleanNullable(env.MICROSOFT_CALENDAR_TENANT || env.MICROSOFT_TENANT) || "common";
+  const url = new URL(`https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/authorize`);
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "offline_access Calendars.Read");
+  url.searchParams.set("state", state);
+  return url.toString();
+}
+
+async function exchangeCalendarOAuthCode(env, provider, code, baseUrl) {
+  const redirectUri = `${baseUrl.replace(/\/$/, "")}/api/calendar/oauth/callback`;
+  const clientId = provider === "google" ? env.GOOGLE_CALENDAR_CLIENT_ID || env.GOOGLE_CLIENT_ID : env.MICROSOFT_CALENDAR_CLIENT_ID || env.MICROSOFT_CLIENT_ID;
+  const clientSecret = provider === "google" ? env.GOOGLE_CALENDAR_CLIENT_SECRET || env.GOOGLE_CLIENT_SECRET : env.MICROSOFT_CALENDAR_CLIENT_SECRET || env.MICROSOFT_CLIENT_SECRET;
+  if (!cleanNullable(clientId) || !cleanNullable(clientSecret)) throw httpError(400, `${provider} calendar OAuth credentials are not configured`);
+  const tokenUrl = provider === "google"
+    ? "https://oauth2.googleapis.com/token"
+    : `https://login.microsoftonline.com/${encodeURIComponent(cleanNullable(env.MICROSOFT_CALENDAR_TENANT || env.MICROSOFT_TENANT) || "common")}/oauth2/v2.0/token`;
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  });
+  const response = await fetch(tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw httpError(400, `Calendar OAuth token exchange failed: ${payload.error_description || payload.error || response.status}`);
+  return calendarTokenFromPayload(payload);
+}
+
+function calendarTokenFromPayload(payload, existing = {}) {
+  const expiresIn = Number(payload.expires_in || 3600);
+  return {
+    accessToken: cleanNullable(payload.access_token) || existing.accessToken || null,
+    refreshToken: cleanNullable(payload.refresh_token) || existing.refreshToken || null,
+    expiresAt: new Date(Date.now() + Math.max(60, expiresIn - 60) * 1000).toISOString(),
+  };
 }
 
 function normalizeWebhookEvents(value) {

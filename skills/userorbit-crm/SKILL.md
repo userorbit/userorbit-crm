@@ -553,6 +553,23 @@ POST /api/calendar/sources/<source_id>/run
 
 List sources with `GET /api/calendar/sources`. Active sources are also checked by the scheduled Worker, and events are upserted by ICS UID.
 
+Connect a Google Calendar or Microsoft Outlook calendar with OAuth:
+
+```http
+POST /api/calendar/oauth/start
+
+{
+  "provider": "google",
+  "name": "Primary Google calendar",
+  "accountId": "account_id",
+  "contactId": "optional_contact_id",
+  "calendarId": "primary",
+  "syncIntervalMinutes": 1440
+}
+```
+
+Open the returned `authorizationUrl` in the browser. Register `/api/calendar/oauth/callback` as the redirect URI on the provider. Google requires `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET`; Microsoft requires `MICROSOFT_CALENDAR_CLIENT_ID`, `MICROSOFT_CALENDAR_CLIENT_SECRET`, and optional `MICROSOFT_CALENDAR_TENANT`. OAuth calendar sources store refresh tokens and sync through the same `POST /api/calendar/sources/<source_id>/run` and scheduled Worker path.
+
 Record a parsed inbound reply from an email provider, Cloudflare Email Worker, automation, or agent:
 
 ```http

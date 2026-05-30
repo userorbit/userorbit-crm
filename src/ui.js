@@ -1269,6 +1269,15 @@ export const appHtml = String.raw`<!doctype html>
                 <label>Sync interval minutes<input name="syncIntervalMinutes" type="number" min="15" step="15" value="1440" /></label>
                 <button class="button primary">Create calendar source</button>
               </form>
+              <form id="calendarOAuthForm" class="stack" style="border-top:1px solid var(--border)">
+                <label>Name<input name="name" required placeholder="Google Calendar" /></label>
+                <label>Provider<select name="provider"><option value="google">Google Calendar</option><option value="microsoft">Microsoft Outlook</option></select></label>
+                <label>Account<select name="accountId" required>\${state.accounts.map((account) => '<option value="' + escapeHtml(account.id) + '">' + escapeHtml(account.name) + '</option>').join("")}</select></label>
+                <label>Contact ID<input name="contactId" placeholder="Optional contact id" /></label>
+                <label>Calendar ID<input name="calendarId" placeholder="primary" /></label>
+                <label>Sync interval minutes<input name="syncIntervalMinutes" type="number" min="15" step="15" value="1440" /></label>
+                <button class="button primary">Connect calendar OAuth</button>
+              </form>
             </div>
           </div>\`;
       }
@@ -1279,7 +1288,7 @@ export const appHtml = String.raw`<!doctype html>
           <thead><tr><th>Name</th><th>Account</th><th>Status</th><th>Last sync</th><th></th></tr></thead>
           <tbody>\${sources.map((source) => \`
             <tr>
-              <td>\${escapeHtml(source.name)}<div class="subtitle">\${escapeHtml(source.url)}</div></td>
+              <td>\${escapeHtml(source.name)}<div class="subtitle">\${escapeHtml(source.type === "ics_feed" ? source.url : [source.provider, source.external_calendar_id || "primary", source.external_account].filter(Boolean).join(" / "))}</div></td>
               <td>\${escapeHtml(source.account_name || "")}</td>
               <td>\${source.last_error ? '<span class="pill red">error</span>' : '<span class="pill">' + escapeHtml(source.status) + '</span>'}<div class="subtitle">\${escapeHtml(source.last_error || "")}</div></td>
               <td>\${escapeHtml(source.last_synced_at ? formatDateTime(source.last_synced_at) : "Never")}</td>
@@ -1986,6 +1995,23 @@ Content-Type: application/json
           });
           notice("Calendar source created.");
           await refresh();
+        });
+
+        $("#calendarOAuthForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const result = await api("calendar/oauth/start", {
+            method: "POST",
+            body: JSON.stringify({
+              provider: form.get("provider"),
+              name: form.get("name"),
+              accountId: form.get("accountId"),
+              contactId: form.get("contactId") || undefined,
+              calendarId: form.get("calendarId") || "primary",
+              syncIntervalMinutes: Number(form.get("syncIntervalMinutes") || 1440),
+            }),
+          });
+          window.location.href = result.authorizationUrl;
         });
 
         document.querySelectorAll("[data-run-calendar-source-id]").forEach((node) => node.addEventListener("click", async () => {
