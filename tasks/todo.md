@@ -46,6 +46,7 @@
 - [x] Add inbound SMS/WhatsApp provider webhooks.
 - [x] Add AI account/contact summaries, next steps, risks, and scores.
 - [x] Add recurring ICS/webcal calendar source sync.
+- [x] Add workspace email sender rotation with daily caps.
 - [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, full Google/Microsoft OAuth calendar sync, broader native integrations, and deeper AI enrichment/notes.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -121,3 +122,5 @@ Added inbound provider messaging: SMS/WhatsApp channels expose admin-visible web
 Added AI insights: account and contact detail pages can generate summaries, next steps, risks, and scores through optional OpenAI Responses API configuration, with a local deterministic fallback for self-hosters without an API key.
 
 Added calendar source sync: workspace admins can create ICS/webcal sources mapped to accounts and contacts, run them manually, and scheduled Workers check active sources for due imports.
+
+Added email sender rotation: workspace admins can configure active sender identities with daily caps, and manual/sequence emails pick the least-used sender before falling back to the SMTP env sender.

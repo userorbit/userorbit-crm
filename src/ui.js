@@ -605,6 +605,7 @@ export const appHtml = String.raw`<!doctype html>
         calendarSources: [],
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
+        emailSenders: [],
         integrations: { integrations: [], deliveries: [] },
         workspaceTokens: [],
         teamInvitations: [],
@@ -663,7 +664,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -680,6 +681,7 @@ export const appHtml = String.raw`<!doctype html>
           api("calendar/events"),
           canWrite ? api("calendar/sources") : Promise.resolve([]),
           api("email/settings"),
+          canWrite ? api("email/senders") : Promise.resolve([]),
           canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
@@ -687,7 +689,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1495,6 +1497,7 @@ Content-Type: application/json
                 </table>
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Email senders</div></div>' + emailSendersTable(state.emailSenders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Message channels</div></div>' + messageChannelsTable(state.messageChannels) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
@@ -1549,6 +1552,12 @@ Content-Type: application/json
                   <label><input name="openTrackingEnabled" type="checkbox" \${state.emailSettings.open_tracking_enabled ? "checked" : ""} /> Track email opens</label>
                   <label><input name="clickTrackingEnabled" type="checkbox" \${state.emailSettings.click_tracking_enabled ? "checked" : ""} /> Track link clicks</label>
                   <button class="button primary">Save email settings</button>
+                </form>
+                <form id="emailSenderForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Sender email<input name="email" type="email" required placeholder="founder@example.com" /></label>
+                  <label>Sender name<input name="name" placeholder="Founder" /></label>
+                  <label>Daily limit<input name="dailyLimit" type="number" min="1" max="1000" value="100" /></label>
+                  <button class="button primary">Add sender</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
@@ -1639,6 +1648,21 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No native integrations yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Integration deliveries</div></div>' + reportTable(["Event", "Integration", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.integration_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return integrationTable + deliveryTable;
+      }
+
+      function emailSendersTable(senders = []) {
+        if (!senders.length) return '<div class="empty">No sender rotation configured. SMTP env sender will be used.</div>';
+        return \`<table>
+          <thead><tr><th>Sender</th><th>Daily</th><th>Used</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${senders.map((sender) => \`
+            <tr>
+              <td>\${escapeHtml(sender.name || sender.email)}<div class="subtitle">\${escapeHtml(sender.email)}</div></td>
+              <td>\${sender.daily_limit}</td>
+              <td>\${sender.sent_today || 0}<div class="subtitle">\${escapeHtml(sender.sent_on || "")}</div></td>
+              <td><span class="pill">\${escapeHtml(sender.status)}</span></td>
+              <td>\${sender.status === "active" ? '<button class="button" data-disable-email-sender-id="' + escapeHtml(sender.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
       }
 
       function messageChannelsTable(messageChannels) {
@@ -2095,6 +2119,21 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#emailSenderForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("email/senders", {
+            method: "POST",
+            body: JSON.stringify({
+              email: form.get("email"),
+              name: form.get("name") || undefined,
+              dailyLimit: Number(form.get("dailyLimit") || 100),
+            }),
+          });
+          notice("Email sender saved.");
+          await refresh();
+        });
+
         $("#integrationForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2133,6 +2172,12 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-integration-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("integrations/" + encodeURIComponent(node.dataset.disableIntegrationId), { method: "DELETE" });
           notice("Integration disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-email-sender-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("email/senders/" + encodeURIComponent(node.dataset.disableEmailSenderId), { method: "DELETE" });
+          notice("Email sender disabled.");
           await refresh();
         }));
 

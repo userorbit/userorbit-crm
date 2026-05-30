@@ -18,6 +18,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending, inbound reply capture, and scheduled sequence processing.
 - Configurable first-party email open and click tracking.
+- Workspace email sender rotation with per-sender daily caps.
 - Contact unsubscribe handling for manual sends and sequences.
 - Zoho SMTP support through Cloudflare Workers TCP sockets.
 - A token-protected REST API for agents and scripts.
@@ -239,6 +240,21 @@ curl -X PATCH http://localhost:8787/api/email/settings \
 ```
 
 Email tracking is workspace-scoped and off by default. Opens and clicks are counted on email activity, account/contact detail, and reports.
+
+### Configure email sender rotation
+
+```sh
+curl -X POST http://localhost:8787/api/email/senders \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "email": "founder@example.com",
+    "name": "Founder",
+    "dailyLimit": 100
+  }'
+```
+
+Manual and sequence sends pick the least-used active sender for the workspace and increment usage after successful SMTP delivery. If no sender is configured, the app falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
 
 ### Create a lead form
 

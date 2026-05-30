@@ -168,9 +168,24 @@ async function routeApi(request, env, url, auth) {
     return json(await getEmailSettings(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "email/senders") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await listEmailSenders(env, workspaceId));
+  }
+
   if (request.method === "PATCH" && path === "email/settings") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await updateEmailSettings(env, workspaceId, await readJson(request), auth));
+  }
+
+  if (request.method === "POST" && path === "email/senders") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createEmailSender(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("email/senders/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableEmailSender(env, path.split("/")[2], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "webhooks") {
@@ -2277,8 +2292,11 @@ async function sendManualEmail(env, input) {
   if (contact.workspace_id !== input.workspaceId) throw httpError(404, "Not found");
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const emailSettings = await getEmailSettings(env, input.workspaceId);
+  const sender = await chooseEmailSender(env, input.workspaceId);
   const tracking = buildEmailTracking(input.baseUrl || env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
   const result = await sendEmail(env, {
+    fromEmail: sender?.email,
+    fromName: sender?.name,
     to: contact.email,
     toName: contact.name,
     subject: input.subject,
@@ -2296,6 +2314,7 @@ async function sendManualEmail(env, input) {
     sentAt: result.status === "sent" ? new Date().toISOString() : null,
     trackingId: tracking?.id,
   });
+  if (result.status === "sent") await recordEmailSenderUsage(env, sender, contact.workspace_id);
 
   await deliverWebhooks(env, contact.workspace_id, "email.created", event.id, event);
   if (input.auditUserId) {
@@ -2359,8 +2378,11 @@ async function processDueSequenceEmails(env, options = {}) {
     );
 
     const emailSettings = await getEmailSettings(env, item.workspace_id);
+    const sender = await chooseEmailSender(env, item.workspace_id);
     const tracking = buildEmailTracking(env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
     const result = await sendEmail(env, {
+      fromEmail: sender?.email,
+      fromName: sender?.name,
       to: item.email,
       toName: item.contact_name,
       subject: rendered.subject,
@@ -2380,6 +2402,7 @@ async function processDueSequenceEmails(env, options = {}) {
       sentAt: result.status === "sent" ? new Date().toISOString() : null,
       trackingId: tracking?.id,
     });
+    if (result.status === "sent") await recordEmailSenderUsage(env, sender, item.workspace_id);
 
     const nextStep = await env.DB.prepare(`
       SELECT * FROM sequence_steps WHERE sequence_id = ? AND step_order = ?
@@ -3305,6 +3328,78 @@ async function updateEmailSettings(env, workspaceId, input, auth) {
   return getEmailSettings(env, workspaceId);
 }
 
+async function listEmailSenders(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT wes.*, u.name AS created_by_name
+    FROM workspace_email_senders wes
+    LEFT JOIN users u ON u.id = wes.created_by_user_id
+    WHERE wes.workspace_id = ?
+    ORDER BY wes.status ASC, wes.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results;
+}
+
+async function createEmailSender(env, input, auth) {
+  requireFields(input, ["email"]);
+  const email = cleanEmail(input.email);
+  if (!email) throw httpError(400, "Valid sender email is required");
+  const dailyLimit = clampInteger(input.dailyLimit ?? input.daily_limit ?? 100, 1, 1000, "dailyLimit");
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO workspace_email_senders (
+      id, workspace_id, created_by_user_id, email, name, daily_limit, sent_today,
+      sent_on, last_used_at, status, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 'active', ?, ?)
+    ON CONFLICT(workspace_id, email) DO UPDATE SET
+      name = excluded.name,
+      daily_limit = excluded.daily_limit,
+      status = 'active',
+      updated_at = excluded.updated_at
+  `).bind(id, input.workspaceId, auth.user.id, email, cleanNullable(input.name), dailyLimit, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_sender.upsert", resource: "workspace_email_sender", resourceId: id, metadata: { email, dailyLimit } });
+  return getRequired(env, "SELECT * FROM workspace_email_senders WHERE workspace_id = ? AND email = ?", input.workspaceId, email);
+}
+
+async function disableEmailSender(env, id, workspaceId, auth) {
+  const sender = await getRequired(env, "SELECT * FROM workspace_email_senders WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_email_senders SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_sender.disable", resource: "workspace_email_sender", resourceId: id, metadata: { email: sender.email } });
+  return { ok: true };
+}
+
+async function chooseEmailSender(env, workspaceId) {
+  const today = new Date().toISOString().slice(0, 10);
+  await env.DB.prepare("UPDATE workspace_email_senders SET sent_today = 0, sent_on = ? WHERE workspace_id = ? AND status = 'active' AND sent_on IS NOT NULL AND sent_on != ?").bind(today, workspaceId, today).run();
+  const sender = await env.DB.prepare(`
+    SELECT *
+    FROM workspace_email_senders
+    WHERE workspace_id = ? AND status = 'active' AND (sent_on IS NULL OR sent_on = ?) AND sent_today < daily_limit
+    ORDER BY sent_today ASC, COALESCE(last_used_at, '1970-01-01T00:00:00.000Z') ASC
+    LIMIT 1
+  `).bind(workspaceId, today).first();
+  if (sender) return sender;
+  const fallbackEmail = cleanEmail(env.CRM_FROM_EMAIL || env.SMTP_USERNAME);
+  if (!fallbackEmail) return null;
+  return { id: null, email: fallbackEmail, name: env.CRM_FROM_NAME || null };
+}
+
+async function recordEmailSenderUsage(env, sender, workspaceId) {
+  if (!sender?.id) return;
+  const now = new Date().toISOString();
+  const today = now.slice(0, 10);
+  await env.DB.prepare(`
+    UPDATE workspace_email_senders
+    SET sent_today = CASE WHEN sent_on = ? THEN sent_today + 1 ELSE 1 END,
+        sent_on = ?,
+        last_used_at = ?,
+        updated_at = ?
+    WHERE id = ? AND workspace_id = ?
+  `).bind(today, today, now, now, sender.id, workspaceId).run();
+}
+
 async function createWebhook(env, input, auth) {
   requireFields(input, ["name", "url"]);
   await requireWorkspaceRole(env, auth.user.id, input.workspaceId, ["owner", "admin"]);
@@ -3554,7 +3649,7 @@ async function smtpSend(env, message) {
   await writeSmtp(writer, `${btoa(env.SMTP_PASSWORD)}\r\n`);
   await readSmtp(reader, 235);
 
-  const from = env.CRM_FROM_EMAIL || env.SMTP_USERNAME;
+  const from = message.fromEmail || env.CRM_FROM_EMAIL || env.SMTP_USERNAME;
   await writeSmtp(writer, `MAIL FROM:<${from}>\r\n`);
   await readSmtp(reader, 250);
   await writeSmtp(writer, `RCPT TO:<${message.to}>\r\n`);
@@ -3573,8 +3668,8 @@ async function smtpSend(env, message) {
 }
 
 function buildMimeMessage(env, message) {
-  const fromEmail = env.CRM_FROM_EMAIL || env.SMTP_USERNAME;
-  const fromName = env.CRM_FROM_NAME || "UserOrbit";
+  const fromEmail = message.fromEmail || env.CRM_FROM_EMAIL || env.SMTP_USERNAME;
+  const fromName = message.fromName || env.CRM_FROM_NAME || "UserOrbit";
   const messageDomain = emailDomain(fromEmail) || smtpIdentityDomain(env);
   const textBody = message.tracking?.clickTrackingEnabled ? rewriteTrackedLinks(message.body, message.tracking) : message.body;
   const headers = [

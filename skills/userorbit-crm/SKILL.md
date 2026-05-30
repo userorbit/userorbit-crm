@@ -181,6 +181,20 @@ Content-Type: application/json
 
 Tracking is off by default. Enable it only when the workspace has a correct public Worker URL configured with `CRM_PUBLIC_URL` so sequence emails can produce valid tracking links.
 
+Configure sender rotation:
+
+```http
+POST /api/email/senders
+
+{
+  "email": "founder@example.com",
+  "name": "Founder",
+  "dailyLimit": 100
+}
+```
+
+List senders with `GET /api/email/senders`. Manual and sequence sends choose the least-used active sender that has not hit its daily cap. If no sender is configured, UserOrbit falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
+
 Create a public lead capture form:
 
 ```http
