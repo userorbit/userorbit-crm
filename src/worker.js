@@ -30,6 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
+const INTEGRATION_TYPES = new Set(["slack"]);
 
 export default {
   async fetch(request, env) {
@@ -133,6 +134,10 @@ async function routeApi(request, env, url, auth) {
     return json(await listWebhooks(env, workspaceId, auth));
   }
 
+  if (request.method === "GET" && path === "integrations") {
+    return json(await listIntegrations(env, workspaceId, auth));
+  }
+
   if (request.method === "GET" && path === "lead-forms") {
     return json(await listLeadForms(env, workspaceId, auth));
   }
@@ -162,6 +167,14 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "DELETE" && path.startsWith("webhooks/")) {
     return json(await disableWebhook(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "integrations") {
+    return json(await createIntegration(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("integrations/")) {
+    return json(await disableIntegration(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "DELETE" && path.startsWith("workspace-tokens/")) {
@@ -2707,6 +2720,31 @@ async function listWebhooks(env, workspaceId, auth) {
   };
 }
 
+async function listIntegrations(env, workspaceId, auth) {
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
+  const [integrations, deliveries] = await Promise.all([
+    env.DB.prepare(`
+      SELECT wi.*, u.name AS created_by_name
+      FROM workspace_integrations wi
+      JOIN users u ON u.id = wi.created_by_user_id
+      WHERE wi.workspace_id = ?
+      ORDER BY wi.created_at DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT idl.*, wi.name AS integration_name, wi.type AS integration_type
+      FROM integration_deliveries idl
+      JOIN workspace_integrations wi ON wi.id = idl.integration_id
+      WHERE idl.workspace_id = ?
+      ORDER BY idl.created_at DESC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+  ]);
+  return {
+    integrations: integrations.results.map(integrationResponse),
+    deliveries: deliveries.results,
+  };
+}
+
 async function getEmailSettings(env, workspaceId) {
   const existing = await env.DB.prepare("SELECT * FROM workspace_email_settings WHERE workspace_id = ?").bind(workspaceId).first();
   return {
@@ -2758,6 +2796,31 @@ async function disableWebhook(env, id, workspaceId, auth) {
   return { ok: true };
 }
 
+async function createIntegration(env, input, auth) {
+  requireFields(input, ["name", "type"]);
+  await requireWorkspaceRole(env, auth.user.id, input.workspaceId, ["owner", "admin"]);
+  const type = normalizeEnum(input.type, INTEGRATION_TYPES, "type");
+  const config = normalizeIntegrationConfig(type, input);
+  const events = normalizeWebhookEvents(input.events);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO workspace_integrations (id, workspace_id, created_by_user_id, type, name, config_json, events_json, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, type, input.name.trim(), JSON.stringify(config), JSON.stringify(events), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "integration.create", resource: "workspace_integration", resourceId: id, metadata: { name: input.name, type, events } });
+  return integrationResponse(await getRequired(env, "SELECT * FROM workspace_integrations WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+}
+
+async function disableIntegration(env, id, workspaceId, auth) {
+  await requireWorkspaceRole(env, auth.user.id, workspaceId, ["owner", "admin"]);
+  const existing = await getRequired(env, "SELECT * FROM workspace_integrations WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_integrations SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "integration.disable", resource: "workspace_integration", resourceId: id, metadata: { name: existing.name, type: existing.type } });
+  return { ok: true };
+}
+
 async function deliverWebhooks(env, workspaceId, event, resourceId, payload) {
   const endpoints = await env.DB.prepare(`
     SELECT * FROM webhook_endpoints
@@ -2768,6 +2831,7 @@ async function deliverWebhooks(env, workspaceId, event, resourceId, payload) {
     if (events.length && !events.includes(event)) continue;
     await deliverWebhook(env, endpoint, event, resourceId, payload);
   }
+  await deliverIntegrations(env, workspaceId, event, resourceId, payload);
 }
 
 async function deliverWebhook(env, endpoint, event, resourceId, payload) {
@@ -2791,6 +2855,42 @@ async function deliverWebhook(env, endpoint, event, resourceId, payload) {
     INSERT INTO webhook_deliveries (id, workspace_id, endpoint_id, event, resource_id, status, status_code, error, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(crypto.randomUUID(), endpoint.workspace_id, endpoint.id, event, cleanNullable(resourceId), status, statusCode, cleanNullable(error), now).run();
+}
+
+async function deliverIntegrations(env, workspaceId, event, resourceId, payload) {
+  const integrations = await env.DB.prepare(`
+    SELECT * FROM workspace_integrations
+    WHERE workspace_id = ? AND status = 'active'
+  `).bind(workspaceId).all();
+  for (const integration of integrations.results) {
+    const events = parseJsonArray(integration.events_json);
+    if (events.length && !events.includes(event)) continue;
+    if (integration.type === "slack") await deliverSlackIntegration(env, integration, event, resourceId, payload);
+  }
+}
+
+async function deliverSlackIntegration(env, integration, event, resourceId, payload) {
+  const now = new Date().toISOString();
+  const config = parseJsonObject(integration.config_json);
+  let status = "failed";
+  let statusCode = null;
+  let error = null;
+  try {
+    const response = await fetch(config.webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Integration" },
+      body: JSON.stringify(slackMessageForEvent(event, payload)),
+    });
+    statusCode = response.status;
+    status = response.ok ? "sent" : "failed";
+    if (!response.ok) error = `HTTP ${response.status}`;
+  } catch (caught) {
+    error = caught.message || String(caught);
+  }
+  await env.DB.prepare(`
+    INSERT INTO integration_deliveries (id, workspace_id, integration_id, event, resource_id, status, status_code, error, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(crypto.randomUUID(), integration.workspace_id, integration.id, event, cleanNullable(resourceId), status, statusCode, cleanNullable(error), now).run();
 }
 
 async function createWorkspaceToken(env, input, auth) {
@@ -3203,7 +3303,7 @@ async function maybeCompleteWarmupPlan(env, planId) {
     .run();
 }
 
-async function getAccount(env, id, workspaceId) {
+async function getAccount(env, id, workspaceId, auth = null) {
   const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, workspaceId);
   const [contacts, opportunities, tasks, emails, communications, calendarEvents, customFields] = await Promise.all([
     env.DB.prepare("SELECT * FROM contacts WHERE account_id = ? ORDER BY created_at DESC").bind(id).all(),
@@ -3977,6 +4077,53 @@ function normalizeWebhookEvents(value) {
   if (!value) return [];
   const events = Array.isArray(value) ? value : String(value).split(/[\n,]/);
   return [...new Set(events.map((event) => String(event).trim()).filter(Boolean))];
+}
+
+function normalizeIntegrationConfig(type, input) {
+  if (type === "slack") {
+    const webhookUrl = normalizeWebhookUrl(input.webhookUrl || input.webhook_url || input.url);
+    return { webhookUrl };
+  }
+  throw httpError(400, "Unsupported integration type");
+}
+
+function integrationResponse(integration) {
+  return {
+    ...integration,
+    events: parseJsonArray(integration.events_json),
+    config: maskIntegrationConfig(integration.type, parseJsonObject(integration.config_json)),
+  };
+}
+
+function maskIntegrationConfig(type, config) {
+  if (type === "slack") return { webhookUrl: config.webhookUrl ? "configured" : "" };
+  return {};
+}
+
+function slackMessageForEvent(event, payload) {
+  const title = slackEventTitle(event, payload);
+  const lines = [`*${title}*`, slackEventDetail(event, payload)].filter(Boolean);
+  return { text: lines.join("\n") };
+}
+
+function slackEventTitle(event, payload) {
+  if (event === "account.created") return `New account: ${payload?.name || "Untitled account"}`;
+  if (event === "contact.created") return `New contact: ${payload?.name || payload?.email || "Untitled contact"}`;
+  if (event === "task.created") return `New task: ${payload?.title || "Untitled task"}`;
+  if (event === "communication.created") return `Communication logged: ${payload?.subject || payload?.type || "Activity"}`;
+  if (event === "email.received") return `Inbound email: ${payload?.subject || "No subject"}`;
+  if (event === "lead_form.submitted") return `Lead form submitted: ${payload?.form?.name || "Lead form"}`;
+  return `UserOrbit event: ${event}`;
+}
+
+function slackEventDetail(event, payload) {
+  if (event === "account.created") return [payload?.domain, payload?.segment, payload?.source].filter(Boolean).join(" / ");
+  if (event === "contact.created") return [payload?.email, payload?.title].filter(Boolean).join(" / ");
+  if (event === "task.created") return [payload?.kind, payload?.due_at || payload?.dueAt].filter(Boolean).join(" / ");
+  if (event === "communication.created") return [payload?.type, payload?.direction, payload?.outcome].filter(Boolean).join(" / ");
+  if (event === "email.received") return payload?.contact?.email || payload?.fromEmail || "";
+  if (event === "lead_form.submitted") return [payload?.account?.name, payload?.contact?.action ? `contact ${payload.contact.action}` : ""].filter(Boolean).join(" / ");
+  return "";
 }
 
 function slugify(value) {

@@ -603,6 +603,7 @@ export const appHtml = String.raw`<!doctype html>
         calendarEvents: [],
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
+        integrations: { integrations: [], deliveries: [] },
         workspaceTokens: [],
         teamInvitations: [],
         webhooks: { endpoints: [], deliveries: [] },
@@ -659,7 +660,7 @@ export const appHtml = String.raw`<!doctype html>
         }
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -675,12 +676,13 @@ export const appHtml = String.raw`<!doctype html>
           api("calendar/events"),
           api("email/settings"),
           canManage ? api("lead-forms") : Promise.resolve([]),
+          canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1428,6 +1430,7 @@ Content-Type: application/json
                 </table>
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
               </div>
@@ -1460,6 +1463,12 @@ Content-Type: application/json
                   <label>URL<input name="url" type="url" required placeholder="https://hooks.example.com/userorbit" /></label>
                   <label>Events<textarea name="events" placeholder="account.created&#10;contact.created&#10;task.created&#10;communication.created&#10;email.created"></textarea></label>
                   <button class="button primary">Create webhook</button>
+                </form>
+                <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Sales Slack alerts" /></label>
+                  <label>Slack webhook URL<input name="webhookUrl" type="url" required placeholder="https://hooks.slack.com/services/..." /></label>
+                  <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
+                  <button class="button primary">Create Slack integration</button>
                 </form>
                 <form id="emailSettingsForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label><input name="openTrackingEnabled" type="checkbox" \${state.emailSettings.open_tracking_enabled ? "checked" : ""} /> Track email opens</label>
@@ -1537,6 +1546,24 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No webhooks yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Webhook deliveries</div></div>' + reportTable(["Event", "Endpoint", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.endpoint_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return endpointTable + deliveryTable;
+      }
+
+      function integrationsTable(integrations) {
+        const items = integrations?.integrations || [];
+        const deliveries = integrations?.deliveries || [];
+        const integrationTable = items.length ? \`<table>
+          <thead><tr><th>Name</th><th>Type</th><th>Events</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${items.map((item) => \`
+            <tr>
+              <td>\${escapeHtml(item.name)}<div class="subtitle">\${escapeHtml(item.config?.webhookUrl || "")}</div></td>
+              <td>\${escapeHtml(item.type)}</td>
+              <td>\${escapeHtml((item.events || []).join(", ") || "all")}</td>
+              <td><span class="pill">\${escapeHtml(item.status)}</span></td>
+              <td>\${item.status === "active" ? '<button class="button" data-disable-integration-id="' + escapeHtml(item.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\` : '<div class="empty">No native integrations yet.</div>';
+        const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Integration deliveries</div></div>' + reportTable(["Event", "Integration", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.integration_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
+        return integrationTable + deliveryTable;
       }
 
       function auditLogsTable(logs) {
@@ -1913,6 +1940,28 @@ Content-Type: application/json
           notice("Email settings saved.");
           await refresh();
         });
+
+        $("#integrationForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("integrations", {
+            method: "POST",
+            body: JSON.stringify({
+              type: "slack",
+              name: form.get("name"),
+              webhookUrl: form.get("webhookUrl"),
+              events: String(form.get("events") || "").split(/\\n|,/).map((event) => event.trim()).filter(Boolean),
+            }),
+          });
+          notice("Slack integration created.");
+          await refresh();
+        });
+
+        document.querySelectorAll("[data-disable-integration-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("integrations/" + encodeURIComponent(node.dataset.disableIntegrationId), { method: "DELETE" });
+          notice("Integration disabled.");
+          await refresh();
+        }));
 
         document.querySelectorAll("[data-disable-webhook-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("webhooks/" + encodeURIComponent(node.dataset.disableWebhookId), { method: "DELETE" });

@@ -23,6 +23,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Users, role-based team/workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
 - Workspace token revocation and audit logs for admin operations plus core CRM mutations.
 - Workspace webhooks for account, contact, task, communication, email, and lead form events.
+- Native Slack notifications for selected CRM events.
 - Account custom fields with role-based read/write permissions for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
 - Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, and stalled opportunities.
@@ -224,6 +225,22 @@ curl -X POST http://localhost:8787/api/lead-forms \
 ```
 
 Share the returned `/forms/<public_key>` URL. Public submissions create or match an account by domain/name, add the contact when the email is new, record a submission, and emit `lead_form.submitted` webhooks.
+
+### Create a Slack integration
+
+```sh
+curl -X POST http://localhost:8787/api/integrations \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "type": "slack",
+    "name": "Sales alerts",
+    "webhookUrl": "https://hooks.slack.com/services/...",
+    "events": ["lead_form.submitted", "email.received", "task.created"]
+  }'
+```
+
+Slack integrations are workspace-scoped. They can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
 
 ### Get reports
 

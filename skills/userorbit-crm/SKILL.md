@@ -99,6 +99,25 @@ List endpoints and recent deliveries:
 GET /api/webhooks
 ```
 
+Create a native Slack integration for selected CRM events:
+
+```http
+POST /api/integrations
+
+{
+  "type": "slack",
+  "name": "Sales alerts",
+  "webhookUrl": "https://hooks.slack.com/services/...",
+  "events": ["lead_form.submitted", "email.received", "task.created"]
+}
+```
+
+List integrations and recent delivery status:
+
+```http
+GET /api/integrations
+```
+
 Create a workspace-scoped agent token:
 
 ```http
