@@ -23,6 +23,7 @@ const WARMUP_PLAN_STATUSES = new Set(["active", "paused", "cancelled", "complete
 const WARMUP_INTERACTIONS = new Set(["inbox", "spam", "not_spam", "reply", "important"]);
 const CUSTOM_FIELD_ENTITIES = new Set(["account"]);
 const CUSTOM_FIELD_TYPES = new Set(["text", "number", "date", "select", "url"]);
+const TEAM_ROLES = new Set(["owner", "admin", "member"]);
 
 export default {
   async fetch(request, env) {
@@ -84,6 +85,14 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "workspace-tokens") {
     return json(await listWorkspaceTokens(env, workspaceId, auth));
+  }
+
+  if (request.method === "GET" && path === "team-invitations") {
+    return json(await listTeamInvitations(env, workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "team-invitations") {
+    return json(await createTeamInvitation(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
   if (request.method === "DELETE" && path.startsWith("workspace-tokens/")) {
@@ -1550,6 +1559,50 @@ async function listWorkspaceTokens(env, workspaceId, auth) {
   return rows.results;
 }
 
+async function listTeamInvitations(env, workspaceId, auth) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const rows = await env.DB.prepare(`
+    SELECT ti.id, ti.team_id, ti.workspace_id, ti.invited_user_id, ti.invited_by_user_id, ti.email, ti.role, ti.accepted_at, ti.last_used_at, ti.created_at, u.name AS invited_by_name
+    FROM team_invitations ti
+    JOIN users u ON u.id = ti.invited_by_user_id
+    WHERE ti.team_id = ?
+    ORDER BY ti.created_at DESC
+    LIMIT 100
+  `).bind(workspace.team_id).all();
+  return rows.results;
+}
+
+async function createTeamInvitation(env, input, auth) {
+  requireFields(input, ["email"]);
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", input.workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const email = cleanEmail(input.email);
+  const role = normalizeEnum(input.role || "member", TEAM_ROLES, "role");
+  const name = cleanNullable(input.name) || email.split("@")[0];
+  const now = new Date().toISOString();
+  const userId = (await env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first())?.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO users (id, email, name, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'active', ?, ?)
+    ON CONFLICT(email) DO UPDATE SET name = COALESCE(NULLIF(excluded.name, ''), users.name), updated_at = excluded.updated_at
+  `).bind(userId, email, name, now, now).run();
+  const user = await getRequired(env, "SELECT * FROM users WHERE email = ?", email);
+  await env.DB.prepare(`
+    INSERT INTO team_members (id, team_id, user_id, role, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(team_id, user_id) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at
+  `).bind(crypto.randomUUID(), workspace.team_id, user.id, role, now, now).run();
+  const token = `uocrm_inv_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO team_invitations (id, team_id, workspace_id, invited_user_id, invited_by_user_id, email, role, token_hash, accepted_at, last_used_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+  `).bind(id, workspace.team_id, workspace.id, user.id, auth.user.id, email, role, await sha256Hex(token), now, now).run();
+  await recordAuditLog(env, { workspaceId: workspace.id, userId: auth.user.id, action: "team_invitation.create", resource: "team_invitation", resourceId: id, metadata: { email, role, teamId: workspace.team_id } });
+  return { id, email, role, workspaceId: workspace.id, teamId: workspace.team_id, token, createdAt: now };
+}
+
 async function createWorkspaceToken(env, input, auth) {
   const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", input.workspaceId);
   await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
@@ -2209,20 +2262,44 @@ async function requireAuth(request, env) {
     WHERE wat.token_hash = ?
       AND wat.revoked_at IS NULL
   `).bind(await sha256Hex(token)).first();
-  if (!apiToken) throw httpError(401, "Unauthorized");
+  if (apiToken) {
+    await env.DB.prepare("UPDATE workspace_api_tokens SET last_used_at = ?, updated_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), new Date().toISOString(), apiToken.id)
+      .run();
 
-  await env.DB.prepare("UPDATE workspace_api_tokens SET last_used_at = ?, updated_at = ? WHERE id = ?")
-    .bind(new Date().toISOString(), new Date().toISOString(), apiToken.id)
+    return {
+      kind: "workspace_token",
+      workspaceId: apiToken.workspace_id,
+      user: {
+        id: apiToken.user_id,
+        email: apiToken.email,
+        name: apiToken.user_name,
+        status: apiToken.user_status,
+      },
+    };
+  }
+
+  const inviteToken = await env.DB.prepare(`
+    SELECT ti.*, u.email, u.name AS user_name, u.status AS user_status
+    FROM team_invitations ti
+    JOIN users u ON u.id = ti.invited_user_id
+    WHERE ti.token_hash = ?
+  `).bind(await sha256Hex(token)).first();
+  if (!inviteToken) throw httpError(401, "Unauthorized");
+
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE team_invitations SET accepted_at = COALESCE(accepted_at, ?), last_used_at = ?, updated_at = ? WHERE id = ?")
+    .bind(now, now, now, inviteToken.id)
     .run();
 
   return {
-    kind: "workspace_token",
-    workspaceId: apiToken.workspace_id,
+    kind: "team_invitation",
+    workspaceId: inviteToken.workspace_id,
     user: {
-      id: apiToken.user_id,
-      email: apiToken.email,
-      name: apiToken.user_name,
-      status: apiToken.user_status,
+      id: inviteToken.invited_user_id,
+      email: inviteToken.email,
+      name: inviteToken.user_name,
+      status: inviteToken.user_status,
     },
   };
 }

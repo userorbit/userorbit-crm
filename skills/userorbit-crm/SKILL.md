@@ -42,6 +42,22 @@ POST /api/workspaces
 { "teamId": "team_id", "name": "Expansion" }
 ```
 
+Invite a teammate to the current workspace team:
+
+```http
+POST /api/team-invitations
+
+{ "email": "teammate@company.com", "name": "Teammate", "role": "member" }
+```
+
+The response includes a token beginning with `uocrm_inv_`. The invited user can use that token as `Authorization: Bearer <token>`; first use marks the invitation accepted.
+
+Review team invitations:
+
+```http
+GET /api/team-invitations
+```
+
 Create a workspace-scoped agent token:
 
 ```http

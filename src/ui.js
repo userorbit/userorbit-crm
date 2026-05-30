@@ -483,8 +483,10 @@ export const appHtml = String.raw`<!doctype html>
         warmup: null,
         tasks: [],
         workspaceTokens: [],
+        teamInvitations: [],
         auditLogs: [],
         generatedToken: "",
+        generatedInviteToken: "",
       };
 
       const $ = (selector) => document.querySelector(selector);
@@ -514,7 +516,7 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -527,9 +529,10 @@ export const appHtml = String.raw`<!doctype html>
           api("warmup"),
           api("tasks"),
           api("workspace-tokens"),
+          api("team-invitations"),
           api("audit-logs"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1074,6 +1077,8 @@ Content-Type: application/json
                 </table>
                 <div class="panel-header"><div class="panel-title">Workspace tokens</div></div>
                 \${workspaceTokensTable(state.workspaceTokens)}
+                <div class="panel-header"><div class="panel-title">Team invitations</div></div>
+                \${teamInvitationsTable(state.teamInvitations)}
                 <div class="panel-header"><div class="panel-title">Audit log</div></div>
                 \${auditLogsTable(state.auditLogs)}
               </div>
@@ -1095,6 +1100,12 @@ Content-Type: application/json
                   <label>Token name<input name="name" required placeholder="Codex agent" /></label>
                   <button class="button primary">Create workspace token</button>
                 </form>
+                <form id="inviteForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Email<input name="email" type="email" required placeholder="teammate@company.com" /></label>
+                  <label>Name<input name="name" placeholder="Teammate" /></label>
+                  <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label>
+                  <button class="button primary">Create invite</button>
+                </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
                   <label>Type<select name="type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Select</option><option value="url">URL</option></select></label>
@@ -1111,6 +1122,7 @@ Content-Type: application/json
                 \${state.customFields.length ? '<div class="panel-header"><div class="panel-title">Account fields</div></div>' + reportTable(["Name", "Key", "Type"], state.customFields.map((field) => [field.name, field.key, field.type])) : ""}
                 \${state.opportunityStages.length ? '<div class="panel-header"><div class="panel-title">Pipeline stages</div></div>' + reportTable(["Label", "Key", "Position"], state.opportunityStages.map((stage) => [stage.label, stage.key, stage.position])) : ""}
                 \${state.generatedToken ? '<div class="api">' + escapeHtml(state.generatedToken) + '</div>' : ""}
+                \${state.generatedInviteToken ? '<div class="api">' + escapeHtml(state.generatedInviteToken) + '</div>' : ""}
               </div>
             </div>
           </div>\`;
@@ -1127,6 +1139,20 @@ Content-Type: application/json
               <td>\${escapeHtml(token.last_used_at || "Never")}</td>
               <td>\${token.revoked_at ? '<span class="pill red">revoked</span>' : '<span class="pill green">active</span>'}</td>
               <td>\${token.revoked_at ? "" : '<button class="button" data-revoke-token-id="' + escapeHtml(token.id) + '">Revoke</button>'}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function teamInvitationsTable(invitations) {
+        if (!invitations.length) return '<div class="empty">No team invitations yet.</div>';
+        return \`<table>
+          <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Last used</th></tr></thead>
+          <tbody>\${invitations.map((invite) => \`
+            <tr>
+              <td>\${escapeHtml(invite.email)}</td>
+              <td><span class="pill">\${escapeHtml(invite.role)}</span></td>
+              <td>\${invite.accepted_at ? '<span class="pill green">accepted</span>' : '<span class="pill amber">pending</span>'}</td>
+              <td>\${escapeHtml(invite.last_used_at || "Never")}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
       }
@@ -1369,6 +1395,15 @@ Content-Type: application/json
           const created = await api("workspace-tokens", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           state.generatedToken = created.token;
           notice("Workspace token created.");
+          await refresh();
+        });
+
+        $("#inviteForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const invite = await api("team-invitations", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
+          state.generatedInviteToken = invite.token;
+          notice("Team invite created.");
           await refresh();
         });
 
