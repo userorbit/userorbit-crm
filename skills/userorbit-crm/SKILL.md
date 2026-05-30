@@ -420,7 +420,7 @@ POST /api/dashboard/shares
 }
 ```
 
-List shares with `GET /api/dashboard/shares`. Open `share_path` to view the read-only dashboard, and disable a link with `DELETE /api/dashboard/shares/<share_id>`. Shared dashboards expose aggregate dashboard/report widgets only.
+List shares with `GET /api/dashboard/shares`. Open `share_path` to view the read-only dashboard, embed `embed_path` in an iframe, and disable a link with `DELETE /api/dashboard/shares/<share_id>`. Shared dashboards expose aggregate dashboard/report widgets only.
 
 Export accounts for backup or spreadsheet analysis:
 

@@ -528,7 +528,7 @@ curl -X POST http://localhost:8787/api/dashboard/shares \
   }'
 ```
 
-Workspace admins can create revocable read-only dashboard share links at `/share/dashboards/<public_key>`. Shared dashboards expose aggregate metrics and report widgets only; they do not expose account/contact detail rows or require an app session.
+Workspace admins can create revocable read-only dashboard share links at `/share/dashboards/<public_key>` and iframe-friendly embeds at `/embed/dashboards/<public_key>`. Shared and embedded dashboards expose aggregate metrics and report widgets only; they do not expose account/contact detail rows or require an app session.
 
 ### Export accounts
 

@@ -65,6 +65,7 @@
 - [x] Add scheduled account CSV exports.
 - [x] Add scheduled report JSON exports.
 - [x] Add revocable read-only dashboard share links.
+- [x] Add iframe-friendly embedded dashboard share controls.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.

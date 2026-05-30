@@ -1915,13 +1915,15 @@ Content-Type: application/json
           <thead><tr><th>Name</th><th>Widgets</th><th>Last viewed</th><th>Status</th><th></th></tr></thead>
           <tbody>\${shares.map((share) => {
             const url = window.location.origin + share.share_path;
+            const embedUrl = window.location.origin + share.embed_path;
+            const embedCode = '<iframe src="' + embedUrl + '" title="' + escapeHtml(share.name) + '" width="100%" height="520" style="border:1px solid #deded8;border-radius:8px"></iframe>';
             return \`
             <tr>
-              <td>\${escapeHtml(share.name)}<div class="subtitle">\${escapeHtml(url)}</div></td>
+              <td>\${escapeHtml(share.name)}<div class="subtitle">\${escapeHtml(url)}</div>\${share.status === "active" ? '<div class="subtitle">Embed: ' + escapeHtml(embedUrl) + '</div><textarea readonly rows="2" style="margin-top:6px;font-size:11px">' + escapeHtml(embedCode) + '</textarea>' : ""}</td>
               <td>\${escapeHtml((share.widgets || []).join(", "))}</td>
               <td>\${escapeHtml(share.last_viewed_at ? formatDateTime(share.last_viewed_at) : "Never")}</td>
               <td><span class="pill">\${escapeHtml(share.status)}</span></td>
-              <td>\${share.status === "active" ? '<a class="button" href="' + escapeHtml(share.share_path) + '" target="_blank" rel="noreferrer">Open</a> <button class="button" data-disable-dashboard-share-id="' + escapeHtml(share.id) + '">Disable</button>' : ""}</td>
+              <td>\${share.status === "active" ? '<a class="button" href="' + escapeHtml(share.share_path) + '" target="_blank" rel="noreferrer">Open</a> <a class="button" href="' + escapeHtml(share.embed_path) + '" target="_blank" rel="noreferrer">Embed</a> <button class="button" data-disable-dashboard-share-id="' + escapeHtml(share.id) + '">Disable</button>' : ""}</td>
             </tr>\`;
           }).join("")}</tbody>
         </table>\`;

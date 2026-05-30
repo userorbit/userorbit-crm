@@ -76,7 +76,11 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/share/dashboards/")) {
-        return await handlePublicDashboardShare(env, url.pathname.split("/").pop());
+        return await handlePublicDashboardShare(env, url.pathname.split("/").pop(), { embedded: false });
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/embed/dashboards/")) {
+        return await handlePublicDashboardShare(env, url.pathname.split("/").pop(), { embedded: true });
       }
 
       if (request.method === "POST" && url.pathname.startsWith("/hooks/messages/")) {
@@ -1727,6 +1731,7 @@ function dashboardShareResponse(share) {
     ...safeShare,
     widgets: normalizeDashboardWidgets(parseJsonArray(widgets_json)),
     share_path: `/share/dashboards/${share.public_key}`,
+    embed_path: `/embed/dashboards/${share.public_key}`,
   };
 }
 
@@ -6838,7 +6843,7 @@ function publicLeadFormHtml(form) {
 </html>`;
 }
 
-async function handlePublicDashboardShare(env, key) {
+async function handlePublicDashboardShare(env, key, options = {}) {
   const share = await getRequired(env, "SELECT * FROM dashboard_shares WHERE public_key = ? AND status = 'active'", cleanNullable(key));
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE dashboard_shares SET last_viewed_at = ?, updated_at = ? WHERE id = ?").bind(now, now, share.id).run();
@@ -6847,12 +6852,13 @@ async function handlePublicDashboardShare(env, key) {
     getSummary(env, share.workspace_id),
     getReports(env, share.workspace_id, null),
   ]);
-  return new Response(publicDashboardShareHtml({ ...share, widgets: normalizeDashboardWidgets(parseJsonArray(share.widgets_json)) }, workspace, summary, reports), {
+  return new Response(publicDashboardShareHtml({ ...share, widgets: normalizeDashboardWidgets(parseJsonArray(share.widgets_json)) }, workspace, summary, reports, options), {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
 
-function publicDashboardShareHtml(share, workspace, summary, reports) {
+function publicDashboardShareHtml(share, workspace, summary, reports, options = {}) {
+  const embedded = Boolean(options.embedded);
   const widgets = share.widgets || DEFAULT_DASHBOARD_WIDGETS;
   const metricCards = [
     ["Accounts", summary.accounts || 0],
@@ -6882,14 +6888,14 @@ function publicDashboardShareHtml(share, workspace, summary, reports) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtmlText(share.name)} - UserOrbit CRM</title>
   <style>
-    body { margin:0; background:#f7f7f5; color:#1f2328; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    main { max-width:1120px; margin:0 auto; padding:32px 20px 48px; }
-    header { margin-bottom:22px; }
-    h1 { margin:0; font-size:30px; line-height:38px; letter-spacing:0; }
+    body { margin:0; background:${embedded ? "#fff" : "#f7f7f5"}; color:#1f2328; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:${embedded ? "100%" : "1120px"}; margin:0 auto; padding:${embedded ? "16px" : "32px 20px 48px"}; box-sizing:border-box; }
+    header { margin-bottom:${embedded ? "14px" : "22px"}; }
+    h1 { margin:0; font-size:${embedded ? "20px" : "30px"}; line-height:${embedded ? "28px" : "38px"}; letter-spacing:0; }
     h2 { margin:0 0 14px; font-size:16px; line-height:24px; }
     .subtitle { color:#667085; margin-top:6px; font-size:14px; }
     .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
-    .card, section { background:#fff; border:1px solid #deded8; border-radius:8px; padding:16px; box-shadow:0 1px 1px rgba(16,24,40,.03); }
+    .card, section { background:#fff; border:1px solid #deded8; border-radius:8px; padding:${embedded ? "12px" : "16px"}; box-shadow:${embedded ? "none" : "0 1px 1px rgba(16,24,40,.03)"}; }
     .card span { display:block; color:#667085; font-size:12px; font-weight:700; }
     .card strong { display:block; margin-top:8px; font-size:24px; }
     section { margin-top:16px; overflow:auto; }
@@ -6903,7 +6909,7 @@ function publicDashboardShareHtml(share, workspace, summary, reports) {
   <main>
     <header>
       <h1>${escapeHtmlText(share.name)}</h1>
-      <div class="subtitle">${escapeHtmlText(workspace.team_name)} / ${escapeHtmlText(workspace.name)} · Shared dashboard · ${escapeHtmlText(new Date().toISOString().slice(0, 10))}</div>
+      <div class="subtitle">${escapeHtmlText(workspace.team_name)} / ${escapeHtmlText(workspace.name)} · ${embedded ? "Embedded dashboard" : "Shared dashboard"} · ${escapeHtmlText(new Date().toISOString().slice(0, 10))}</div>
     </header>
     ${panels.join("") || '<section><div class="empty">No widgets selected.</div></section>'}
   </main>
