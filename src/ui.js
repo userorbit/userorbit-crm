@@ -353,6 +353,25 @@ export const appHtml = String.raw`<!doctype html>
         font-size: 13px;
       }
 
+      .report-drilldowns {
+        border-top: 1px solid var(--border-secondary);
+        padding: 10px 12px 12px;
+      }
+
+      .report-drilldowns details {
+        border: 1px solid var(--border-secondary);
+        border-radius: 6px;
+        margin-top: 8px;
+        overflow: auto;
+      }
+
+      .report-drilldowns summary {
+        cursor: pointer;
+        padding: 8px 10px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
       th,
       td {
         padding: 10px 12px;
@@ -1206,6 +1225,7 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Pipeline by stage</div></div>
               \${reportTable(["Stage", "Deals", "Value", "Confidence"], reports.pipeline.map((row) => [row.stage_label || row.stage, row.opportunities, money(row.value_cents), Math.round(row.avg_confidence || 0) + "%"]))}
+              \${reportDrilldownPanels("Pipeline drill-down", reports.pipeline.map((row) => ({ key: row.stage, label: row.stage_label || row.stage })), reports.drilldowns?.pipeline || {}, ["Account", "Opportunity", "Value", "Confidence"], (item) => [item.account_name, item.name, money(item.value_cents || 0), Math.round(item.confidence || 0) + "%"])}
             </div>\` : ""}
             \${sections.includes("forecast") ? \`
             <div class="panel">
@@ -1230,11 +1250,13 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Owner performance</div></div>
               \${reportTable(["Owner", "Accounts", "Contacts", "Emails", "Open pipeline", "Won", "Open tasks"], reports.ownerPerformance.map((row) => [row.owner, row.accounts || 0, row.contacts || 0, row.emails || 0, money(row.open_pipeline_cents || 0), money(row.won_value_cents || 0), row.open_tasks || 0]))}
+              \${reportDrilldownPanels("Owner drill-down", reports.ownerPerformance.map((row) => ({ key: row.owner, label: row.owner })), reports.drilldowns?.owners || {}, ["Account", "Status", "Open pipeline", "Tasks"], (item) => [item.name, item.status, money(item.open_pipeline_cents || 0), (item.open_tasks || 0) + " open"])}
             </div>\` : ""}
             \${sections.includes("source_conversion") ? \`
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Source conversion</div></div>
               \${reportTable(["Source", "Accounts", "Contacted", "Replied", "Qualified", "Won", "Won value"], reports.sourceConversion.map((row) => [row.source, row.accounts || 0, percent(row.contacted_accounts, row.accounts), percent(row.replied_accounts, row.accounts), percent(row.qualified_accounts, row.accounts), row.won_opportunities || 0, money(row.won_value_cents || 0)]))}
+              \${reportDrilldownPanels("Source drill-down", reports.sourceConversion.map((row) => ({ key: row.source, label: row.source })), reports.drilldowns?.sources || {}, ["Account", "Status", "Emails", "Won value"], (item) => [item.name, item.status, item.emails || 0, money(item.won_value_cents || 0)])}
             </div>\` : ""}
           </div>\` : ""}
           \${sections.includes("stalled_opportunities") ? \`<div class="columns" style="margin-top:14px">
@@ -1252,6 +1274,12 @@ export const appHtml = String.raw`<!doctype html>
           <thead><tr>\${headers.map((header) => '<th>' + escapeHtml(header) + '</th>').join("")}</tr></thead>
           <tbody>\${rows.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("")}</tbody>
         </table>\`;
+      }
+
+      function reportDrilldownPanels(title, groups, drilldowns, headers, rowMapper) {
+        const visibleGroups = groups.map((group) => ({ ...group, rows: drilldowns[group.key] || [] })).filter((group) => group.rows.length);
+        if (!visibleGroups.length) return "";
+        return '<div class="report-drilldowns"><div class="subtitle">' + escapeHtml(title) + '</div>' + visibleGroups.map((group) => '<details><summary>' + escapeHtml(group.label) + ' · ' + group.rows.length + ' records</summary>' + reportTable(headers, group.rows.map(rowMapper)) + '</details>').join("") + '</div>';
       }
 
       function emailActivityTable(emails, includeContact = false) {

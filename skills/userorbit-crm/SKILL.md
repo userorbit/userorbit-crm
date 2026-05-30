@@ -379,7 +379,7 @@ Review sales reports:
 GET /api/reports
 ```
 
-The response includes `pipeline`, `forecast`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, `ownerPerformance`, `sourceConversion`, `stalledOpportunities`, and `customFieldBreakdowns`. `forecast` groups open opportunities by close month with raw and confidence-weighted value.
+The response includes `pipeline`, `forecast`, `accountStatus`, `taskStatus`, `sequencePerformance`, `activity`, `ownerPerformance`, `sourceConversion`, `stalledOpportunities`, `drilldowns`, and `customFieldBreakdowns`. `forecast` groups open opportunities by close month with raw and confidence-weighted value. `drilldowns.pipeline`, `drilldowns.owners`, and `drilldowns.sources` expose compact top-record rows behind the aggregate reports.
 
 Create a saved report view for repeated analysis:
 

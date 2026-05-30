@@ -490,6 +490,8 @@ curl http://localhost:8787/api/reports \
   -H "authorization: Bearer $CRM_API_TOKEN"
 ```
 
+Reports include aggregate pipeline, forecast, activity, owner, source, and stalled-opportunity sections plus compact `drilldowns` for the top records behind pipeline stages, owners, and sources.
+
 ### Save report views
 
 ```sh

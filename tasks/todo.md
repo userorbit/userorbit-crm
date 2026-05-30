@@ -65,6 +65,7 @@
 - [x] Add drag-and-drop movement to the pipeline board.
 - [x] Add per-user dashboard widget customization.
 - [x] Add saved report section views.
+- [x] Add compact report drill-downs for pipeline, owner, and source reports.
 - [x] Add scheduled account CSV exports.
 - [x] Add scheduled report JSON exports.
 - [x] Add revocable read-only dashboard share links.

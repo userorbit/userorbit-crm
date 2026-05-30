@@ -689,7 +689,7 @@ async function getSummary(env, workspaceId) {
 
 async function getReports(env, workspaceId, auth) {
   const closedStages = await getClosedOpportunityStages(env, workspaceId);
-  const [pipeline, forecast, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, ownerPerformance, sourceConversion, customFieldBreakdowns] = await Promise.all([
+  const [pipeline, forecast, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, ownerPerformance, sourceConversion, reportDrilldowns, customFieldBreakdowns] = await Promise.all([
     env.DB.prepare(`
       SELECT o.stage, COALESCE(os.label, o.stage) AS stage_label, COUNT(*) AS opportunities, COALESCE(SUM(o.value_cents), 0) AS value_cents, AVG(o.confidence) AS avg_confidence
       FROM opportunities o
@@ -880,6 +880,7 @@ async function getReports(env, workspaceId, auth) {
       ORDER BY won_value_cents DESC, qualified_accounts DESC, accounts DESC
       LIMIT 20
     `).bind(workspaceId, workspaceId, workspaceId, workspaceId, workspaceId).all(),
+    getReportDrilldowns(env, workspaceId, closedStages),
     getCustomFieldBreakdowns(env, workspaceId, auth),
   ]);
 
@@ -893,8 +894,89 @@ async function getReports(env, workspaceId, auth) {
     stalledOpportunities: stalledOpportunities.results,
     ownerPerformance: ownerPerformance.results,
     sourceConversion: sourceConversion.results,
+    drilldowns: reportDrilldowns,
     customFieldBreakdowns,
   };
+}
+
+async function getReportDrilldowns(env, workspaceId, closedStages) {
+  const [pipelineRows, ownerRows, sourceRows] = await Promise.all([
+    env.DB.prepare(`
+      SELECT
+        o.id,
+        o.name,
+        o.stage,
+        COALESCE(os.label, o.stage) AS stage_label,
+        o.value_cents,
+        o.confidence,
+        o.close_date,
+        a.id AS account_id,
+        a.name AS account_name,
+        COALESCE(NULLIF(a.owner, ''), 'Unassigned') AS owner,
+        COALESCE(NULLIF(a.source, ''), 'Unknown') AS source
+      FROM opportunities o
+      JOIN accounts a ON a.id = o.account_id
+      LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+      WHERE o.workspace_id = ?
+      ORDER BY o.value_cents DESC, o.updated_at DESC
+      LIMIT 80
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        a.id,
+        a.name,
+        COALESCE(NULLIF(a.owner, ''), 'Unassigned') AS owner,
+        a.status,
+        a.source,
+        (SELECT COUNT(*) FROM contacts c WHERE c.account_id = a.id) AS contacts,
+        (SELECT COUNT(*) FROM tasks t WHERE t.account_id = a.id AND t.workspace_id = ? AND t.status != 'done') AS open_tasks,
+        (SELECT COALESCE(SUM(o.value_cents), 0)
+          FROM opportunities o
+          WHERE o.account_id = a.id AND o.workspace_id = ? AND ${stageNotInClause(closedStages, "o.stage")}
+        ) AS open_pipeline_cents,
+        a.updated_at
+      FROM accounts a
+      WHERE a.workspace_id = ?
+      ORDER BY open_pipeline_cents DESC, open_tasks DESC, a.updated_at DESC
+      LIMIT 80
+    `).bind(workspaceId, workspaceId, ...closedStages, workspaceId).all(),
+    env.DB.prepare(`
+      SELECT
+        a.id,
+        a.name,
+        COALESCE(NULLIF(a.source, ''), 'Unknown') AS source,
+        COALESCE(NULLIF(a.owner, ''), 'Unassigned') AS owner,
+        a.status,
+        (SELECT COUNT(*) FROM email_events ee WHERE ee.account_id = a.id) AS emails,
+        (SELECT COUNT(*) FROM contacts c WHERE c.account_id = a.id) AS contacts,
+        (SELECT COALESCE(SUM(o.value_cents), 0)
+          FROM opportunities o
+          LEFT JOIN opportunity_stages os ON os.workspace_id = o.workspace_id AND os.key = o.stage
+          WHERE o.account_id = a.id
+            AND o.workspace_id = ?
+            AND COALESCE(os.is_won, CASE WHEN o.stage = 'won' THEN 1 ELSE 0 END) = 1
+        ) AS won_value_cents,
+        a.updated_at
+      FROM accounts a
+      WHERE a.workspace_id = ?
+      ORDER BY won_value_cents DESC, emails DESC, a.updated_at DESC
+      LIMIT 80
+    `).bind(workspaceId, workspaceId).all(),
+  ]);
+  return {
+    pipeline: groupRowsByKey(pipelineRows.results, "stage", 5),
+    owners: groupRowsByKey(ownerRows.results, "owner", 5),
+    sources: groupRowsByKey(sourceRows.results, "source", 5),
+  };
+}
+
+function groupRowsByKey(rows, key, limit) {
+  return rows.reduce((groups, row) => {
+    const groupKey = cleanNullable(row[key]) || "Unknown";
+    if (!groups[groupKey]) groups[groupKey] = [];
+    if (groups[groupKey].length < limit) groups[groupKey].push(row);
+    return groups;
+  }, {});
 }
 
 async function exportAccountsCsv(env, workspaceId) {
