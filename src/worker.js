@@ -31,6 +31,7 @@ const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 const INTEGRATION_TYPES = new Set(["slack", "teams", "discord"]);
+const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
 const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 const EMAIL_INBOUND_SOURCE_PROVIDERS = new Set(["generic", "postmark", "sendgrid", "mailgun"]);
@@ -155,6 +156,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listIntegrations(env, workspaceId, auth));
   }
 
+  if (request.method === "GET" && path === "enrichment-providers") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await listEnrichmentProviders(env, workspaceId));
+  }
+
   if (request.method === "GET" && path === "message-channels") {
     const access = await requireWorkspaceRole(env, auth.user.id, workspaceId, WORKSPACE_WRITE_ROLES);
     return json(await listMessageChannels(env, workspaceId, ["owner", "admin"].includes(access.role)));
@@ -227,6 +233,16 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "DELETE" && path.startsWith("integrations/")) {
     return json(await disableIntegration(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "enrichment-providers") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createEnrichmentProvider(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("enrichment-providers/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableEnrichmentProvider(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "message-channels") {
@@ -317,6 +333,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "POST" && path.startsWith("accounts/") && path.endsWith("/research")) {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await researchAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path.startsWith("accounts/") && path.endsWith("/enrich")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await enrichAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
   if (request.method === "POST" && path === "accounts") {
@@ -3207,6 +3228,60 @@ async function researchAccount(env, id, input, auth) {
   return { account: await getAccount(env, account.id, input.workspaceId, auth), insight, sourceUrl };
 }
 
+async function enrichAccount(env, id, input, auth) {
+  if (!id) throw httpError(400, "accountId is required");
+  const account = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+  const provider = input.providerId || input.provider_id
+    ? await getRequired(env, "SELECT * FROM workspace_enrichment_providers WHERE id = ? AND workspace_id = ? AND status = 'active'", input.providerId || input.provider_id, input.workspaceId)
+    : await getRequired(env, "SELECT * FROM workspace_enrichment_providers WHERE workspace_id = ? AND status = 'active' ORDER BY created_at ASC LIMIT 1", input.workspaceId);
+  let result;
+  try {
+    result = await fetchEnrichmentProvider(provider, account, input);
+  } catch (error) {
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE workspace_enrichment_providers SET last_error = ?, updated_at = ? WHERE id = ?")
+      .bind(error.message || "Enrichment failed", now, provider.id)
+      .run();
+    throw error;
+  }
+  const now = new Date().toISOString();
+  const summary = buildEnrichmentSummary(account, provider, result);
+  const nextSteps = enrichmentNextSteps(result);
+  const risks = enrichmentRisks(result);
+  const insightId = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO ai_insights (
+      id, workspace_id, entity, entity_id, created_by_user_id, provider, model,
+      summary, next_steps_json, risks_json, score, prompt_json, created_at
+    )
+    VALUES (?, ?, 'account', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    insightId,
+    input.workspaceId,
+    account.id,
+    auth.user.id,
+    `enrichment:${provider.name}`,
+    summary,
+    JSON.stringify(nextSteps),
+    JSON.stringify(risks),
+    result.score ?? null,
+    JSON.stringify({ provider: safeEnrichmentProviderContext(provider), result }),
+    now,
+  ).run();
+  if (input.updateObservation !== false && input.update_observation !== false) {
+    await env.DB.prepare("UPDATE accounts SET observation = ?, source = COALESCE(source, ?), updated_at = ? WHERE id = ? AND workspace_id = ?")
+      .bind(summary, `Enrichment: ${provider.name}`, now, account.id, input.workspaceId)
+      .run();
+  }
+  await env.DB.prepare("UPDATE workspace_enrichment_providers SET last_used_at = ?, last_error = NULL, updated_at = ? WHERE id = ?").bind(now, now, provider.id).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "account.enrich", resource: "account", resourceId: account.id, metadata: { providerId: provider.id, provider: provider.name } });
+  const insight = aiInsightResponse(await getRequired(env, "SELECT * FROM ai_insights WHERE id = ?", insightId));
+  const enriched = await getAccount(env, account.id, input.workspaceId, auth);
+  const providerContext = safeEnrichmentProviderContext(provider);
+  await deliverWebhooks(env, input.workspaceId, "account.enriched", account.id, { account: enriched, insight, provider: providerContext, result });
+  return { account: enriched, insight, provider: providerContext, result };
+}
+
 async function buildAccountInsightContext(env, accountId, workspaceId, auth) {
   const account = await getAccount(env, accountId, workspaceId, auth);
   return {
@@ -3550,6 +3625,93 @@ function generateFallbackAccountResearch(context) {
   });
 }
 
+async function fetchEnrichmentProvider(provider, account, input) {
+  const config = parseJsonObject(provider.config_json);
+  const method = config.method || "GET";
+  const headers = { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Enrichment" };
+  if (config.authHeader && config.authToken) headers[config.authHeader] = config.authToken;
+  const query = {
+    domain: cleanNullable(input.domain) || account.domain || "",
+    name: cleanNullable(input.name) || account.name || "",
+    accountId: account.id,
+  };
+  const url = new URL(config.endpointUrl);
+  let body;
+  if (method === "GET") {
+    for (const [key, value] of Object.entries(query)) if (value) url.searchParams.set(key, value);
+  } else {
+    body = JSON.stringify(query);
+  }
+  const response = await fetch(url.toString(), { method, headers, body });
+  const text = await response.text();
+  const payload = parseJsonObject(text);
+  if (!response.ok) throw httpError(400, `Enrichment failed: ${payload.error || payload.message || `HTTP ${response.status}`}`);
+  return normalizeEnrichmentResult(payload);
+}
+
+function normalizeEnrichmentResult(payload) {
+  const company = payload.company && typeof payload.company === "object" ? payload.company : payload;
+  const description = cleanNullable(company.description || company.summary || company.bio || company.tagline);
+  const industry = cleanNullable(company.industry || company.category || company.sector);
+  const employeeCount = cleanNullable(company.employeeCount || company.employee_count || company.employees || company.metrics?.employees);
+  const location = cleanNullable(company.location || company.geo?.country || company.headquarters);
+  const linkedin = cleanNullable(company.linkedin || company.linkedinUrl || company.linkedin_url || company.site?.linkedin);
+  const tags = normalizeStringList(company.tags || company.keywords || company.categories).slice(0, 8);
+  const score = clampScore(company.score || company.fitScore || company.fit_score);
+  return {
+    raw: redactEnrichmentPayload(payload),
+    name: cleanNullable(company.name),
+    domain: cleanNullable(company.domain),
+    description,
+    industry,
+    employeeCount,
+    location,
+    linkedin,
+    tags,
+    score,
+  };
+}
+
+function redactEnrichmentPayload(value) {
+  if (Array.isArray(value)) return value.map((item) => redactEnrichmentPayload(item));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (["authorization", "auth", "authtoken", "apikey", "apitoken", "token", "secret", "password"].includes(normalizedKey)) {
+      return [key, "redacted"];
+    }
+    return [key, redactEnrichmentPayload(nested)];
+  }));
+}
+
+function buildEnrichmentSummary(account, provider, result) {
+  const facts = [
+    result.description,
+    result.industry ? `Industry: ${result.industry}.` : "",
+    result.employeeCount ? `Employees: ${result.employeeCount}.` : "",
+    result.location ? `Location: ${result.location}.` : "",
+    result.tags?.length ? `Signals: ${result.tags.slice(0, 5).join(", ")}.` : "",
+  ].filter(Boolean);
+  return facts.length
+    ? `${account.name} enriched by ${provider.name}. ${facts.join(" ")}`
+    : `${account.name} enriched by ${provider.name}, but the provider returned limited company context.`;
+}
+
+function enrichmentNextSteps(result) {
+  const steps = ["Review enrichment data before using it in outbound copy."];
+  if (result.industry) steps.push(`Tailor messaging to ${result.industry} pains.`);
+  if (result.employeeCount) steps.push("Use company size to choose the right proof point.");
+  if (result.linkedin) steps.push("Review the company LinkedIn page for recent announcements.");
+  return steps;
+}
+
+function enrichmentRisks(result) {
+  const risks = [];
+  if (!result.description) risks.push("Provider did not return a company description.");
+  if (!result.industry && !result.tags?.length) risks.push("Provider did not return strong segmentation signals.");
+  return risks;
+}
+
 function normalizeStringList(value) {
   const items = Array.isArray(value) ? value : String(value || "").split(/\n/);
   return items.map((item) => cleanNullable(item)).filter(Boolean);
@@ -3607,6 +3769,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "research_account") {
     return { result: await researchAccount(env, cleanNullable(input.accountId || input.payload?.accountId || input.payload?.id), { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "enrich_account") {
+    return { result: await enrichAccount(env, cleanNullable(input.accountId || input.payload?.accountId || input.payload?.id), { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   if (input.command === "generate_ai_notes") {
     return { result: await createCommunicationAiNotes(env, cleanNullable(input.communicationId || input.payload?.communicationId || input.payload?.id), input.workspaceId, auth) };
@@ -3913,6 +4078,42 @@ async function listIntegrations(env, workspaceId, auth) {
     integrations: integrations.results.map(integrationResponse),
     deliveries: deliveries.results,
   };
+}
+
+async function listEnrichmentProviders(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT ep.*, u.name AS created_by_name
+    FROM workspace_enrichment_providers ep
+    LEFT JOIN users u ON u.id = ep.created_by_user_id
+    WHERE ep.workspace_id = ?
+    ORDER BY ep.status ASC, ep.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results.map((provider) => enrichmentProviderResponse(provider));
+}
+
+async function createEnrichmentProvider(env, input, auth) {
+  requireFields(input, ["name", "endpointUrl"]);
+  const type = normalizeEnum(input.type || "generic", ENRICHMENT_PROVIDER_TYPES, "type");
+  const config = normalizeEnrichmentProviderConfig(type, input);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO workspace_enrichment_providers (
+      id, workspace_id, created_by_user_id, name, type, config_json,
+      status, last_used_at, last_error, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), type, JSON.stringify(config), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "enrichment_provider.create", resource: "workspace_enrichment_provider", resourceId: id, metadata: { name: input.name, type } });
+  return enrichmentProviderResponse(await getRequired(env, "SELECT * FROM workspace_enrichment_providers WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+}
+
+async function disableEnrichmentProvider(env, id, workspaceId, auth) {
+  const provider = await getRequired(env, "SELECT * FROM workspace_enrichment_providers WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_enrichment_providers SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "enrichment_provider.disable", resource: "workspace_enrichment_provider", resourceId: id, metadata: { name: provider.name, type: provider.type } });
+  return { ok: true };
 }
 
 async function getEmailSettings(env, workspaceId) {
@@ -5545,11 +5746,49 @@ function normalizeIntegrationConfig(type, input) {
   throw httpError(400, "Unsupported integration type");
 }
 
+function normalizeEnrichmentProviderConfig(type, input) {
+  if (type !== "generic") throw httpError(400, "Unsupported enrichment provider type");
+  const endpointUrl = normalizeWebhookUrl(input.endpointUrl || input.endpoint_url || input.url);
+  const method = String(input.method || "GET").toUpperCase();
+  if (!["GET", "POST"].includes(method)) throw httpError(400, "Enrichment method must be GET or POST");
+  return {
+    endpointUrl,
+    method,
+    authHeader: cleanNullable(input.authHeader || input.auth_header),
+    authToken: cleanNullable(input.authToken || input.auth_token),
+  };
+}
+
 function integrationResponse(integration) {
   return {
     ...integration,
     events: parseJsonArray(integration.events_json),
     config: maskIntegrationConfig(integration.type, parseJsonObject(integration.config_json)),
+  };
+}
+
+function enrichmentProviderResponse(provider, mask = true) {
+  return {
+    ...provider,
+    config: mask ? maskEnrichmentProviderConfig(parseJsonObject(provider.config_json)) : parseJsonObject(provider.config_json),
+  };
+}
+
+function safeEnrichmentProviderContext(provider) {
+  return {
+    id: provider.id,
+    name: provider.name,
+    type: provider.type,
+    config: maskEnrichmentProviderConfig(parseJsonObject(provider.config_json)),
+  };
+}
+
+function maskEnrichmentProviderConfig(config) {
+  return {
+    endpointUrl: config.endpointUrl || "",
+    method: config.method || "GET",
+    authHeader: config.authHeader || "",
+    authToken: config.authToken ? "configured" : "",
   };
 }
 

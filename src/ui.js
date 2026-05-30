@@ -608,6 +608,7 @@ export const appHtml = String.raw`<!doctype html>
         emailSenders: [],
         emailInboundSources: [],
         integrations: { integrations: [], deliveries: [] },
+        enrichmentProviders: [],
         workspaceTokens: [],
         teamInvitations: [],
         webhooks: { endpoints: [], deliveries: [] },
@@ -665,7 +666,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -686,12 +687,13 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("email/inbound-sources") : Promise.resolve([]),
           canManage ? api("lead-forms") : Promise.resolve([]),
           canManage ? api("integrations") : Promise.resolve({ integrations: [], deliveries: [] }),
+          canManage ? api("enrichment-providers") : Promise.resolve([]),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, leadForms, integrations, enrichmentProviders, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -908,7 +910,7 @@ export const appHtml = String.raw`<!doctype html>
               \${timelineList(account.timeline)}
             </div>
             <div class="panel">
-              <div class="panel-header"><div class="panel-title">AI insight</div><div class="toolbar"><button id="researchAccount" class="button">Research site</button><button id="generateAccountInsight" class="button">Generate</button></div></div>
+              <div class="panel-header"><div class="panel-title">AI insight</div><div class="toolbar"><button id="enrichAccount" class="button">Enrich</button><button id="researchAccount" class="button">Research site</button><button id="generateAccountInsight" class="button">Generate</button></div></div>
               \${aiInsightsPanel(account.aiInsights)}
               <div class="panel-header"><div class="panel-title">Contacts</div></div>
               \${customFieldsTable(account.customFields)}
@@ -1516,6 +1518,7 @@ Content-Type: application/json
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email inbound sources</div></div>' + emailInboundSourcesTable(state.emailInboundSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Message channels</div></div>' + messageChannelsTable(state.messageChannels) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Enrichment providers</div></div>' + enrichmentProvidersTable(state.enrichmentProviders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
               </div>
@@ -1555,6 +1558,14 @@ Content-Type: application/json
                   <label>Webhook URL<input name="webhookUrl" type="url" required placeholder="https://hooks.slack.com/services/... or provider webhook URL" /></label>
                   <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
                   <button class="button primary">Create integration</button>
+                </form>
+                <form id="enrichmentProviderForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Company enrichment API" /></label>
+                  <label>Endpoint URL<input name="endpointUrl" type="url" required placeholder="https://api.example.com/company" /></label>
+                  <label>Method<select name="method"><option value="GET">GET</option><option value="POST">POST</option></select></label>
+                  <label>Auth header<input name="authHeader" placeholder="Authorization or x-api-key" /></label>
+                  <label>Auth token<input name="authToken" type="password" placeholder="Bearer token or API key" /></label>
+                  <button class="button primary">Create enrichment provider</button>
                 </form>
                 <form id="messageChannelForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Outbound SMS" /></label>
@@ -1670,6 +1681,21 @@ Content-Type: application/json
         </table>\` : '<div class="empty">No native integrations yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Integration deliveries</div></div>' + reportTable(["Event", "Integration", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.integration_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
         return integrationTable + deliveryTable;
+      }
+
+      function enrichmentProvidersTable(providers = []) {
+        if (!providers.length) return '<div class="empty">No enrichment providers yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Endpoint</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${providers.map((provider) => \`
+            <tr>
+              <td>\${escapeHtml(provider.name)}<div class="subtitle">\${escapeHtml(provider.type)}</div></td>
+              <td>\${escapeHtml(provider.config?.endpointUrl || "")}<div class="subtitle">\${escapeHtml(provider.last_error || provider.config?.method || "")}</div></td>
+              <td>\${escapeHtml(provider.last_used_at ? formatDateTime(provider.last_used_at) : "Never")}</td>
+              <td><span class="pill">\${escapeHtml(provider.status)}</span></td>
+              <td>\${provider.status === "active" ? '<button class="button" data-disable-enrichment-provider-id="' + escapeHtml(provider.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
       }
 
       function emailSendersTable(senders = []) {
@@ -1913,6 +1939,14 @@ Content-Type: application/json
           notice("Account research generated.");
           state.selectedAccount = result.account || await api("accounts/" + encodeURIComponent(state.selectedAccountId));
           render();
+        });
+
+        $("#enrichAccount")?.addEventListener("click", async () => {
+          if (!state.selectedAccountId) return;
+          const result = await api("accounts/" + encodeURIComponent(state.selectedAccountId) + "/enrich", { method: "POST", body: "{}" });
+          notice("Account enriched.");
+          state.selectedAccount = result.account || await api("accounts/" + encodeURIComponent(state.selectedAccountId));
+          await refresh();
         });
 
         $("#generateContactInsight")?.addEventListener("click", async () => {
@@ -2232,6 +2266,24 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#enrichmentProviderForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("enrichment-providers", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              type: "generic",
+              endpointUrl: form.get("endpointUrl"),
+              method: form.get("method"),
+              authHeader: form.get("authHeader") || undefined,
+              authToken: form.get("authToken") || undefined,
+            }),
+          });
+          notice("Enrichment provider created.");
+          await refresh();
+        });
+
         $("#messageChannelForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2254,6 +2306,12 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-integration-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("integrations/" + encodeURIComponent(node.dataset.disableIntegrationId), { method: "DELETE" });
           notice("Integration disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-enrichment-provider-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("enrichment-providers/" + encodeURIComponent(node.dataset.disableEnrichmentProviderId), { method: "DELETE" });
+          notice("Enrichment provider disabled.");
           await refresh();
         }));
 

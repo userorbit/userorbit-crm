@@ -355,6 +355,23 @@ curl -X POST http://localhost:8787/api/accounts/account-id/research \
 
 Account detail includes a Research site button. The API fetches the account domain or supplied `url`, stores an AI research insight, and can refresh the account observation with the generated summary. Agents can call `research_account`.
 
+### Configure account enrichment providers
+
+```sh
+curl -X POST http://localhost:8787/api/enrichment-providers \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "name": "Company data API",
+    "endpointUrl": "https://api.example.com/company",
+    "method": "GET",
+    "authHeader": "Authorization",
+    "authToken": "Bearer provider-token"
+  }'
+```
+
+Generic providers receive `domain`, `name`, and `accountId` as query parameters for `GET` or JSON for `POST`. Enrich an account with `POST /api/accounts/<account_id>/enrich` or the `enrich_account` agent command. The result is stored as an account insight and can refresh the account observation.
+
 ### Generate AI call and meeting notes
 
 ```sh
@@ -454,6 +471,7 @@ Supported commands:
 - `send_message`
 - `generate_ai_insight`
 - `research_account`
+- `enrich_account`
 - `generate_ai_notes`
 - `run_sequences`
 - `run_warmup`

@@ -483,6 +483,41 @@ Equivalent agent command:
 
 If `url` is omitted, UserOrbit uses the account domain. The command fetches public page text, generates positioning and outreach signals, stores the result as an account AI insight, and updates the account observation unless `updateObservation` is `false`.
 
+Configure a generic account enrichment provider:
+
+```http
+POST /api/enrichment-providers
+
+{
+  "name": "Company data API",
+  "endpointUrl": "https://api.example.com/company",
+  "method": "GET",
+  "authHeader": "Authorization",
+  "authToken": "Bearer provider-token"
+}
+```
+
+The provider receives `domain`, `name`, and `accountId` as query parameters for `GET` or JSON for `POST`. Enrich an account:
+
+```http
+POST /api/accounts/<account_id>/enrich
+Content-Type: application/json
+
+{ "providerId": "optional_provider_id", "updateObservation": true }
+```
+
+Equivalent agent command:
+
+```json
+{
+  "command": "enrich_account",
+  "accountId": "account_id",
+  "payload": { "providerId": "optional_provider_id" }
+}
+```
+
+UserOrbit stores enrichment output as an account AI insight, updates the account observation by default, and emits `account.enriched`.
+
 Generate AI follow-up notes for a logged call, meeting, or note:
 
 ```http
@@ -685,6 +720,7 @@ When SMTP is not configured, the CRM records emails as `drafted` instead of send
 ## Operating Rules
 
 - Do not invent account research. Store the source and observation used to justify outreach.
+- Treat enrichment provider output as unverified third-party data unless the user has approved the provider.
 - Do not send or enroll contacts with `status: "unsubscribed"`.
 - Do not keep contacts in automated sequences after they reply; use `POST /api/contacts/<contact_id>/reply`.
 - Prefer small, personalized batches over bulk imports.
