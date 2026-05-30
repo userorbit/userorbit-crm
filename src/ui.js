@@ -1469,6 +1469,11 @@ Content-Type: application/json
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
                   <label>Type<select name="type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Select</option><option value="url">URL</option></select></label>
                   <label>Options<textarea name="options" placeholder="One option per line for select fields"></textarea></label>
+                  <div class="form-grid">
+                    <label><input name="readRoles" type="checkbox" value="member" checked /> Members can view</label>
+                    <label><input name="readRoles" type="checkbox" value="viewer" checked /> Viewers can view</label>
+                    <label><input name="writeRoles" type="checkbox" value="member" checked /> Members can edit</label>
+                  </div>
                   <button class="button primary">Create account field</button>
                 </form>
                 <form id="stageForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -1478,7 +1483,7 @@ Content-Type: application/json
                   <label><input name="isLost" type="checkbox" /> Closed lost</label>
                   <button class="button primary">Create pipeline stage</button>
                 </form>\` : ""}
-                \${state.customFields.length ? '<div class="panel-header"><div class="panel-title">Account fields</div></div>' + reportTable(["Name", "Key", "Type"], state.customFields.map((field) => [field.name, field.key, field.type])) : ""}
+                \${state.customFields.length ? '<div class="panel-header"><div class="panel-title">Account fields</div></div>' + reportTable(["Name", "Key", "Type", "View", "Edit"], state.customFields.map((field) => [field.name, field.key, field.type, (field.read_roles || []).join(", "), (field.write_roles || []).join(", ")])) : ""}
                 \${state.opportunityStages.length ? '<div class="panel-header"><div class="panel-title">Pipeline stages</div></div>' + reportTable(["Label", "Key", "Position"], state.opportunityStages.map((stage) => [stage.label, stage.key, stage.position])) : ""}
                 \${state.generatedToken ? '<div class="api">' + escapeHtml(state.generatedToken) + '</div>' : ""}
                 \${state.generatedInviteToken ? '<div class="api">' + escapeHtml(state.generatedInviteToken) + '</div>' : ""}
@@ -1939,6 +1944,8 @@ Content-Type: application/json
               name: form.get("name"),
               type: form.get("type"),
               options: String(form.get("options") || "").split(/\\n|,/).map((option) => option.trim()).filter(Boolean),
+              readRoles: ["owner", "admin", ...form.getAll("readRoles")],
+              writeRoles: ["owner", "admin", ...form.getAll("writeRoles")],
             }),
           });
           notice("Custom field created.");

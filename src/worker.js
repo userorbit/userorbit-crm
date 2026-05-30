@@ -169,7 +169,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path === "reports") {
-    return json(await getReports(env, workspaceId));
+    return json(await getReports(env, workspaceId, auth));
   }
 
   if (request.method === "GET" && path === "saved-views") {
@@ -177,7 +177,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path === "custom-fields") {
-    return json(await listCustomFields(env, workspaceId, url));
+    return json(await listCustomFields(env, workspaceId, url, auth));
   }
 
   if (request.method === "POST" && path === "custom-fields") {
@@ -223,17 +223,17 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path.startsWith("accounts/")) {
-    return json(await getAccount(env, path.split("/")[1], workspaceId));
+    return json(await getAccount(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "POST" && path === "accounts") {
     await requireWorkspaceWrite(env, auth, workspaceId);
-    return json(await createAccount(env, { ...(await readJson(request)), workspaceId, auditUserId: auth.user.id }), 201);
+    return json(await createAccount(env, { ...(await readJson(request)), workspaceId, auth, auditUserId: auth.user.id }), 201);
   }
 
   if (request.method === "PATCH" && path.startsWith("accounts/")) {
     await requireWorkspaceWrite(env, auth, workspaceId);
-    return json(await updateAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId, auditUserId: auth.user.id }));
+    return json(await updateAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId, auth, auditUserId: auth.user.id }));
   }
 
   if (request.method === "POST" && path === "contacts") {
@@ -398,7 +398,7 @@ async function getSummary(env, workspaceId) {
   return { accounts, contacts, activeEnrollments, dueTasks, openPipelineCents: openPipeline };
 }
 
-async function getReports(env, workspaceId) {
+async function getReports(env, workspaceId, auth) {
   const closedStages = await getClosedOpportunityStages(env, workspaceId);
   const [pipeline, forecast, accountStatus, taskStatus, sequencePerformance, activity, stalledOpportunities, ownerPerformance, sourceConversion, customFieldBreakdowns] = await Promise.all([
     env.DB.prepare(`
@@ -591,7 +591,7 @@ async function getReports(env, workspaceId) {
       ORDER BY won_value_cents DESC, qualified_accounts DESC, accounts DESC
       LIMIT 20
     `).bind(workspaceId, workspaceId, workspaceId, workspaceId, workspaceId).all(),
-    getCustomFieldBreakdowns(env, workspaceId),
+    getCustomFieldBreakdowns(env, workspaceId, auth),
   ]);
 
   return {
@@ -715,12 +715,13 @@ async function importAccountsCsv(env, workspaceId, input, auth = null) {
       const contactTitle = readMapped(row, mapping, "contactTitle", ["contact_title", "title", "job_title", "role"]);
       const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
       if (existing) {
-        if (Object.keys(customFields).length) await upsertCustomFieldValues(env, workspaceId, "account", existing.id, customFields);
+        if (Object.keys(customFields).length) await upsertCustomFieldValues(env, workspaceId, "account", existing.id, customFields, auth);
         const contact = contactName && contactEmail ? await createImportContactIfMissing(env, workspaceId, existing.id, { name: contactName, email: contactEmail, title: contactTitle }) : null;
         results.push({ row: index + 2, ok: true, action: "matched", accountId: existing.id, name: existing.name, contact: contact ? contact.action : "none" });
       } else {
         const account = await createAccount(env, {
           workspaceId,
+          auth,
           name,
           domain,
           segment: readMapped(row, mapping, "segment", ["segment"]),
@@ -970,15 +971,18 @@ async function recordAuditLog(env, { workspaceId, userId, action, resource, reso
   ).run();
 }
 
-async function listCustomFields(env, workspaceId, url) {
+async function listCustomFields(env, workspaceId, url, auth = null) {
   const entity = url.searchParams.get("entity") || "account";
   if (!CUSTOM_FIELD_ENTITIES.has(entity)) throw httpError(400, "Unsupported custom field entity");
+  const role = auth ? await getEffectiveWorkspaceRole(env, auth.user.id, workspaceId) : "owner";
   const rows = await env.DB.prepare(`
     SELECT * FROM custom_fields
     WHERE workspace_id = ? AND entity = ?
     ORDER BY created_at ASC
   `).bind(workspaceId, entity).all();
-  return rows.results.map((row) => ({ ...row, options: parseJsonArray(row.options_json) }));
+  return rows.results
+    .filter((row) => canReadCustomField(row, role))
+    .map(customFieldResponse);
 }
 
 async function createCustomField(env, input, auth = null) {
@@ -991,12 +995,14 @@ async function createCustomField(env, input, auth = null) {
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
   const options = Array.isArray(input.options) ? input.options.map((option) => String(option).trim()).filter(Boolean) : [];
+  const readRoles = normalizeRoleList(input.readRoles || input.read_roles, WORKSPACE_READ_ROLES);
+  const writeRoles = normalizeRoleList(input.writeRoles || input.write_roles, WORKSPACE_WRITE_ROLES);
   await env.DB.prepare(`
-    INSERT INTO custom_fields (id, workspace_id, entity, name, key, type, options_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, input.workspaceId, entity, input.name.trim(), key, type, options.length ? JSON.stringify(options) : null, now, now).run();
-  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth?.user?.id || null, action: "custom_field.create", resource: "custom_field", resourceId: id, metadata: { entity, key, type } });
-  return { ...(await getRequired(env, "SELECT * FROM custom_fields WHERE id = ?", id)), options };
+    INSERT INTO custom_fields (id, workspace_id, entity, name, key, type, options_json, read_roles_json, write_roles_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, input.workspaceId, entity, input.name.trim(), key, type, options.length ? JSON.stringify(options) : null, JSON.stringify(readRoles), JSON.stringify(writeRoles), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth?.user?.id || null, action: "custom_field.create", resource: "custom_field", resourceId: id, metadata: { entity, key, type, readRoles, writeRoles } });
+  return customFieldResponse(await getRequired(env, "SELECT * FROM custom_fields WHERE id = ?", id));
 }
 
 async function deleteCustomField(env, id, workspaceId, auth = null) {
@@ -1006,24 +1012,28 @@ async function deleteCustomField(env, id, workspaceId, auth = null) {
   return { ok: true };
 }
 
-async function getCustomFieldBreakdowns(env, workspaceId) {
+async function getCustomFieldBreakdowns(env, workspaceId, auth = null) {
+  const role = auth ? await getEffectiveWorkspaceRole(env, auth.user.id, workspaceId) : "owner";
   const rows = await env.DB.prepare(`
     SELECT
       cf.id,
       cf.name,
       cf.key,
       cf.type,
+      cf.read_roles_json,
+      cf.write_roles_json,
       COALESCE(NULLIF(cfv.value, ''), 'Not set') AS value,
       COUNT(DISTINCT a.id) AS accounts
     FROM custom_fields cf
     JOIN accounts a ON a.workspace_id = cf.workspace_id
     LEFT JOIN custom_field_values cfv ON cfv.field_id = cf.id AND cfv.entity_id = a.id
     WHERE cf.workspace_id = ? AND cf.entity = 'account'
-    GROUP BY cf.id, value
+    GROUP BY cf.id, cf.read_roles_json, cf.write_roles_json, value
     ORDER BY cf.created_at ASC, accounts DESC, value ASC
   `).bind(workspaceId).all();
   const byField = new Map();
   for (const row of rows.results) {
+    if (!canReadCustomField(row, role)) continue;
     if (!byField.has(row.id)) {
       byField.set(row.id, { id: row.id, name: row.name, key: row.key, type: row.type, values: [] });
     }
@@ -1034,6 +1044,7 @@ async function getCustomFieldBreakdowns(env, workspaceId) {
 
 async function listAccounts(env, url, workspaceId, auth) {
   const filters = await resolveAccountFilters(env, url, workspaceId, auth);
+  await assertReadableCustomFieldFilters(env, workspaceId, filters.customFields || {}, auth);
   const search = `%${filters.q || ""}%`;
   const segment = filters.segment;
   const status = filters.status;
@@ -1099,6 +1110,21 @@ async function resolveAccountFilters(env, url, workspaceId, auth) {
       .filter(([key, value]) => key.startsWith("cf_") && cleanNullable(value))
       .map(([key, value]) => [key.slice(3), cleanNullable(value)])),
   });
+}
+
+async function assertReadableCustomFieldFilters(env, workspaceId, customFields, auth) {
+  const keys = Object.keys(customFields || {});
+  if (!keys.length) return;
+  const role = await getEffectiveWorkspaceRole(env, auth.user.id, workspaceId);
+  const rows = await env.DB.prepare(`
+    SELECT * FROM custom_fields
+    WHERE workspace_id = ? AND entity = 'account'
+  `).bind(workspaceId).all();
+  const byKey = new Map(rows.results.map((field) => [field.key, field]));
+  for (const key of keys) {
+    const field = byKey.get(key);
+    if (!field || !canReadCustomField(field, role)) throw httpError(403, `Cannot filter by restricted custom field: ${key}`);
+  }
 }
 
 function normalizeAccountFilters(input = {}) {
@@ -1218,6 +1244,9 @@ async function createAccount(env, input) {
   const id = input.id || crypto.randomUUID();
   const segment = normalizeEnum(input.segment || "product", SEGMENTS, "segment");
   const status = normalizeEnum(input.status || "target", ACCOUNT_STATUSES, "status");
+  if (input.customFields && typeof input.customFields === "object") {
+    await assertWritableCustomFieldValues(env, workspaceId, "account", input.customFields, input.auth);
+  }
 
   await env.DB.prepare(`
     INSERT INTO accounts (id, workspace_id, name, domain, segment, source, observation, status, owner, created_at, updated_at)
@@ -1245,10 +1274,10 @@ async function createAccount(env, input) {
   }
 
   if (input.customFields && typeof input.customFields === "object") {
-    await upsertCustomFieldValues(env, workspaceId, "account", id, input.customFields);
+    await upsertCustomFieldValues(env, workspaceId, "account", id, input.customFields, input.auth);
   }
 
-  const account = await getAccount(env, id, workspaceId);
+  const account = await getAccount(env, id, workspaceId, input.auth);
   if (input.auditUserId) {
     await recordAuditLog(env, { workspaceId, userId: input.auditUserId, action: "account.create", resource: "account", resourceId: account.id, metadata: { name: account.name, source: account.source, contacts: Array.isArray(input.contacts) ? input.contacts.length : 0 } });
   }
@@ -1324,6 +1353,9 @@ async function submitLeadForm(env, form, input, request) {
 
 async function updateAccount(env, id, input) {
   const existing = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+  if (input.customFields && typeof input.customFields === "object") {
+    await assertWritableCustomFieldValues(env, existing.workspace_id, "account", input.customFields, input.auth);
+  }
   const next = {
     name: input.name?.trim() || existing.name,
     domain: input.domain !== undefined ? cleanNullable(input.domain) : existing.domain,
@@ -1343,10 +1375,10 @@ async function updateAccount(env, id, input) {
     .run();
 
   if (input.customFields && typeof input.customFields === "object") {
-    await upsertCustomFieldValues(env, existing.workspace_id, "account", id, input.customFields);
+    await upsertCustomFieldValues(env, existing.workspace_id, "account", id, input.customFields, input.auth);
   }
 
-  const account = await getAccount(env, id, existing.workspace_id);
+  const account = await getAccount(env, id, existing.workspace_id, input.auth);
   if (input.auditUserId) {
     await recordAuditLog(env, { workspaceId: existing.workspace_id, userId: input.auditUserId, action: "account.update", resource: "account", resourceId: id, metadata: { name: account.name, changedFields: changedInputFields(input, ["name", "domain", "segment", "source", "observation", "status", "owner", "customFields"]) } });
   }
@@ -2368,7 +2400,7 @@ async function recordWarmupInteraction(env, messageId, input) {
 
 async function runAgentCommand(env, input, auth) {
   if (input.command === "create_account") {
-    return { result: await createAccount(env, { ...(input.account || input.payload || {}), workspaceId: input.workspaceId, auditUserId: auth.user.id }) };
+    return { result: await createAccount(env, { ...(input.account || input.payload || {}), workspaceId: input.workspaceId, auth, auditUserId: auth.user.id }) };
   }
   if (input.command === "enroll_contact") {
     return { result: await enrollContact(env, { ...(input.payload || {}), workspaceId: input.workspaceId, auditUserId: auth.user.id }) };
@@ -3129,7 +3161,7 @@ async function getAccount(env, id, workspaceId) {
       ORDER BY ce.starts_at DESC
       LIMIT 100
     `).bind(id, workspaceId).all(),
-    getCustomFieldValues(env, workspaceId, "account", id),
+    getCustomFieldValues(env, workspaceId, "account", id, auth),
   ]);
 
   return {
@@ -3210,18 +3242,22 @@ async function getContact(env, id, workspaceId) {
   };
 }
 
-async function getCustomFieldValues(env, workspaceId, entity, entityId) {
+async function getCustomFieldValues(env, workspaceId, entity, entityId, auth = null) {
+  const role = auth ? await getEffectiveWorkspaceRole(env, auth.user.id, workspaceId) : "owner";
   const rows = await env.DB.prepare(`
-    SELECT cf.id, cf.name, cf.key, cf.type, cf.options_json, cfv.value
+    SELECT cf.id, cf.name, cf.key, cf.type, cf.options_json, cf.read_roles_json, cf.write_roles_json, cfv.value
     FROM custom_fields cf
     LEFT JOIN custom_field_values cfv ON cfv.field_id = cf.id AND cfv.entity_id = ?
     WHERE cf.workspace_id = ? AND cf.entity = ?
     ORDER BY cf.created_at ASC
   `).bind(entityId, workspaceId, entity).all();
-  return rows.results.map((row) => ({ ...row, options: parseJsonArray(row.options_json), value: row.value || "" }));
+  return rows.results
+    .filter((row) => canReadCustomField(row, role))
+    .map((row) => ({ ...customFieldResponse(row), value: row.value || "" }));
 }
 
-async function upsertCustomFieldValues(env, workspaceId, entity, entityId, values) {
+async function upsertCustomFieldValues(env, workspaceId, entity, entityId, values, auth = null) {
+  await assertWritableCustomFieldValues(env, workspaceId, entity, values, auth);
   const fields = await env.DB.prepare("SELECT * FROM custom_fields WHERE workspace_id = ? AND entity = ?").bind(workspaceId, entity).all();
   const byKey = new Map(fields.results.map((field) => [field.key, field]));
   const now = new Date().toISOString();
@@ -3236,6 +3272,17 @@ async function upsertCustomFieldValues(env, workspaceId, entity, entityId, value
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(field_id, entity_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     `).bind(id, workspaceId, field.id, entity, entityId, value, now, now).run();
+  }
+}
+
+async function assertWritableCustomFieldValues(env, workspaceId, entity, values, auth = null) {
+  const role = auth ? await getEffectiveWorkspaceRole(env, auth.user.id, workspaceId) : "owner";
+  const fields = await env.DB.prepare("SELECT * FROM custom_fields WHERE workspace_id = ? AND entity = ?").bind(workspaceId, entity).all();
+  const byKey = new Map(fields.results.map((field) => [field.key, field]));
+  for (const key of Object.keys(values || {})) {
+    const field = byKey.get(key);
+    if (!field) continue;
+    if (!canWriteCustomField(field, role)) throw httpError(403, `Cannot write restricted custom field: ${key}`);
   }
 }
 
@@ -3618,6 +3665,10 @@ async function requireWorkspaceRole(env, userId, workspaceId, roles) {
   return { role: workspaceMembership.role, source: "workspace" };
 }
 
+async function getEffectiveWorkspaceRole(env, userId, workspaceId) {
+  return (await requireWorkspaceRole(env, userId, workspaceId, WORKSPACE_READ_ROLES)).role;
+}
+
 async function sha256Hex(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -3685,6 +3736,37 @@ function changedInputFields(input, fields) {
 function normalizeEnum(value, allowed, field) {
   if (!allowed.has(value)) throw httpError(400, `Invalid ${field}: ${value}`);
   return value;
+}
+
+function normalizeRoleList(value, fallback) {
+  const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]/);
+  const roles = [...new Set(values.map((role) => String(role).trim()).filter((role) => WORKSPACE_READ_ROLES.includes(role)))];
+  return roles.length ? roles : [...fallback];
+}
+
+function customFieldReadRoles(field) {
+  return normalizeRoleList(parseJsonArray(field.read_roles_json), WORKSPACE_READ_ROLES);
+}
+
+function customFieldWriteRoles(field) {
+  return normalizeRoleList(parseJsonArray(field.write_roles_json), WORKSPACE_WRITE_ROLES);
+}
+
+function canReadCustomField(field, role) {
+  return ["owner", "admin"].includes(role) || customFieldReadRoles(field).includes(role);
+}
+
+function canWriteCustomField(field, role) {
+  return ["owner", "admin"].includes(role) || customFieldWriteRoles(field).includes(role);
+}
+
+function customFieldResponse(field) {
+  return {
+    ...field,
+    options: parseJsonArray(field.options_json),
+    read_roles: customFieldReadRoles(field),
+    write_roles: customFieldWriteRoles(field),
+  };
 }
 
 function cleanNullable(value) {

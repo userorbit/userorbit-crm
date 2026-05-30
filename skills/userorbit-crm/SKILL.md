@@ -444,9 +444,13 @@ POST /api/custom-fields
   "entity": "account",
   "name": "Company size",
   "type": "select",
-  "options": ["1-10", "11-50", "51-200", "200+"]
+  "options": ["1-10", "11-50", "51-200", "200+"],
+  "readRoles": ["owner", "admin", "member", "viewer"],
+  "writeRoles": ["owner", "admin", "member"]
 }
 ```
+
+`readRoles` and `writeRoles` accept workspace roles. Owners/admins can always manage fields; restricted fields are omitted from account detail, account filters, and custom-field reports for unauthorized roles, and writes are rejected.
 
 Set custom field values by passing `customFields` when creating or updating an account. Keys are generated from the field name, for example:
 

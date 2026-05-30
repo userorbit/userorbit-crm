@@ -23,7 +23,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Users, role-based team/workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
 - Workspace token revocation and audit logs for admin operations plus core CRM mutations.
 - Workspace webhooks for account, contact, task, communication, email, and lead form events.
-- Account custom fields for self-hosted CRM data modeling.
+- Account custom fields with role-based read/write permissions for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
 - Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, and stalled opportunities.
 - Account CSV import/export with duplicate matching and merge workflow for backups and spreadsheet workflows.
