@@ -1799,6 +1799,9 @@ Content-Type: application/json
                   <label>Delivery URL<input name="deliveryUrl" type="url" placeholder="Required when no native integration is selected" /></label>
                   <label>Repeat after<input name="repeatIntervalHours" type="number" min="0" value="0" placeholder="Hours between repeated alerts" /></label>
                   <label><input name="notifyOnRecovery" type="checkbox" /> Notify when recovered</label>
+                  <label>Escalate after<input name="escalationAfterRuns" type="number" min="0" value="0" placeholder="Triggered runs before escalation" /></label>
+                  <label>Escalation integration<select name="escalationIntegrationId"><option value="">Primary destination</option>\${nativeIntegrationOptions()}</select></label>
+                  <label>Escalation URL<input name="escalationDeliveryUrl" type="url" placeholder="Optional secondary webhook" /></label>
                   <button class="button primary">Create report alert</button>
                 </form>
                 <form id="dashboardShareForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -2003,6 +2006,7 @@ Content-Type: application/json
         if (alert.last_value !== null && alert.last_value !== undefined) parts.push("Last value " + alert.last_value);
         if (Number(alert.repeat_interval_hours || 0) > 0) parts.push("repeat after " + alert.repeat_interval_hours + "h");
         if (alert.notify_on_recovery) parts.push("recovery on");
+        if (Number(alert.escalation_after_runs || 0) > 0) parts.push("escalates after " + alert.escalation_after_runs + " runs");
         return parts.join(" / ");
       }
 
@@ -2848,6 +2852,9 @@ Content-Type: application/json
               integrationId: form.get("integrationId") || undefined,
               repeatIntervalHours: Number(form.get("repeatIntervalHours") || 0),
               notifyOnRecovery: form.get("notifyOnRecovery") === "on",
+              escalationAfterRuns: Number(form.get("escalationAfterRuns") || 0),
+              escalationIntegrationId: form.get("escalationIntegrationId") || undefined,
+              escalationDeliveryUrl: form.get("escalationDeliveryUrl") || undefined,
             }),
           });
           notice("Report alert created.");

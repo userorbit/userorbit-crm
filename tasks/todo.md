@@ -72,6 +72,7 @@
 - [x] Add native integration destinations for report alerts.
 - [x] Add repeat suppression and recovery notifications for report alerts.
 - [x] Add per-user report alert notification preferences.
+- [x] Add one-time escalation policies for report alerts.
 - [x] Add revocable read-only dashboard share links.
 - [x] Add iframe-friendly embedded dashboard share controls.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
@@ -155,3 +156,5 @@ Added email sender rotation: workspace admins can configure active sender identi
 Added report alert notification preferences: admins can suppress repeated threshold notifications with `repeatIntervalHours`, enable recovery notifications, and see the alert preference summary in Settings. Verified local migration, syntax checks, direct webhook trigger/suppression/recovery delivery, and Settings form markup.
 
 Added per-user report alert notification preferences: each user can mute trigger and recovery notifications for alerts they created in the active workspace, with Settings controls and `/api/notification/preferences`. Verified local migration, syntax checks, muted trigger delivery, re-enabled trigger delivery, and Settings form markup.
+
+Added report alert escalation policies: admins can configure `escalationAfterRuns` with optional escalation webhook or native integration destinations, and each triggered incident escalates once until recovery. Verified local migration, syntax checks, primary trigger delivery, one-time escalation delivery, suppressed duplicate escalation, and Settings form markup.

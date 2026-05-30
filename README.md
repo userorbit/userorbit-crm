@@ -584,11 +584,13 @@ curl -X POST http://localhost:8787/api/report-alerts \
     "frequency": "daily",
     "repeatIntervalHours": 24,
     "notifyOnRecovery": true,
+    "escalationAfterRuns": 3,
+    "escalationDeliveryUrl": "https://hooks.example.com/userorbit/report-alert-escalation",
     "deliveryUrl": "https://hooks.example.com/userorbit/report-alert"
   }'
 ```
 
-Report alerts evaluate daily, weekly, or monthly against report metrics and deliver only when the rule triggers and the creating user's notification preferences allow the event. Use `deliveryUrl` for a direct webhook, or `integrationId` to send through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while a metric remains in breach, and set `notifyOnRecovery` to send a recovery notification when the metric returns to normal. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
+Report alerts evaluate daily, weekly, or monthly against report metrics and deliver only when the rule triggers and the creating user's notification preferences allow the event. Use `deliveryUrl` for a direct webhook, or `integrationId` to send through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while a metric remains in breach, and set `notifyOnRecovery` to send a recovery notification when the metric returns to normal. Set `escalationAfterRuns` to send a one-time escalation after the alert remains triggered for that many evaluations; optional `escalationDeliveryUrl` or `escalationIntegrationId` can route escalation to a secondary destination, otherwise the primary destination is reused. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
 
 ### Import accounts
 
