@@ -33,7 +33,8 @@
 - [x] Add explicit workspace memberships and workspace-scoped invite access.
 - [x] Add advanced CSV import column mapping.
 - [x] Add communication activity logging for calls, meetings, messages, and notes.
-- [ ] Add OAuth login, finer-grained permissions, and broader audit coverage.
+- [x] Add read-only viewer roles and enforce workspace write/admin permissions.
+- [ ] Add OAuth login, field-level permissions, and broader audit coverage.
 - [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, native integrations, and provider-backed communication channels.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -83,3 +84,5 @@ Restyled the app/lab against Campsite's current open-source design system: neutr
 Added advanced CSV import mapping: `POST /api/import/accounts.csv` now accepts JSON `{ csv, mapping }` while keeping `text/csv` compatibility, the Accounts import form exposes column mapping for account/contact/custom fields, and mapped imports still dedupe by domain/name before creating records.
 
 Added communication activity logging: `communication_events` stores calls, meetings, SMS, WhatsApp, and notes, `/api/communications` and `log_communication` create entries, the Communications UI logs/reviews activity, and account/contact timelines include those events.
+
+Added role-based workspace permissions: invite roles now support `viewer`, read access accepts viewers, CRM mutation endpoints require owner/admin/member, workspace settings endpoints require owner/admin, and mutating account/contact/opportunity/task/email/sequence routes verify records belong to the active workspace.

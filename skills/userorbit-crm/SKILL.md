@@ -37,7 +37,7 @@ For first setup, use `CRM_API_TOKEN` to open Settings and set the bootstrap user
 3. Call `GET /api/summary` and `GET /api/reports` before recommending pipeline or follow-up actions.
 4. Choose the workspace that matches the user request. If none exists, create one.
 
-Workspace access is explicit for invited members. Team owners and admins can administer all team workspaces; member invites only grant the invited workspace unless another workspace membership is added later.
+Workspace access is explicit for invited users. Team owners and admins can administer all team workspaces. Workspace admins can manage settings and access, members can create and update CRM records, and viewers are read-only. Invites only grant the selected workspace unless another workspace membership is added later.
 
 Create a team:
 
@@ -64,6 +64,8 @@ POST /api/team-invitations
 ```
 
 The response includes a token beginning with `uocrm_inv_`. The invited user can use that token as `Authorization: Bearer <token>`; first use marks the invitation accepted.
+
+Supported invite roles are `admin`, `member`, and `viewer`.
 
 Review team invitations:
 

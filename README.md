@@ -17,7 +17,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Zoho SMTP support through Cloudflare Workers TCP sockets.
 - A token-protected REST API for agents and scripts.
 - Auth-gated app access with a bootstrap admin token and workspace-scoped agent tokens.
-- Users, team memberships, workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
+- Users, role-based team/workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
 - Workspace token revocation and audit logs for admin operations.
 - Workspace webhooks for account, contact, task, communication, and email events.
 - Account custom fields for self-hosted CRM data modeling.
@@ -53,7 +53,7 @@ npm run dev
 
 Open `http://localhost:8787` for the landing page or `http://localhost:8787/app` for the auth-gated CRM. Sign in with `CRM_API_TOKEN` for first setup, set your user password in Settings, then use Settings to create teams, workspaces, and workspace-scoped agent tokens.
 
-Team owners/admins can administer every workspace in their team. Invited members are granted access only to the workspace selected when the invitation is created.
+Team owners/admins can administer every workspace in their team. Workspace admins can manage settings and access, members can create and update CRM activity, and viewers are read-only. Invited users are granted access only to the workspace selected when the invitation is created.
 
 For production:
 

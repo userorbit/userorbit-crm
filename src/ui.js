@@ -651,6 +651,7 @@ export const appHtml = String.raw`<!doctype html>
           state.workspaceId = tenant.currentWorkspaceId || tenant.workspaces[0]?.id || "";
           storageSet("crmWorkspaceId", state.workspaceId);
         }
+        const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
@@ -665,10 +666,10 @@ export const appHtml = String.raw`<!doctype html>
           api("warmup"),
           api("tasks"),
           api("communications"),
-          api("workspace-tokens"),
-          api("team-invitations"),
-          api("webhooks"),
-          api("audit-logs"),
+          canManage ? api("workspace-tokens") : Promise.resolve([]),
+          canManage ? api("team-invitations") : Promise.resolve([]),
+          canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
+          canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
         Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
@@ -715,6 +716,11 @@ export const appHtml = String.raw`<!doctype html>
 
       function header(title, subtitle, action = "") {
         return '<div class="topbar"><div><h1>' + title + '</h1><div class="subtitle">' + subtitle + '</div></div>' + action + '</div>';
+      }
+
+      function canManageCurrentWorkspace(tenant = state.tenant, workspaceId = state.workspaceId) {
+        const workspace = tenant?.workspaces?.find((item) => item.id === workspaceId);
+        return ["owner", "admin"].includes(workspace?.workspace_role);
       }
 
       function accountListQuery() {
@@ -1261,6 +1267,7 @@ Content-Type: application/json
 
       function renderSettings() {
         const tenant = state.tenant || { user: {}, teams: [], workspaces: [] };
+        const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         return header("Settings", "Manage teams, workspaces, and agent access tokens.") + \`
           <div class="columns">
             <div class="panel">
@@ -1279,14 +1286,10 @@ Content-Type: application/json
                   <thead><tr><th>Workspace</th><th>Team</th><th>Role</th></tr></thead>
                   <tbody>\${tenant.workspaces.map((workspace) => '<tr><td>' + escapeHtml(workspace.name) + '</td><td>' + escapeHtml(workspace.team_name) + '</td><td><span class="pill">' + escapeHtml(workspace.workspace_role || "") + '</span></td></tr>').join("")}</tbody>
                 </table>
-                <div class="panel-header"><div class="panel-title">Workspace tokens</div></div>
-                \${workspaceTokensTable(state.workspaceTokens)}
-                <div class="panel-header"><div class="panel-title">Team invitations</div></div>
-                \${teamInvitationsTable(state.teamInvitations)}
-                <div class="panel-header"><div class="panel-title">Webhooks</div></div>
-                \${webhooksTable(state.webhooks)}
-                <div class="panel-header"><div class="panel-title">Audit log</div></div>
-                \${auditLogsTable(state.auditLogs)}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
               </div>
             </div>
             <div class="panel">
@@ -1302,14 +1305,14 @@ Content-Type: application/json
                   <label>Workspace name<input name="name" required placeholder="Expansion" /></label>
                   <button class="button primary">Create workspace</button>
                 </form>
-                <form id="tokenForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                \${canManage ? \`<form id="tokenForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Token name<input name="name" required placeholder="Codex agent" /></label>
                   <button class="button primary">Create workspace token</button>
                 </form>
                 <form id="inviteForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Email<input name="email" type="email" required placeholder="teammate@company.com" /></label>
                   <label>Name<input name="name" placeholder="Teammate" /></label>
-                  <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label>
+                  <label>Role<select name="role"><option value="member">Member</option><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label>
                   <button class="button primary">Create invite</button>
                 </form>
                 <form id="webhookForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -1330,7 +1333,7 @@ Content-Type: application/json
                   <label><input name="isWon" type="checkbox" /> Closed won</label>
                   <label><input name="isLost" type="checkbox" /> Closed lost</label>
                   <button class="button primary">Create pipeline stage</button>
-                </form>
+                </form>\` : ""}
                 \${state.customFields.length ? '<div class="panel-header"><div class="panel-title">Account fields</div></div>' + reportTable(["Name", "Key", "Type"], state.customFields.map((field) => [field.name, field.key, field.type])) : ""}
                 \${state.opportunityStages.length ? '<div class="panel-header"><div class="panel-title">Pipeline stages</div></div>' + reportTable(["Label", "Key", "Position"], state.opportunityStages.map((stage) => [stage.label, stage.key, stage.position])) : ""}
                 \${state.generatedToken ? '<div class="api">' + escapeHtml(state.generatedToken) + '</div>' : ""}

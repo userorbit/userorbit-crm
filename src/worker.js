@@ -23,7 +23,10 @@ const WARMUP_PLAN_STATUSES = new Set(["active", "paused", "cancelled", "complete
 const WARMUP_INTERACTIONS = new Set(["inbox", "spam", "not_spam", "reply", "important"]);
 const CUSTOM_FIELD_ENTITIES = new Set(["account"]);
 const CUSTOM_FIELD_TYPES = new Set(["text", "number", "date", "select", "url"]);
-const TEAM_ROLES = new Set(["owner", "admin", "member"]);
+const TEAM_ROLES = new Set(["owner", "admin", "member", "viewer"]);
+const WORKSPACE_READ_ROLES = ["owner", "admin", "member", "viewer"];
+const WORKSPACE_WRITE_ROLES = ["owner", "admin", "member"];
+const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
@@ -143,10 +146,12 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "custom-fields") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createCustomField(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
   if (request.method === "DELETE" && path.startsWith("custom-fields/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await deleteCustomField(env, path.split("/")[1], workspaceId));
   }
 
@@ -167,6 +172,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "import/accounts.csv") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     const contentType = request.headers.get("content-type") || "";
     const input = contentType.includes("application/json") ? await readJson(request) : await request.text();
     return json(await importAccountsCsv(env, workspaceId, input), 201);
@@ -177,6 +183,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path.startsWith("accounts/") && path.endsWith("/merge")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await mergeAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }, auth));
   }
 
@@ -185,22 +192,27 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "accounts") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createAccount(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
   if (request.method === "PATCH" && path.startsWith("accounts/")) {
-    return json(await updateAccount(env, path.split("/")[1], await readJson(request)));
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await updateAccount(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }));
   }
 
   if (request.method === "POST" && path === "contacts") {
-    return json(await createContact(env, await readJson(request)), 201);
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await createContact(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
   if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/reply")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await markContactReplied(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/unsubscribe")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await unsubscribeContact(env, path.split("/")[1], workspaceId, auth));
   }
 
@@ -209,6 +221,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "opportunities") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createOpportunity(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
@@ -217,6 +230,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "PATCH" && path.startsWith("opportunities/")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await updateOpportunity(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }));
   }
 
@@ -225,6 +239,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "opportunity-stages") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createOpportunityStage(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
@@ -233,6 +248,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "tasks") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createTask(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
@@ -241,11 +257,13 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "communications") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createCommunication(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
   if (request.method === "PATCH" && path.startsWith("tasks/")) {
-    return json(await updateTask(env, path.split("/")[1], await readJson(request)));
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await updateTask(env, path.split("/")[1], { ...(await readJson(request)), workspaceId }));
   }
 
   if (request.method === "GET" && path === "sequences") {
@@ -253,18 +271,22 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "enrollments") {
-    return json(await enrollContact(env, await readJson(request)), 201);
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await enrollContact(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
   if (request.method === "POST" && path === "email/send") {
-    return json(await sendManualEmail(env, await readJson(request)), 201);
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await sendManualEmail(env, { ...(await readJson(request)), workspaceId }), 201);
   }
 
   if (request.method === "POST" && path === "email/inbound") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await recordInboundEmail(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
   if (request.method === "POST" && path === "sequence/run") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await processDueSequenceEmails(env, { limit: 20 }));
   }
 
@@ -273,27 +295,33 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "POST" && path === "warmup/mailboxes") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await upsertWarmupMailbox(env, await readJson(request)), 201);
   }
 
   if (request.method === "POST" && path === "warmup/plans") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createWarmupPlan(env, await readJson(request)), 201);
   }
 
   if (request.method === "PATCH" && path.startsWith("warmup/plans/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await updateWarmupPlan(env, path.split("/")[2], await readJson(request)));
   }
 
   if (request.method === "POST" && path === "warmup/run") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     const input = await readJson(request);
     return json(await processDueWarmupEmails(env, { limit: input.limit || 1 }));
   }
 
   if (request.method === "POST" && path.startsWith("warmup/messages/") && path.endsWith("/interaction")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await recordWarmupInteraction(env, path.split("/")[2], await readJson(request)), 201);
   }
 
   if (request.method === "POST" && path === "agent/command") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await runAgentCommand(env, { ...(await readJson(request)), workspaceId }, auth));
   }
 
@@ -516,7 +544,7 @@ async function importAccountsCsv(env, workspaceId, input) {
       const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
       if (existing) {
         if (Object.keys(customFields).length) await upsertCustomFieldValues(env, workspaceId, "account", existing.id, customFields);
-        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, existing.id, { name: contactName, email: contactEmail, title: contactTitle }) : null;
+        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, workspaceId, existing.id, { name: contactName, email: contactEmail, title: contactTitle }) : null;
         results.push({ row: index + 2, ok: true, action: "matched", accountId: existing.id, name: existing.name, contact: contact ? contact.action : "none" });
       } else {
         const account = await createAccount(env, {
@@ -601,11 +629,11 @@ async function findImportAccountMatch(env, workspaceId, input) {
     .first();
 }
 
-async function createImportContactIfMissing(env, accountId, input) {
+async function createImportContactIfMissing(env, workspaceId, accountId, input) {
   const email = cleanEmail(input.email);
   const existing = await env.DB.prepare("SELECT id, account_id FROM contacts WHERE email = ?").bind(email).first();
   if (existing) return { action: existing.account_id === accountId ? "existing" : "email_conflict", id: existing.id };
-  const created = await createContact(env, { accountId, name: input.name, email, title: input.title });
+  const created = await createContact(env, { workspaceId, accountId, name: input.name, email, title: input.title });
   return { action: "created", id: created.id };
 }
 
@@ -889,7 +917,7 @@ async function createAccount(env, input) {
 
   if (Array.isArray(input.contacts)) {
     for (const contact of input.contacts) {
-      await createContact(env, { ...contact, accountId: id });
+      await createContact(env, { ...contact, workspaceId, accountId: id });
     }
   }
 
@@ -903,7 +931,7 @@ async function createAccount(env, input) {
 }
 
 async function updateAccount(env, id, input) {
-  const existing = await getRequired(env, "SELECT * FROM accounts WHERE id = ?", id);
+  const existing = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
   const next = {
     name: input.name?.trim() || existing.name,
     domain: input.domain !== undefined ? cleanNullable(input.domain) : existing.domain,
@@ -917,9 +945,9 @@ async function updateAccount(env, id, input) {
   await env.DB.prepare(`
     UPDATE accounts
     SET name = ?, domain = ?, segment = ?, source = ?, observation = ?, status = ?, owner = ?, updated_at = ?
-    WHERE id = ?
+    WHERE id = ? AND workspace_id = ?
   `)
-    .bind(next.name, next.domain, next.segment, next.source, next.observation, next.status, next.owner, new Date().toISOString(), id)
+    .bind(next.name, next.domain, next.segment, next.source, next.observation, next.status, next.owner, new Date().toISOString(), id, input.workspaceId)
     .run();
 
   if (input.customFields && typeof input.customFields === "object") {
@@ -972,7 +1000,7 @@ async function mergeAccount(env, targetAccountId, input, auth) {
 
 async function createContact(env, input) {
   requireFields(input, ["accountId", "name", "email"]);
-  await getRequired(env, "SELECT id FROM accounts WHERE id = ?", input.accountId);
+  const account = await getRequired(env, "SELECT id, workspace_id FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
   const status = normalizeEnum(input.status || "new", CONTACT_STATUSES, "status");
@@ -997,15 +1025,17 @@ async function createContact(env, input) {
 
   await touchAccount(env, input.accountId);
   const contact = await getRequired(env, "SELECT * FROM contacts WHERE id = ?", id);
-  const account = await getRequired(env, "SELECT id, workspace_id FROM accounts WHERE id = ?", input.accountId);
   await deliverWebhooks(env, account.workspace_id, "contact.created", contact.id, contact);
   return contact;
 }
 
 async function createOpportunity(env, input) {
   requireFields(input, ["accountId", "name"]);
-  await getRequired(env, "SELECT id FROM accounts WHERE id = ?", input.accountId);
   const workspaceId = input.workspaceId || (await resolveDefaultWorkspaceId(env));
+  await getRequired(env, "SELECT id FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, workspaceId);
+  if (input.contactId) {
+    await getRequired(env, "SELECT c.id FROM contacts c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.workspace_id = ?", input.contactId, workspaceId);
+  }
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
   const stage = await normalizeOpportunityStage(env, workspaceId, input.stage || "research");
@@ -1147,6 +1177,12 @@ async function listTasks(env, workspaceId) {
 async function createTask(env, input) {
   requireFields(input, ["title"]);
   const workspaceId = input.workspaceId || (await resolveDefaultWorkspaceId(env));
+  if (input.accountId) {
+    await getRequired(env, "SELECT id FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, workspaceId);
+  }
+  if (input.contactId) {
+    await getRequired(env, "SELECT c.id FROM contacts c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.workspace_id = ?", input.contactId, workspaceId);
+  }
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
 
@@ -1231,11 +1267,17 @@ async function createCommunication(env, input, auth) {
 }
 
 async function updateTask(env, id, input) {
-  const task = await getRequired(env, "SELECT * FROM tasks WHERE id = ?", id);
+  const task = await getRequired(env, "SELECT * FROM tasks WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+  if (input.accountId) {
+    await getRequired(env, "SELECT id FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
+  }
+  if (input.contactId) {
+    await getRequired(env, "SELECT c.id FROM contacts c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.workspace_id = ?", input.contactId, input.workspaceId);
+  }
   await env.DB.prepare(`
     UPDATE tasks
     SET title = ?, kind = ?, due_at = ?, status = ?, notes = ?, updated_at = ?
-    WHERE id = ?
+    WHERE id = ? AND workspace_id = ?
   `)
     .bind(
       input.title?.trim() || task.title,
@@ -1245,9 +1287,10 @@ async function updateTask(env, id, input) {
       input.notes !== undefined ? cleanNullable(input.notes) : task.notes,
       new Date().toISOString(),
       id,
+      input.workspaceId,
     )
     .run();
-  return getRequired(env, "SELECT * FROM tasks WHERE id = ?", id);
+  return getRequired(env, "SELECT * FROM tasks WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
 async function listSequences(env) {
@@ -1275,7 +1318,12 @@ async function listSequences(env) {
 async function enrollContact(env, input) {
   requireFields(input, ["sequenceId", "contactId"]);
   await getRequired(env, "SELECT id FROM sequences WHERE id = ?", input.sequenceId);
-  const contact = await getRequired(env, "SELECT id, status FROM contacts WHERE id = ?", input.contactId);
+  const contact = await getRequired(env, `
+    SELECT c.id, c.status
+    FROM contacts c
+    JOIN accounts a ON a.id = c.account_id
+    WHERE c.id = ? AND a.workspace_id = ?
+  `, input.contactId, input.workspaceId);
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const now = new Date().toISOString();
   const nextSendAt = input.nextSendAt || now;
@@ -1294,6 +1342,7 @@ async function enrollContact(env, input) {
 async function sendManualEmail(env, input) {
   requireFields(input, ["contactId", "subject", "body"]);
   const contact = await getContactWithAccount(env, input.contactId);
+  if (contact.workspace_id !== input.workspaceId) throw httpError(404, "Not found");
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const result = await sendEmail(env, {
     to: contact.email,
@@ -1786,10 +1835,10 @@ async function runAgentCommand(env, input, auth) {
     return { result: await createAccount(env, { ...(input.account || input.payload || {}), workspaceId: input.workspaceId }) };
   }
   if (input.command === "enroll_contact") {
-    return { result: await enrollContact(env, input.payload || {}) };
+    return { result: await enrollContact(env, { ...(input.payload || {}), workspaceId: input.workspaceId }) };
   }
   if (input.command === "send_email") {
-    return { result: await sendManualEmail(env, input.payload || {}) };
+    return { result: await sendManualEmail(env, { ...(input.payload || {}), workspaceId: input.workspaceId }) };
   }
   if (input.command === "run_sequences") {
     return { result: await processDueSequenceEmails(env, { limit: input.limit || 20 }) };
@@ -2106,7 +2155,7 @@ async function listAuditLogs(env, workspaceId, auth) {
 async function resolveWorkspaceId(env, request, auth) {
   const requested = cleanNullable(request.headers.get("x-workspace-id"));
   if (requested) {
-    await requireWorkspaceRole(env, auth.user.id, requested, ["owner", "admin", "member"]);
+    await requireWorkspaceRole(env, auth.user.id, requested, WORKSPACE_READ_ROLES);
     return requested;
   }
   return auth.workspaceId || resolveDefaultWorkspaceId(env, auth);
@@ -2843,6 +2892,14 @@ async function requireTeamRole(env, userId, teamId, roles) {
     .first();
   if (!membership || !roles.includes(membership.role)) throw httpError(403, "Forbidden");
   return membership;
+}
+
+async function requireWorkspaceWrite(env, auth, workspaceId) {
+  return requireWorkspaceRole(env, auth.user.id, workspaceId, WORKSPACE_WRITE_ROLES);
+}
+
+async function requireWorkspaceAdmin(env, auth, workspaceId) {
+  return requireWorkspaceRole(env, auth.user.id, workspaceId, WORKSPACE_ADMIN_ROLES);
 }
 
 async function requireWorkspaceRole(env, userId, workspaceId, roles) {
