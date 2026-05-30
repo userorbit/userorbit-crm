@@ -13,6 +13,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Pipeline board with workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending, inbound reply capture, and scheduled sequence processing.
+- Configurable first-party email open and click tracking.
 - Contact unsubscribe handling for manual sends and sequences.
 - Zoho SMTP support through Cloudflare Workers TCP sockets.
 - A token-protected REST API for agents and scripts.
@@ -33,6 +34,7 @@ After this directory is published to GitHub, the deploy button above can create 
 
 - D1 binding: `DB`
 - Secret: `CRM_API_TOKEN` for the bootstrap admin login
+- Optional public URL: `CRM_PUBLIC_URL` for email open/click tracking links
 - Optional SMTP secrets: `CRM_FROM_EMAIL`, `CRM_FROM_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`
 
 The public repository is available at https://github.com/userorbit/userorbit-crm.
@@ -68,6 +70,7 @@ Create `.dev.vars` locally and set production secrets with `wrangler secret put`
 
 ```sh
 CRM_API_TOKEN="use-a-long-random-token"
+CRM_PUBLIC_URL="https://your-worker.example.workers.dev"
 CRM_FROM_EMAIL="founder@userorbit.com"
 CRM_FROM_NAME="UserOrbit"
 SMTP_HOST="smtp.zoho.com"
@@ -80,6 +83,8 @@ SMTP_PASSWORD="zoho-app-specific-password"
 Zoho supports SMTP on `smtp.zoho.com` with SSL on port `465` and TLS/STARTTLS on port `587`. If the Zoho account has 2FA enabled, use an application-specific password.
 
 Cloudflare Workers can open outbound TCP sockets and use StartTLS, but port `25` is blocked. This app defaults to Zoho's SSL port `465`.
+
+Set `CRM_PUBLIC_URL` to your deployed Worker origin before enabling email open or click tracking. Manual sends from the UI can infer the current origin, but scheduled sequence sends need the configured public URL.
 
 ## API
 
@@ -166,6 +171,17 @@ curl -X POST http://localhost:8787/api/email/inbound \
 ```
 
 Inbound emails are matched to contacts by `fromEmail` or `contactId`, recorded on account and contact timelines, and pause active sequence enrollments by marking the contact as replied.
+
+### Configure email tracking
+
+```sh
+curl -X PATCH http://localhost:8787/api/email/settings \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{ "openTrackingEnabled": true, "clickTrackingEnabled": true }'
+```
+
+Email tracking is workspace-scoped and off by default. Opens and clicks are counted on email activity, account/contact detail, and reports.
 
 ### Get reports
 

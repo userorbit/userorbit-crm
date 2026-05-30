@@ -48,6 +48,14 @@ export default {
         return new Response(appHtml, { headers: { "content-type": "text/html; charset=utf-8" } });
       }
 
+      if (request.method === "GET" && url.pathname.startsWith("/t/open/")) {
+        return await recordEmailOpen(env, url.pathname.split("/").pop());
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/t/click/")) {
+        return await recordEmailClick(env, url.pathname.split("/").pop(), url.searchParams.get("u"));
+      }
+
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
         return json(await loginWithPassword(env, await readJson(request)));
       }
@@ -111,6 +119,15 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "webhooks") {
     return json(await listWebhooks(env, workspaceId, auth));
+  }
+
+  if (request.method === "GET" && path === "email/settings") {
+    return json(await getEmailSettings(env, workspaceId));
+  }
+
+  if (request.method === "PATCH" && path === "email/settings") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await updateEmailSettings(env, workspaceId, await readJson(request), auth));
   }
 
   if (request.method === "POST" && path === "webhooks") {
@@ -277,7 +294,7 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "POST" && path === "email/send") {
     await requireWorkspaceWrite(env, auth, workspaceId);
-    return json(await sendManualEmail(env, { ...(await readJson(request)), workspaceId }), 201);
+    return json(await sendManualEmail(env, { ...(await readJson(request)), workspaceId, baseUrl: url.origin }), 201);
   }
 
   if (request.method === "POST" && path === "email/inbound") {
@@ -391,7 +408,9 @@ async function getReports(env, workspaceId) {
         COUNT(ee.id) AS emails,
         SUM(CASE WHEN ee.status = 'sent' THEN 1 ELSE 0 END) AS sent,
         SUM(CASE WHEN ee.status = 'drafted' THEN 1 ELSE 0 END) AS drafted,
-        SUM(CASE WHEN ee.status = 'failed' THEN 1 ELSE 0 END) AS failed
+        SUM(CASE WHEN ee.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN ee.open_count > 0 THEN 1 ELSE 0 END) AS opened,
+        SUM(CASE WHEN ee.click_count > 0 THEN 1 ELSE 0 END) AS clicked
       FROM sequences s
       LEFT JOIN sequence_enrollments se ON se.sequence_id = s.id
       LEFT JOIN contacts c ON c.id = se.contact_id
@@ -406,6 +425,10 @@ async function getReports(env, workspaceId) {
         SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
         SUM(CASE WHEN status = 'drafted' THEN 1 ELSE 0 END) AS drafted,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+        SUM(open_count) AS opens,
+        SUM(click_count) AS clicks,
+        SUM(CASE WHEN open_count > 0 THEN 1 ELSE 0 END) AS opened_emails,
+        SUM(CASE WHEN click_count > 0 THEN 1 ELSE 0 END) AS clicked_emails,
         MAX(created_at) AS last_activity_at
       FROM email_events
       WHERE account_id IN (SELECT id FROM accounts WHERE workspace_id = ?)
@@ -1344,11 +1367,14 @@ async function sendManualEmail(env, input) {
   const contact = await getContactWithAccount(env, input.contactId);
   if (contact.workspace_id !== input.workspaceId) throw httpError(404, "Not found");
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  const emailSettings = await getEmailSettings(env, input.workspaceId);
+  const tracking = buildEmailTracking(input.baseUrl || env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
   const result = await sendEmail(env, {
     to: contact.email,
     toName: contact.name,
     subject: input.subject,
     body: input.body,
+    tracking,
   });
 
   const event = await recordEmailEvent(env, {
@@ -1359,6 +1385,7 @@ async function sendManualEmail(env, input) {
     providerMessageId: result.providerMessageId,
     error: result.error,
     sentAt: result.status === "sent" ? new Date().toISOString() : null,
+    trackingId: tracking?.id,
   });
 
   await deliverWebhooks(env, contact.workspace_id, "email.created", event.id, event);
@@ -1378,6 +1405,7 @@ async function processDueSequenceEmails(env, options = {}) {
       c.name AS contact_name,
       c.email,
       c.account_id,
+      a.workspace_id,
       a.name AS account_name,
       a.domain,
       a.observation,
@@ -1418,11 +1446,14 @@ async function processDueSequenceEmails(env, options = {}) {
       },
     );
 
+    const emailSettings = await getEmailSettings(env, item.workspace_id);
+    const tracking = buildEmailTracking(env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
     const result = await sendEmail(env, {
       to: item.email,
       toName: item.contact_name,
       subject: rendered.subject,
       body: rendered.body,
+      tracking,
     });
 
     await recordEmailEvent(env, {
@@ -1435,6 +1466,7 @@ async function processDueSequenceEmails(env, options = {}) {
       providerMessageId: result.providerMessageId,
       error: result.error,
       sentAt: result.status === "sent" ? new Date().toISOString() : null,
+      trackingId: tracking?.id,
     });
 
     const nextStep = await env.DB.prepare(`
@@ -2055,6 +2087,33 @@ async function listWebhooks(env, workspaceId, auth) {
   };
 }
 
+async function getEmailSettings(env, workspaceId) {
+  const existing = await env.DB.prepare("SELECT * FROM workspace_email_settings WHERE workspace_id = ?").bind(workspaceId).first();
+  return {
+    workspace_id: workspaceId,
+    open_tracking_enabled: existing?.open_tracking_enabled || 0,
+    click_tracking_enabled: existing?.click_tracking_enabled || 0,
+    created_at: existing?.created_at || null,
+    updated_at: existing?.updated_at || null,
+  };
+}
+
+async function updateEmailSettings(env, workspaceId, input, auth) {
+  const now = new Date().toISOString();
+  const openTracking = input.openTrackingEnabled || input.open_tracking_enabled ? 1 : 0;
+  const clickTracking = input.clickTrackingEnabled || input.click_tracking_enabled ? 1 : 0;
+  await env.DB.prepare(`
+    INSERT INTO workspace_email_settings (workspace_id, open_tracking_enabled, click_tracking_enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id) DO UPDATE SET
+      open_tracking_enabled = excluded.open_tracking_enabled,
+      click_tracking_enabled = excluded.click_tracking_enabled,
+      updated_at = excluded.updated_at
+  `).bind(workspaceId, openTracking, clickTracking, now, now).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_settings.update", resource: "workspace_email_settings", resourceId: workspaceId, metadata: { openTracking, clickTracking } });
+  return getEmailSettings(env, workspaceId);
+}
+
 async function createWebhook(env, input, auth) {
   requireFields(input, ["name", "url"]);
   await requireWorkspaceRole(env, auth.user.id, input.workspaceId, ["owner", "admin"]);
@@ -2264,6 +2323,7 @@ function buildMimeMessage(env, message) {
   const fromEmail = env.CRM_FROM_EMAIL || env.SMTP_USERNAME;
   const fromName = env.CRM_FROM_NAME || "UserOrbit";
   const messageDomain = emailDomain(fromEmail) || smtpIdentityDomain(env);
+  const textBody = message.tracking?.clickTrackingEnabled ? rewriteTrackedLinks(message.body, message.tracking) : message.body;
   const headers = [
     `From: ${formatAddress(fromName, fromEmail)}`,
     `To: ${formatAddress(message.toName, message.to)}`,
@@ -2272,10 +2332,75 @@ function buildMimeMessage(env, message) {
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: <${crypto.randomUUID()}@${messageDomain}>`,
     "MIME-Version: 1.0",
+  ];
+  if (!message.tracking?.openTrackingEnabled) {
+    return `${[...headers, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: 8bit"].join("\r\n")}\r\n\r\n${escapeSmtpBody(textBody)}`;
+  }
+
+  const boundary = `uocrm_${crypto.randomUUID().replaceAll("-", "")}`;
+  const htmlBody = buildTrackedHtmlBody(message.body, message.tracking);
+  return [
+    ...headers,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
-  ];
-  return `${headers.join("\r\n")}\r\n\r\n${escapeSmtpBody(message.body)}`;
+    "",
+    escapeSmtpBody(textBody),
+    `--${boundary}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    escapeSmtpBody(htmlBody),
+    `--${boundary}--`,
+  ].join("\r\n");
+}
+
+function emailTrackingEnabled(settings) {
+  return Boolean(settings?.open_tracking_enabled || settings?.click_tracking_enabled);
+}
+
+function buildEmailTracking(baseUrl, trackingId, settings) {
+  if (!trackingId || !emailTrackingEnabled(settings)) return null;
+  const normalizedBase = cleanNullable(baseUrl)?.replace(/\/+$/, "");
+  if (!normalizedBase) return null;
+  return {
+    id: trackingId,
+    baseUrl: normalizedBase,
+    openTrackingEnabled: Boolean(settings.open_tracking_enabled),
+    clickTrackingEnabled: Boolean(settings.click_tracking_enabled),
+  };
+}
+
+function rewriteTrackedLinks(body, tracking) {
+  if (!tracking?.clickTrackingEnabled) return body;
+  return String(body || "").replace(/https?:\/\/[^\s<>"')]+/g, (url) => trackingClickUrl(tracking, url));
+}
+
+function buildTrackedHtmlBody(body, tracking) {
+  const linked = linkifyHtmlBody(String(body || ""), tracking);
+  const pixel = tracking?.openTrackingEnabled ? `<img src="${escapeHtml(`${tracking.baseUrl}/t/open/${tracking.id}`)}" width="1" height="1" alt="" style="display:none" />` : "";
+  return `<!doctype html><html><body>${linked}${pixel}</body></html>`;
+}
+
+function trackingClickUrl(tracking, url) {
+  return `${tracking.baseUrl}/t/click/${tracking.id}?u=${encodeURIComponent(url)}`;
+}
+
+function linkifyHtmlBody(body, tracking) {
+  let html = "";
+  let cursor = 0;
+  const pattern = /https?:\/\/[^\s<>"')]+/g;
+  for (const match of body.matchAll(pattern)) {
+    const url = match[0];
+    html += escapeHtml(body.slice(cursor, match.index)).replace(/\r?\n/g, "<br>");
+    const href = tracking?.clickTrackingEnabled ? trackingClickUrl(tracking, url) : url;
+    html += `<a href="${escapeHtml(href)}">${escapeHtml(url)}</a>`;
+    cursor = match.index + url.length;
+  }
+  html += escapeHtml(body.slice(cursor)).replace(/\r?\n/g, "<br>");
+  return html;
 }
 
 function smtpIdentityDomain(env) {
@@ -2315,9 +2440,9 @@ async function recordEmailEvent(env, input) {
   await env.DB.prepare(`
     INSERT INTO email_events (
       id, contact_id, account_id, sequence_id, sequence_step_id, direction, status,
-      subject, body, provider_message_id, error, sent_at, created_at
+      subject, body, provider_message_id, error, sent_at, tracking_id, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       id,
@@ -2332,11 +2457,48 @@ async function recordEmailEvent(env, input) {
       cleanNullable(input.providerMessageId),
       cleanNullable(input.error),
       cleanNullable(input.sentAt),
+      cleanNullable(input.trackingId),
       now,
     )
     .run();
 
   return getRequired(env, "SELECT * FROM email_events WHERE id = ?", id);
+}
+
+async function recordEmailOpen(env, trackingId) {
+  const id = cleanNullable(trackingId);
+  if (id) {
+    const now = new Date().toISOString();
+    await env.DB.prepare(`
+      UPDATE email_events
+      SET open_count = open_count + 1,
+          first_opened_at = COALESCE(first_opened_at, ?),
+          last_opened_at = ?
+      WHERE tracking_id = ?
+    `).bind(now, now, id).run();
+  }
+  return new Response(base64Decode("R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=="), {
+    headers: {
+      "content-type": "image/gif",
+      "cache-control": "no-store, max-age=0",
+    },
+  });
+}
+
+async function recordEmailClick(env, trackingId, encodedUrl) {
+  const target = safeTrackingRedirect(encodedUrl);
+  const id = cleanNullable(trackingId);
+  if (id) {
+    const now = new Date().toISOString();
+    await env.DB.prepare(`
+      UPDATE email_events
+      SET click_count = click_count + 1,
+          first_clicked_at = COALESCE(first_clicked_at, ?),
+          last_clicked_at = ?
+      WHERE tracking_id = ?
+    `).bind(now, now, id).run();
+  }
+  return Response.redirect(target || "/", 302);
 }
 
 async function getWarmupMailbox(env, id) {
@@ -2997,6 +3159,17 @@ function cleanDomain(value) {
   return cleaned ? cleaned.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "") : "";
 }
 
+function safeTrackingRedirect(value) {
+  const decoded = cleanNullable(value);
+  if (!decoded) return null;
+  try {
+    const url = new URL(decoded);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeWebhookUrl(value) {
   const url = cleanNullable(value);
   if (!url || !/^https?:\/\//i.test(url)) throw httpError(400, "Webhook URL must start with http:// or https://");
@@ -3106,6 +3279,14 @@ function formatAddress(name, email) {
 
 function encodeHeader(value) {
   return String(value).replace(/\r|\n/g, " ");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function escapeSmtpBody(value) {

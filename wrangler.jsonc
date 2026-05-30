@@ -18,6 +18,7 @@
     }
   ],
   "vars": {
+    "CRM_PUBLIC_URL": "http://localhost:8787",
     "CRM_FROM_EMAIL": "founder@example.com",
     "CRM_FROM_NAME": "UserOrbit",
     "SMTP_HOST": "smtp.zoho.in",

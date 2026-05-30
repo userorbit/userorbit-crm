@@ -597,6 +597,7 @@ export const appHtml = String.raw`<!doctype html>
         warmup: null,
         tasks: [],
         communications: [],
+        emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
         workspaceTokens: [],
         teamInvitations: [],
         webhooks: { endpoints: [], deliveries: [] },
@@ -653,7 +654,7 @@ export const appHtml = String.raw`<!doctype html>
         }
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -666,12 +667,13 @@ export const appHtml = String.raw`<!doctype html>
           api("warmup"),
           api("tasks"),
           api("communications"),
+          api("email/settings"),
           canManage ? api("workspace-tokens") : Promise.resolve([]),
           canManage ? api("team-invitations") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, emailSettings, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -861,6 +863,8 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opportunities", account.opportunities.length)}
             \${metric("Tasks", account.tasks.length)}
             \${metric("Emails", account.emails.length)}
+            \${metric("Opens", account.emails.reduce((total, email) => total + Number(email.open_count || 0), 0))}
+            \${metric("Clicks", account.emails.reduce((total, email) => total + Number(email.click_count || 0), 0))}
             \${metric("Comms", account.communications.length)}
             \${metric("Status", escapeHtml(account.status))}
           </div>
@@ -884,7 +888,7 @@ export const appHtml = String.raw`<!doctype html>
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
-              \${reportTable(["Subject", "Contact", "Direction", "Status", "When"], account.emails.map((email) => [email.subject, email.contact_name || email.contact_email || "", email.direction || "", email.status, formatDateTime(email.sent_at || email.created_at)]))}
+              \${emailActivityTable(account.emails, true)}
               <div class="panel-header"><div class="panel-title">Communication activity</div></div>
               \${communicationTable(account.communications)}
             </div>
@@ -916,6 +920,8 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Opportunities", contact.opportunities.length)}
             \${metric("Sequences", contact.enrollments.length)}
             \${metric("Emails", contact.emails.length)}
+            \${metric("Opens", contact.emails.reduce((total, email) => total + Number(email.open_count || 0), 0))}
+            \${metric("Clicks", contact.emails.reduce((total, email) => total + Number(email.click_count || 0), 0))}
             \${metric("Comms", contact.communications.length)}
             \${metric("Status", escapeHtml(contact.status))}
           </div>
@@ -938,7 +944,7 @@ export const appHtml = String.raw`<!doctype html>
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Email activity</div></div>
-              \${reportTable(["Subject", "Direction", "Status", "Sequence", "When"], contact.emails.map((email) => [email.subject, email.direction || "", email.status, email.sequence_name || "", formatDateTime(email.sent_at || email.created_at)]))}
+              \${emailActivityTable(contact.emails)}
               <div class="panel-header"><div class="panel-title">Communication activity</div></div>
               \${communicationTable(contact.communications)}
             </div>
@@ -1020,7 +1026,8 @@ export const appHtml = String.raw`<!doctype html>
             \${metric("Weighted forecast", money(forecastValue))}
             \${metric("Emails", emails.emails || 0)}
             \${metric("Sent", emails.sent || 0)}
-            \${metric("Drafted", emails.drafted || 0)}
+            \${metric("Opens", emails.opens || 0)}
+            \${metric("Clicks", emails.clicks || 0)}
             \${metric("Overdue tasks", overdueTasks)}
           </div>
           <div class="columns" style="margin-top:14px">
@@ -1040,7 +1047,7 @@ export const appHtml = String.raw`<!doctype html>
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Sequence performance</div></div>
-              \${reportTable(["Sequence", "Enrollments", "Sent", "Drafted", "Failed"], reports.sequencePerformance.map((row) => [row.name, row.enrollments || 0, row.sent || 0, row.drafted || 0, row.failed || 0]))}
+              \${reportTable(["Sequence", "Enrollments", "Sent", "Opened", "Clicked", "Failed"], reports.sequencePerformance.map((row) => [row.name, row.enrollments || 0, row.sent || 0, row.opened || 0, row.clicked || 0, row.failed || 0]))}
             </div>
           </div>
           <div class="columns" style="margin-top:14px">
@@ -1058,6 +1065,22 @@ export const appHtml = String.raw`<!doctype html>
           <thead><tr>\${headers.map((header) => '<th>' + escapeHtml(header) + '</th>').join("")}</tr></thead>
           <tbody>\${rows.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("")}</tbody>
         </table>\`;
+      }
+
+      function emailActivityTable(emails, includeContact = false) {
+        const headers = includeContact ? ["Subject", "Contact", "Status", "Opens", "Clicks", "Last engagement"] : ["Subject", "Status", "Sequence", "Opens", "Clicks", "Last engagement"];
+        return reportTable(headers, emails.map((email) => {
+          const engagementAt = email.last_clicked_at || email.last_opened_at || "";
+          const base = [
+            email.subject,
+            includeContact ? (email.contact_name || email.contact_email || "") : email.status,
+            includeContact ? email.status : (email.sequence_name || ""),
+            email.open_count || 0,
+            email.click_count || 0,
+            engagementAt ? formatDateTime(engagementAt) : formatDateTime(email.sent_at || email.created_at),
+          ];
+          return base;
+        }));
       }
 
       function renderSequences() {
@@ -1320,6 +1343,11 @@ Content-Type: application/json
                   <label>URL<input name="url" type="url" required placeholder="https://hooks.example.com/userorbit" /></label>
                   <label>Events<textarea name="events" placeholder="account.created&#10;contact.created&#10;task.created&#10;communication.created&#10;email.created"></textarea></label>
                   <button class="button primary">Create webhook</button>
+                </form>
+                <form id="emailSettingsForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label><input name="openTrackingEnabled" type="checkbox" \${state.emailSettings.open_tracking_enabled ? "checked" : ""} /> Track email opens</label>
+                  <label><input name="clickTrackingEnabled" type="checkbox" \${state.emailSettings.click_tracking_enabled ? "checked" : ""} /> Track link clicks</label>
+                  <button class="button primary">Save email settings</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
@@ -1688,6 +1716,20 @@ Content-Type: application/json
             }),
           });
           notice("Webhook created.");
+          await refresh();
+        });
+
+        $("#emailSettingsForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("email/settings", {
+            method: "PATCH",
+            body: JSON.stringify({
+              openTrackingEnabled: form.get("openTrackingEnabled") === "on",
+              clickTrackingEnabled: form.get("clickTrackingEnabled") === "on",
+            }),
+          });
+          notice("Email settings saved.");
           await refresh();
         });
 

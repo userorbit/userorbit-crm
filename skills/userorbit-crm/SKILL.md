@@ -114,6 +114,19 @@ Review admin audit events:
 GET /api/audit-logs
 ```
 
+Review or update workspace email tracking settings:
+
+```http
+GET /api/email/settings
+
+PATCH /api/email/settings
+Content-Type: application/json
+
+{ "openTrackingEnabled": true, "clickTrackingEnabled": true }
+```
+
+Tracking is off by default. Enable it only when the workspace has a correct public Worker URL configured with `CRM_PUBLIC_URL` so sequence emails can produce valid tracking links.
+
 ## Core Workflow
 
 Create an account with contacts:
@@ -391,7 +404,7 @@ POST /api/agent/command
 }
 ```
 
-When SMTP is not configured, the CRM records emails as `drafted` instead of sending them.
+When SMTP is not configured, the CRM records emails as `drafted` instead of sending them. When email tracking is enabled, account/contact email activity and `GET /api/reports` include open and click counts.
 
 ## Mailbox Warmup
 
