@@ -63,6 +63,10 @@ export default {
         return await handlePublicLeadForm(request, env, url);
       }
 
+      if (request.method === "POST" && url.pathname.startsWith("/hooks/messages/")) {
+        return await handleInboundMessageWebhook(request, env, url);
+      }
+
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
         return json(await loginWithPassword(env, await readJson(request)));
       }
@@ -141,8 +145,8 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path === "message-channels") {
-    await requireWorkspaceWrite(env, auth, workspaceId);
-    return json(await listMessageChannels(env, workspaceId));
+    const access = await requireWorkspaceRole(env, auth.user.id, workspaceId, WORKSPACE_WRITE_ROLES);
+    return json(await listMessageChannels(env, workspaceId, ["owner", "admin"].includes(access.role)));
   }
 
   if (request.method === "GET" && path === "lead-forms") {
@@ -1753,7 +1757,7 @@ async function createCommunication(env, input, auth) {
   return event;
 }
 
-async function listMessageChannels(env, workspaceId) {
+async function listMessageChannels(env, workspaceId, revealWebhook = false) {
   const [channels, deliveries] = await Promise.all([
     env.DB.prepare(`
       SELECT wmc.*, u.name AS created_by_name
@@ -1772,7 +1776,7 @@ async function listMessageChannels(env, workspaceId) {
     `).bind(workspaceId).all(),
   ]);
   return {
-    channels: channels.results.map(messageChannelResponse),
+    channels: channels.results.map((channel) => messageChannelResponse(channel, revealWebhook)),
     deliveries: deliveries.results,
   };
 }
@@ -1784,12 +1788,13 @@ async function createMessageChannel(env, input, auth) {
   const config = normalizeMessageChannelConfig(provider, input);
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
+  const inboundKey = input.inboundKey || crypto.randomUUID().replaceAll("-", "");
   await env.DB.prepare(`
-    INSERT INTO workspace_message_channels (id, workspace_id, created_by_user_id, type, provider, name, config_json, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-  `).bind(id, input.workspaceId, auth.user.id, type, provider, input.name.trim(), JSON.stringify(config), now, now).run();
+    INSERT INTO workspace_message_channels (id, workspace_id, created_by_user_id, type, provider, name, config_json, inbound_key, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, type, provider, input.name.trim(), JSON.stringify(config), inboundKey, now, now).run();
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "message_channel.create", resource: "workspace_message_channel", resourceId: id, metadata: { name: input.name, type, provider } });
-  return messageChannelResponse(await getRequired(env, "SELECT * FROM workspace_message_channels WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+  return messageChannelResponse(await getRequired(env, "SELECT * FROM workspace_message_channels WHERE id = ? AND workspace_id = ?", id, input.workspaceId), true);
 }
 
 async function disableMessageChannel(env, id, workspaceId, auth) {
@@ -1865,6 +1870,93 @@ async function sendProviderMessage(env, input, auth) {
   await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
   await deliverWebhooks(env, input.workspaceId, "message.sent", id, { ...event, delivery: result });
   return { communication: event, delivery: result };
+}
+
+async function handleInboundMessageWebhook(request, env, url) {
+  const inboundKey = cleanNullable(url.pathname.split("/").pop());
+  if (!inboundKey) throw httpError(404, "Message webhook not found");
+  const channel = await getRequired(env, "SELECT * FROM workspace_message_channels WHERE inbound_key = ? AND status = 'active'", inboundKey);
+  const input = await readMessageWebhookPayload(request);
+  const result = await recordInboundProviderMessage(env, channel, input);
+  const wantsJson = (request.headers.get("accept") || "").includes("application/json");
+  if (wantsJson) return json(result, 201);
+  return new Response("<Response></Response>", { status: 201, headers: { "content-type": "text/xml; charset=utf-8" } });
+}
+
+async function readMessageWebhookPayload(request) {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return readJson(request);
+  const text = await request.text();
+  return Object.fromEntries(new URLSearchParams(text).entries());
+}
+
+async function recordInboundProviderMessage(env, channel, input) {
+  const from = cleanNullable(input.From || input.from || input.WaId || input.sender);
+  const body = cleanNullable(input.Body || input.body || input.Text || input.text) || "";
+  const providerMessageId = cleanNullable(input.MessageSid || input.SmsMessageSid || input.SmsSid || input.messageSid || input.providerMessageId || input.id);
+  if (!from) throw httpError(400, "Inbound message sender is required");
+  if (!body) throw httpError(400, "Inbound message body is required");
+  const contact = await findContactByPhone(env, channel.workspace_id, from);
+  if (!contact) throw httpError(404, "No contact matched inbound message sender");
+
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO communication_events (
+      id, workspace_id, account_id, contact_id, created_by_user_id,
+      type, direction, outcome, subject, body, occurred_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, NULL, ?, 'inbound', NULL, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    channel.workspace_id,
+    contact.account_id,
+    contact.id,
+    channel.type,
+    `${channel.type.toUpperCase()} from ${contact.name}`,
+    body,
+    cleanNullable(input.receivedAt || input.Timestamp) || now,
+    now,
+    now,
+  ).run();
+
+  await env.DB.prepare(`
+    INSERT INTO message_deliveries (
+      id, workspace_id, channel_id, communication_event_id, account_id, contact_id,
+      provider_message_id, status, status_code, error, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'received', NULL, NULL, ?)
+  `).bind(crypto.randomUUID(), channel.workspace_id, channel.id, id, contact.account_id, contact.id, providerMessageId, now).run();
+
+  const wasReplied = contact.status === "replied";
+  const wasUnsubscribed = contact.status === "unsubscribed";
+  if (!wasUnsubscribed) {
+    await env.DB.prepare("UPDATE contacts SET status = 'replied', updated_at = ? WHERE id = ?").bind(now, contact.id).run();
+    await env.DB.prepare("UPDATE sequence_enrollments SET status = 'replied', updated_at = ? WHERE contact_id = ? AND status = 'active'").bind(now, contact.id).run();
+  }
+
+  const event = await getRequired(env, "SELECT * FROM communication_events WHERE id = ?", id);
+  await recordAuditLog(env, { workspaceId: channel.workspace_id, userId: null, action: "message.inbound", resource: "communication_event", resourceId: id, metadata: { type: channel.type, channelId: channel.id, provider: channel.provider, contactId: contact.id, providerMessageId } });
+  await deliverWebhooks(env, channel.workspace_id, "communication.created", id, event);
+  await deliverWebhooks(env, channel.workspace_id, "message.received", id, { ...event, providerMessageId });
+
+  const updated = await getContact(env, contact.id, channel.workspace_id);
+  if (!wasUnsubscribed && !wasReplied) {
+    await deliverWebhooks(env, channel.workspace_id, "contact.replied", contact.id, updated);
+  }
+  return { contact: updated, communication: event };
+}
+
+async function findContactByPhone(env, workspaceId, from) {
+  const normalized = normalizePhoneAddress(from);
+  if (!normalized) return null;
+  const rows = await env.DB.prepare(`
+    SELECT c.*, a.workspace_id, a.id AS account_id
+    FROM contacts c
+    JOIN accounts a ON a.id = c.account_id
+    WHERE a.workspace_id = ? AND c.phone IS NOT NULL
+  `).bind(workspaceId).all();
+  return rows.results.find((contact) => normalizePhoneAddress(contact.phone) === normalized) || null;
 }
 
 async function listCalendarEvents(env, workspaceId) {
@@ -4254,10 +4346,11 @@ function normalizeMessageChannelConfig(provider, input) {
   throw httpError(400, "Unsupported message provider");
 }
 
-function messageChannelResponse(channel) {
+function messageChannelResponse(channel, revealWebhook = false) {
   return {
     ...channel,
     config: maskMessageChannelConfig(channel.provider, parseJsonObject(channel.config_json)),
+    webhook_path: revealWebhook && channel.inbound_key ? `/hooks/messages/${channel.inbound_key}` : null,
   };
 }
 
@@ -4325,6 +4418,12 @@ function formatProviderAddress(type, value) {
   return address;
 }
 
+function normalizePhoneAddress(value) {
+  const stripped = String(value || "").trim().replace(/^whatsapp:/i, "");
+  const digits = stripped.replace(/\D/g, "");
+  return digits || "";
+}
+
 function slackMessageForEvent(event, payload) {
   const title = slackEventTitle(event, payload);
   const lines = [`*${title}*`, slackEventDetail(event, payload)].filter(Boolean);
@@ -4336,6 +4435,7 @@ function slackEventTitle(event, payload) {
   if (event === "contact.created") return `New contact: ${payload?.name || payload?.email || "Untitled contact"}`;
   if (event === "task.created") return `New task: ${payload?.title || "Untitled task"}`;
   if (event === "communication.created") return `Communication logged: ${payload?.subject || payload?.type || "Activity"}`;
+  if (event === "message.received") return `Inbound message: ${payload?.subject || payload?.type || "Message"}`;
   if (event === "email.received") return `Inbound email: ${payload?.subject || "No subject"}`;
   if (event === "lead_form.submitted") return `Lead form submitted: ${payload?.form?.name || "Lead form"}`;
   return `UserOrbit event: ${event}`;
@@ -4346,6 +4446,7 @@ function slackEventDetail(event, payload) {
   if (event === "contact.created") return [payload?.email, payload?.title].filter(Boolean).join(" / ");
   if (event === "task.created") return [payload?.kind, payload?.due_at || payload?.dueAt].filter(Boolean).join(" / ");
   if (event === "communication.created") return [payload?.type, payload?.direction, payload?.outcome].filter(Boolean).join(" / ");
+  if (event === "message.received") return [payload?.type, payload?.direction, payload?.contact_id || payload?.contactId].filter(Boolean).join(" / ");
   if (event === "email.received") return payload?.contact?.email || payload?.fromEmail || "";
   if (event === "lead_form.submitted") return [payload?.account?.name, payload?.contact?.action ? `contact ${payload.contact.action}` : ""].filter(Boolean).join(" / ");
   return "";

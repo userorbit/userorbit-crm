@@ -1606,7 +1606,7 @@ Content-Type: application/json
           <thead><tr><th>Name</th><th>Type</th><th>Provider</th><th>From</th><th>Status</th><th></th></tr></thead>
           <tbody>\${channels.map((channel) => \`
             <tr>
-              <td>\${escapeHtml(channel.name)}<div class="subtitle">\${escapeHtml(channel.config?.accountSid || "")}</div></td>
+              <td>\${escapeHtml(channel.name)}<div class="subtitle">\${escapeHtml(channel.webhook_path ? window.location.origin + channel.webhook_path : channel.config?.accountSid || "")}</div></td>
               <td>\${escapeHtml(channel.type)}</td>
               <td>\${escapeHtml(channel.provider)}</td>
               <td>\${escapeHtml(channel.config?.from || "")}</td>

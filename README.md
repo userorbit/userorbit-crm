@@ -10,7 +10,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Account detail timelines with contacts, opportunities, tasks, and email activity.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
 - Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
-- Provider-backed SMS and WhatsApp channels through Twilio-compatible outbound messaging.
+- Provider-backed SMS and WhatsApp channels through Twilio-compatible outbound and inbound messaging.
 - Calendar meeting capture with manual entry and ICS import.
 - Public lead capture forms that create or match accounts and contacts.
 - Pipeline board with workspace-configurable sales stages.
@@ -273,6 +273,8 @@ curl -X POST http://localhost:8787/api/messages/send \
 ```
 
 WhatsApp channels use `type: "whatsapp"` and accept either `+15551234567` or `whatsapp:+15551234567` in `from`; outbound addresses are normalized before sending. Recent delivery status is visible from Settings.
+
+Settings shows an inbound webhook URL for each channel. Configure the provider's inbound message callback to that URL. Twilio-style form posts with `From`, `Body`, and `MessageSid` are supported. Inbound messages match contacts by phone number, create account/contact timeline activity, mark the contact replied, pause active sequence enrollments, and emit `message.received`.
 
 ### Get reports
 

@@ -141,6 +141,8 @@ GET /api/message-channels
 
 Only workspace owners/admins can create or disable channels. Owners, admins, and members can send through active channels. Treat stored provider credentials as self-hosted secrets.
 
+The channel response includes `webhook_path` for owners/admins. Configure Twilio or a compatible provider to send inbound message callbacks to `<base_url><webhook_path>`. Twilio-style form fields `From`, `Body`, and `MessageSid` are supported. Inbound messages match contacts by phone, create timeline activity, set the contact to `replied`, pause active sequence enrollments, and emit `message.received`.
+
 Create a workspace-scoped agent token:
 
 ```http
@@ -410,7 +412,7 @@ POST /api/agent/command
 }
 ```
 
-The contact must have a phone number unless `payload.to` is provided. The send creates a `communication.created` timeline event and a `message.sent` webhook event with delivery status.
+The contact must have a phone number unless `payload.to` is provided. The send creates a `communication.created` timeline event and a `message.sent` webhook event with delivery status. For inbound provider replies, use the channel `webhook_path`; do not call authenticated APIs from the provider callback.
 
 Capture calendar meetings directly or from an ICS export:
 

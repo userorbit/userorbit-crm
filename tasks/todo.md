@@ -43,7 +43,8 @@
 - [x] Add OAuth login.
 - [x] Add native Slack integration notifications for CRM events.
 - [x] Add provider-backed SMS/WhatsApp message channels.
-- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, broader native integrations, and inbound/provider-deeper communication channels.
+- [x] Add inbound SMS/WhatsApp provider webhooks.
+- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, OAuth calendar sync, broader native integrations, and AI enrichment/notes.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.
@@ -112,3 +113,5 @@ Added generic OAuth/OIDC login: self-hosters can configure authorization/token/u
 Added native Slack integrations: workspace admins can create/disable Slack incoming-webhook integrations, subscribe them to selected CRM events, and inspect recent delivery status from Settings alongside webhooks.
 
 Added provider-backed messaging: workspace admins can configure Twilio-compatible SMS/WhatsApp channels, members can send messages from Communications, outbound sends create timeline events plus delivery rows, and agents can use `send_message`.
+
+Added inbound provider messaging: SMS/WhatsApp channels expose admin-visible webhook URLs, Twilio-style inbound callbacks match contacts by phone, create inbound communication timeline events, mark contacts replied, pause active sequence enrollments, and emit `message.received`.
