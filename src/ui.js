@@ -480,6 +480,8 @@ export const appHtml = String.raw`<!doctype html>
         sequences: [],
         warmup: null,
         tasks: [],
+        workspaceTokens: [],
+        auditLogs: [],
         generatedToken: "",
       };
 
@@ -510,7 +512,7 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks, workspaceTokens, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -520,8 +522,10 @@ export const appHtml = String.raw`<!doctype html>
           api("sequences"),
           api("warmup"),
           api("tasks"),
+          api("workspace-tokens"),
+          api("audit-logs"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, sequences, warmup, tasks, workspaceTokens, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1045,6 +1049,10 @@ Content-Type: application/json
                   <thead><tr><th>Workspace</th><th>Team</th></tr></thead>
                   <tbody>\${tenant.workspaces.map((workspace) => '<tr><td>' + escapeHtml(workspace.name) + '</td><td>' + escapeHtml(workspace.team_name) + '</td></tr>').join("")}</tbody>
                 </table>
+                <div class="panel-header"><div class="panel-title">Workspace tokens</div></div>
+                \${workspaceTokensTable(state.workspaceTokens)}
+                <div class="panel-header"><div class="panel-title">Audit log</div></div>
+                \${auditLogsTable(state.auditLogs)}
               </div>
             </div>
             <div class="panel">
@@ -1075,6 +1083,35 @@ Content-Type: application/json
               </div>
             </div>
           </div>\`;
+      }
+
+      function workspaceTokensTable(tokens) {
+        if (!tokens.length) return '<div class="empty">No workspace tokens yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Created by</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${tokens.map((token) => \`
+            <tr>
+              <td>\${escapeHtml(token.name)}</td>
+              <td>\${escapeHtml(token.created_by_name || "")}</td>
+              <td>\${escapeHtml(token.last_used_at || "Never")}</td>
+              <td>\${token.revoked_at ? '<span class="pill red">revoked</span>' : '<span class="pill green">active</span>'}</td>
+              <td>\${token.revoked_at ? "" : '<button class="button" data-revoke-token-id="' + escapeHtml(token.id) + '">Revoke</button>'}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
+      }
+
+      function auditLogsTable(logs) {
+        if (!logs.length) return '<div class="empty">No audit events yet.</div>';
+        return \`<table>
+          <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Resource</th></tr></thead>
+          <tbody>\${logs.slice(0, 12).map((log) => \`
+            <tr>
+              <td>\${escapeHtml(formatDateTime(log.created_at))}</td>
+              <td>\${escapeHtml(log.user_name || log.user_email || "")}</td>
+              <td>\${escapeHtml(log.action)}</td>
+              <td>\${escapeHtml(log.resource)}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
       }
 
       function bind() {
@@ -1287,8 +1324,14 @@ Content-Type: application/json
           const created = await api("workspace-tokens", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           state.generatedToken = created.token;
           notice("Workspace token created.");
-          render();
+          await refresh();
         });
+
+        document.querySelectorAll("[data-revoke-token-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("workspace-tokens/" + encodeURIComponent(node.dataset.revokeTokenId), { method: "DELETE" });
+          notice("Workspace token revoked.");
+          await refresh();
+        }));
 
         $("#customFieldForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();

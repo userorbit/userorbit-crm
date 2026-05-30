@@ -75,6 +75,18 @@ async function routeApi(request, env, url, auth) {
     return json(await createWorkspaceToken(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "GET" && path === "workspace-tokens") {
+    return json(await listWorkspaceTokens(env, workspaceId, auth));
+  }
+
+  if (request.method === "DELETE" && path.startsWith("workspace-tokens/")) {
+    return json(await revokeWorkspaceToken(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "GET" && path === "audit-logs") {
+    return json(await listAuditLogs(env, workspaceId, auth));
+  }
+
   if (request.method === "GET" && path === "summary") {
     return json(await getSummary(env, workspaceId));
   }
@@ -377,6 +389,22 @@ async function deleteSavedView(env, id, workspaceId, auth) {
     .bind(id, workspaceId, auth.user.id)
     .run();
   return { ok: true };
+}
+
+async function recordAuditLog(env, { workspaceId, userId, action, resource, resourceId, metadata = {} }) {
+  await env.DB.prepare(`
+    INSERT INTO audit_logs (id, workspace_id, user_id, action, resource, resource_id, metadata_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    cleanNullable(workspaceId),
+    cleanNullable(userId),
+    action,
+    resource,
+    cleanNullable(resourceId),
+    JSON.stringify(metadata),
+    new Date().toISOString(),
+  ).run();
 }
 
 async function listCustomFields(env, workspaceId, url) {
@@ -1208,6 +1236,7 @@ async function createTeam(env, input, auth) {
     .bind(crypto.randomUUID(), id, auth.user.id, now, now)
     .run();
   const workspace = await createWorkspace(env, { teamId: id, name: input.defaultWorkspaceName || "Sales" }, auth);
+  await recordAuditLog(env, { workspaceId: workspace.id, userId: auth.user.id, action: "team.create", resource: "team", resourceId: id, metadata: { name: input.name } });
   return { ...(await getRequired(env, "SELECT * FROM teams WHERE id = ?", id)), defaultWorkspace: workspace };
 }
 
@@ -1221,7 +1250,21 @@ async function createWorkspace(env, input, auth) {
   await env.DB.prepare("INSERT INTO workspaces (id, team_id, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, teamId, input.name.trim(), slugify(input.slug || input.name), now, now)
     .run();
+  await recordAuditLog(env, { workspaceId: id, userId: auth.user.id, action: "workspace.create", resource: "workspace", resourceId: id, metadata: { name: input.name, teamId } });
   return getRequired(env, "SELECT * FROM workspaces WHERE id = ?", id);
+}
+
+async function listWorkspaceTokens(env, workspaceId, auth) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const rows = await env.DB.prepare(`
+    SELECT wat.id, wat.workspace_id, wat.created_by_user_id, wat.name, wat.last_used_at, wat.revoked_at, wat.created_at, wat.updated_at, u.name AS created_by_name
+    FROM workspace_api_tokens wat
+    JOIN users u ON u.id = wat.created_by_user_id
+    WHERE wat.workspace_id = ?
+    ORDER BY wat.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results;
 }
 
 async function createWorkspaceToken(env, input, auth) {
@@ -1234,7 +1277,34 @@ async function createWorkspaceToken(env, input, auth) {
     INSERT INTO workspace_api_tokens (id, workspace_id, created_by_user_id, name, token_hash, last_used_at, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
   `).bind(id, workspace.id, auth.user.id, cleanNullable(input.name) || "Agent token", await sha256Hex(token), now, now).run();
+  await recordAuditLog(env, { workspaceId: workspace.id, userId: auth.user.id, action: "workspace_token.create", resource: "workspace_api_token", resourceId: id, metadata: { name: cleanNullable(input.name) || "Agent token" } });
   return { id, workspaceId: workspace.id, name: cleanNullable(input.name) || "Agent token", token, createdAt: now };
+}
+
+async function revokeWorkspaceToken(env, id, workspaceId, auth) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const existing = await getRequired(env, "SELECT * FROM workspace_api_tokens WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_api_tokens SET revoked_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
+    .bind(now, now, id, workspaceId)
+    .run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "workspace_token.revoke", resource: "workspace_api_token", resourceId: id, metadata: { name: existing.name } });
+  return { ok: true, revokedAt: now };
+}
+
+async function listAuditLogs(env, workspaceId, auth) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const rows = await env.DB.prepare(`
+    SELECT al.*, u.name AS user_name, u.email AS user_email
+    FROM audit_logs al
+    LEFT JOIN users u ON u.id = al.user_id
+    WHERE al.workspace_id = ?
+    ORDER BY al.created_at DESC
+    LIMIT 100
+  `).bind(workspaceId).all();
+  return rows.results.map((row) => ({ ...row, metadata: parseJsonObject(row.metadata_json) }));
 }
 
 async function resolveWorkspaceId(env, request, auth) {
@@ -1854,6 +1924,7 @@ async function requireAuth(request, env) {
     FROM workspace_api_tokens wat
     JOIN users u ON u.id = wat.created_by_user_id
     WHERE wat.token_hash = ?
+      AND wat.revoked_at IS NULL
   `).bind(await sha256Hex(token)).first();
   if (!apiToken) throw httpError(401, "Unauthorized");
 

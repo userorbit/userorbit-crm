@@ -52,6 +52,19 @@ POST /api/workspace-tokens
 
 Store the returned `token` immediately. It is only shown once and can be used instead of the bootstrap token for future agent operations in that workspace.
 
+List or revoke workspace tokens:
+
+```http
+GET /api/workspace-tokens
+DELETE /api/workspace-tokens/<token_id>
+```
+
+Review admin audit events:
+
+```http
+GET /api/audit-logs
+```
+
 ## Core Workflow
 
 Create an account with contacts:

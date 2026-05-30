@@ -17,7 +17,8 @@
 - [x] Add saved account views for reusable search, segment, and status filters.
 - [x] Add account custom fields and values.
 - [x] Add opportunity pipeline board and stage movement.
-- [ ] Add invitations, password/OAuth login, token revocation UI, and audit logs.
+- [x] Add workspace token revocation UI and audit logs.
+- [ ] Add invitations, password/OAuth login, workspace membership overrides, and broader audit coverage.
 - [ ] Build the next Close-style CRM gaps: configurable stages, custom-field filtering/reporting, import, inbound email sync, forecast reporting, integrations, and communication channels.
 
 ## Review
@@ -37,3 +38,5 @@ Added saved account views: D1-backed saved filters, account list filtering by sa
 Added account custom fields: workspace-scoped field definitions, account value storage, account detail display, account creation inputs, Settings field creation, and agent/docs coverage.
 
 Added pipeline board: `GET /api/opportunities`, `PATCH /api/opportunities/:id`, Pipeline UI columns by stage, stage movement controls, and agent/docs coverage.
+
+Added token revocation and audit logs: list/revoke workspace tokens, reject revoked tokens in auth, record audit events for team/workspace/token administration, Settings tables, and agent/docs coverage.
