@@ -649,6 +649,7 @@ export const appHtml = String.raw`<!doctype html>
         calendarSources: [],
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0, workspace_daily_send_limit: 0 },
+        emailTemplates: [],
         emailSenders: [],
         emailInboundSources: [],
         emailSyncSources: [],
@@ -753,7 +754,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -774,6 +775,7 @@ export const appHtml = String.raw`<!doctype html>
           api("calendar/events"),
           canWrite ? api("calendar/sources") : Promise.resolve([]),
           api("email/settings"),
+          canWrite ? api("email/templates") : Promise.resolve([]),
           canWrite ? api("email/senders") : Promise.resolve([]),
           canManage ? api("email/inbound-sources") : Promise.resolve([]),
           canManage ? api("email/sync-sources") : Promise.resolve([]),
@@ -793,7 +795,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
-        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1747,6 +1749,7 @@ Content-Type: application/json
                 </form>
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Email templates</div></div>' + emailTemplatesTable(state.emailTemplates) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email senders</div></div>' + emailSendersTable(state.emailSenders) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email inbound sources</div></div>' + emailInboundSourcesTable(state.emailInboundSources) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email sync sources</div></div>' + emailSyncSourcesTable(state.emailSyncSources) : ""}
@@ -1862,6 +1865,12 @@ Content-Type: application/json
                   <label><input name="clickTrackingEnabled" type="checkbox" \${state.emailSettings.click_tracking_enabled ? "checked" : ""} /> Track link clicks</label>
                   <label>Workspace daily send limit<input name="workspaceDailySendLimit" type="number" min="0" max="10000" value="\${Number(state.emailSettings.workspace_daily_send_limit || 0)}" /></label>
                   <button class="button primary">Save email settings</button>
+                </form>
+                <form id="emailTemplateForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Template name<input name="name" required placeholder="Breakup note" /></label>
+                  <label>Subject<input name="subject" required placeholder="Close the loop?" /></label>
+                  <label>Body<textarea name="body" required placeholder="Hi {{contact.firstName}},"></textarea></label>
+                  <button class="button primary">Create email template</button>
                 </form>
                 <form id="emailSenderForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Sender email<input name="email" type="email" required placeholder="founder@example.com" /></label>
@@ -2108,6 +2117,21 @@ Content-Type: application/json
           summary.contactsCreated ? summary.contactsCreated + " contacts created" : "",
         ].filter(Boolean);
         return parts.join(", ");
+      }
+
+      function emailTemplatesTable(templates = []) {
+        if (!templates.length) return '<div class="empty">No email templates yet.</div>';
+        return \`<table>
+          <thead><tr><th>Name</th><th>Subject</th><th>Scope</th><th>Used</th><th></th></tr></thead>
+          <tbody>\${templates.map((template) => \`
+            <tr>
+              <td>\${escapeHtml(template.name)}<div class="subtitle">\${escapeHtml(template.created_by_name || "")}</div></td>
+              <td>\${escapeHtml(template.subject)}</td>
+              <td><span class="pill">\${escapeHtml(template.scope || "workspace")}</span></td>
+              <td>\${Number(template.sequenceStepCount || template.sequence_step_count || 0)}</td>
+              <td>\${template.scope === "workspace" ? '<button class="button" data-disable-email-template-id="' + escapeHtml(template.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\`;
       }
 
       function emailSendersTable(senders = []) {
@@ -2762,6 +2786,21 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#emailTemplateForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("email/templates", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              subject: form.get("subject"),
+              body: form.get("body"),
+            }),
+          });
+          notice("Email template created.");
+          await refresh();
+        });
+
         $("#emailSenderForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -3002,6 +3041,12 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-email-sender-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("email/senders/" + encodeURIComponent(node.dataset.disableEmailSenderId), { method: "DELETE" });
           notice("Email sender disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-email-template-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("email/templates/" + encodeURIComponent(node.dataset.disableEmailTemplateId), { method: "DELETE" });
+          notice("Email template disabled.");
           await refresh();
         }));
 

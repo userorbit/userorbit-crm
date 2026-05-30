@@ -914,6 +914,8 @@ When SMTP is not configured, the CRM records emails as `drafted` instead of send
 
 Manual email bodies and sequence templates support variables such as `{{contact.name}}`, `{{contact.firstName}}`, `{{contact.email}}`, `{{contact.title}}`, `{{account.name}}`, `{{account.domain}}`, `{{account.observation}}`, `{{account.segment}}`, `{{account.source}}`, `{{account.status}}`, `{{account.owner}}`, `{{sender.name}}`, `{{sender.email}}`, `{{workspace.name}}`, `{{workspace.teamName}}`, and `{{date.today}}`.
 
+Workspace admins can manage reusable templates with `GET /api/email/templates`, `POST /api/email/templates`, `PATCH /api/email/templates/<id>`, and `DELETE /api/email/templates/<id>`. Treat templates with `scope: "default"` as read-only seeded examples. Use workspace-scoped templates for team-specific outbound copy, keep placeholders intact until contact/account data is available, and prefer disabling obsolete templates over reusing their names for materially different messaging.
+
 ## Mailbox Warmup
 
 1. Create or update the configured sender mailbox with `POST /api/warmup/mailboxes`.

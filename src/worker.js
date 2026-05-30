@@ -221,6 +221,11 @@ async function routeApi(request, env, url, auth) {
     return json(await getEmailSettings(env, workspaceId));
   }
 
+  if (request.method === "GET" && path === "email/templates") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await listEmailTemplates(env, workspaceId));
+  }
+
   if (request.method === "GET" && path === "email/senders") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await listEmailSenders(env, workspaceId));
@@ -246,6 +251,16 @@ async function routeApi(request, env, url, auth) {
     return json(await createEmailSender(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path === "email/templates") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createEmailTemplate(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "PATCH" && path.startsWith("email/templates/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await updateEmailTemplate(env, path.split("/")[2], { ...(await readJson(request)), workspaceId }, auth));
+  }
+
   if (request.method === "POST" && path === "email/inbound-sources") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createEmailInboundSource(env, { ...(await readJson(request)), workspaceId }, auth), 201);
@@ -264,6 +279,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "DELETE" && path.startsWith("email/senders/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await disableEmailSender(env, path.split("/")[2], workspaceId, auth));
+  }
+
+  if (request.method === "DELETE" && path.startsWith("email/templates/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableEmailTemplate(env, path.split("/")[2], workspaceId, auth));
   }
 
   if (request.method === "DELETE" && path.startsWith("email/inbound-sources/")) {
@@ -5594,6 +5614,79 @@ async function updateEmailSettings(env, workspaceId, input, auth) {
   `).bind(workspaceId, openTracking, clickTracking, workspaceDailySendLimit, now, now).run();
   await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_settings.update", resource: "workspace_email_settings", resourceId: workspaceId, metadata: { openTracking, clickTracking, workspaceDailySendLimit } });
   return getEmailSettings(env, workspaceId);
+}
+
+async function listEmailTemplates(env, workspaceId) {
+  const rows = await env.DB.prepare(`
+    SELECT
+      et.*,
+      u.name AS created_by_name,
+      COUNT(ss.id) AS sequence_step_count
+    FROM email_templates et
+    LEFT JOIN users u ON u.id = et.created_by_user_id
+    LEFT JOIN sequence_steps ss ON ss.template_id = et.id
+    WHERE et.status = 'active' AND (et.workspace_id IS NULL OR et.workspace_id = ?)
+    GROUP BY et.id
+    ORDER BY CASE WHEN et.workspace_id IS NULL THEN 1 ELSE 0 END ASC, et.created_at DESC
+  `).bind(workspaceId).all();
+  return rows.results.map(emailTemplateResponse);
+}
+
+async function createEmailTemplate(env, input, auth) {
+  requireFields(input, ["name", "subject", "body"]);
+  const name = input.name.trim();
+  const subject = input.subject.trim();
+  const body = input.body.trim();
+  if (!name || !subject || !body) throw httpError(400, "Template name, subject, and body are required");
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO email_templates (id, workspace_id, created_by_user_id, name, subject, body, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    auth.user.id,
+    name,
+    subject,
+    body,
+    now,
+    now,
+  ).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_template.create", resource: "email_template", resourceId: id, metadata: { name } });
+  return emailTemplateResponse(await getRequired(env, "SELECT et.*, 0 AS sequence_step_count FROM email_templates et WHERE et.id = ? AND et.workspace_id = ?", id, input.workspaceId));
+}
+
+async function updateEmailTemplate(env, id, input, auth) {
+  const existing = await getRequired(env, "SELECT * FROM email_templates WHERE id = ? AND workspace_id = ? AND status = 'active'", id, input.workspaceId);
+  const now = new Date().toISOString();
+  const name = input.name !== undefined ? String(input.name).trim() : existing.name;
+  const subject = input.subject !== undefined ? String(input.subject).trim() : existing.subject;
+  const body = input.body !== undefined ? String(input.body).trim() : existing.body;
+  if (!name || !subject || !body) throw httpError(400, "Template name, subject, and body are required");
+  await env.DB.prepare(`
+    UPDATE email_templates
+    SET name = ?, subject = ?, body = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?
+  `).bind(name, subject, body, now, id, input.workspaceId).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_template.update", resource: "email_template", resourceId: id, metadata: { changedFields: changedInputFields(input, ["name", "subject", "body"]) } });
+  return emailTemplateResponse(await getRequired(env, "SELECT et.*, COUNT(ss.id) AS sequence_step_count FROM email_templates et LEFT JOIN sequence_steps ss ON ss.template_id = et.id WHERE et.id = ? AND et.workspace_id = ? GROUP BY et.id", id, input.workspaceId));
+}
+
+async function disableEmailTemplate(env, id, workspaceId, auth) {
+  const existing = await getRequired(env, "SELECT * FROM email_templates WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE email_templates SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_template.disable", resource: "email_template", resourceId: id, metadata: { name: existing.name } });
+  return { ok: true };
+}
+
+function emailTemplateResponse(row) {
+  return {
+    ...row,
+    scope: row.workspace_id ? "workspace" : "default",
+    sequenceStepCount: Number(row.sequence_step_count || 0),
+  };
 }
 
 async function listEmailSenders(env, workspaceId) {

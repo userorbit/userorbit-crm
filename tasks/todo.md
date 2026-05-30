@@ -78,6 +78,7 @@
 - [x] Add one-time escalation policies for report alerts.
 - [x] Add revocable read-only dashboard share links.
 - [x] Add iframe-friendly embedded dashboard share controls.
+- [x] Add workspace email template management.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -167,3 +168,5 @@ Added call and meeting recording/transcript capture: communication logs now stor
 Added richer email template variables: manual sends and sequence emails now render contact, account, sender, workspace, and date placeholders through the same template context. Verified syntax checks and a live manual-send smoke with `{{contact.firstName}}`, account fields, sender, workspace, and date placeholders.
 
 Added workspace daily send limits: email settings now include `workspaceDailySendLimit`, manual and sequence sends enforce the workspace cap before outbound delivery, and Settings exposes the limit. Verified local migration, syntax checks, API settings persistence, send blocking when the cap is reached, resetting to uncapped, and Settings form markup.
+
+Added workspace email template management: admins can create workspace-owned templates, list them alongside read-only seeded defaults, update/disable workspace templates through the API, and manage templates from Settings. Verified local migration, syntax checks, template create/list/update/delete API behavior, and Settings form/table markup.
