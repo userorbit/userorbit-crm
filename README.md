@@ -14,7 +14,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Calendar meeting capture with manual entry and ICS import.
 - Calendar source sync from ICS/webcal feeds.
 - Public lead capture forms that create or match accounts and contacts.
-- Pipeline board with workspace-configurable sales stages.
+- Pipeline board with drag-and-drop movement and workspace-configurable sales stages.
 - A seeded 4-email UserOrbit outreach sequence.
 - Manual email sending, inbound reply capture, and scheduled sequence processing.
 - Configurable first-party email open and click tracking.

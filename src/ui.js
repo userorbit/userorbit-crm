@@ -494,6 +494,25 @@ export const appHtml = String.raw`<!doctype html>
         box-shadow: var(--panel-shadow);
       }
 
+      .pipeline-card[draggable="true"] {
+        cursor: grab;
+      }
+
+      .pipeline-card.dragging {
+        opacity: .55;
+      }
+
+      .pipeline-dropzone {
+        min-height: 96px;
+        border-radius: 8px;
+        transition: background .16s ease, box-shadow .16s ease;
+      }
+
+      .pipeline-dropzone.drag-over {
+        background: var(--bg-secondary);
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+
       .api {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
@@ -1097,14 +1116,14 @@ export const appHtml = String.raw`<!doctype html>
               <div class="subtitle">\${opportunities.length} deal(s) · \${money(total)}</div>
             </div>
           </div>
-          <div class="stack">
+          <div class="stack pipeline-dropzone" data-pipeline-stage="\${escapeHtml(stage)}">
             \${opportunities.map((opportunity) => pipelineCard(opportunity)).join("") || '<div class="empty">No deals.</div>'}
           </div>
         </div>\`;
       }
 
       function pipelineCard(opportunity) {
-        return \`<div class="pipeline-card">
+        return \`<div class="pipeline-card" draggable="true" data-pipeline-opportunity-id="\${escapeHtml(opportunity.id)}" data-pipeline-current-stage="\${escapeHtml(opportunity.stage)}" aria-label="\${escapeHtml(opportunity.name)} opportunity card">
           <strong>\${escapeHtml(opportunity.name)}</strong>
           <div class="subtitle">\${escapeHtml(opportunity.account_name || "")}</div>
           <div class="subtitle">\${money(opportunity.value_cents)} · \${Number(opportunity.confidence || 0)}% confidence</div>
@@ -1994,6 +2013,8 @@ Content-Type: application/json
           await refresh();
         }));
 
+        bindPipelineDragAndDrop();
+
         $("#accountForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -2751,6 +2772,46 @@ Content-Type: application/json
         if (!target) return escapeHtml(group.names || "");
         const actions = (group.items || []).slice(1).map((item) => '<button class="button" data-merge-source-account="' + escapeHtml(item.id) + '" data-merge-target-account="' + escapeHtml(target.id) + '">Merge ' + escapeHtml(item.name) + ' into ' + escapeHtml(target.name) + '</button>');
         return '<div class="stack" style="padding:0">' + actions.join("") + '</div>';
+      }
+
+      function bindPipelineDragAndDrop() {
+        const cards = document.querySelectorAll("[data-pipeline-opportunity-id]");
+        const zones = document.querySelectorAll("[data-pipeline-stage]");
+        cards.forEach((card) => {
+          card.addEventListener("dragstart", (event) => {
+            card.classList.add("dragging");
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", card.dataset.pipelineOpportunityId);
+          });
+          card.addEventListener("dragend", () => {
+            card.classList.remove("dragging");
+            zones.forEach((zone) => zone.classList.remove("drag-over"));
+          });
+        });
+        zones.forEach((zone) => {
+          zone.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            zone.classList.add("drag-over");
+          });
+          zone.addEventListener("dragleave", (event) => {
+            if (!zone.contains(event.relatedTarget)) zone.classList.remove("drag-over");
+          });
+          zone.addEventListener("drop", async (event) => {
+            event.preventDefault();
+            zone.classList.remove("drag-over");
+            const opportunityId = event.dataTransfer.getData("text/plain");
+            const stage = zone.dataset.pipelineStage;
+            const card = document.querySelector('[data-pipeline-opportunity-id="' + CSS.escape(opportunityId) + '"]');
+            if (!opportunityId || !stage || card?.dataset.pipelineCurrentStage === stage) return;
+            await api("opportunities/" + encodeURIComponent(opportunityId), {
+              method: "PATCH",
+              body: JSON.stringify({ stage }),
+            });
+            notice("Opportunity moved.");
+            await refresh();
+          });
+        });
       }
 
       function pipelineStages() {

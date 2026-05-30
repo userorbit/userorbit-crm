@@ -731,6 +731,8 @@ Review or move pipeline opportunities:
 GET /api/opportunities
 ```
 
+In the browser UI, opportunities can be moved by dragging cards between Pipeline columns or by changing the card's stage selector. Agents should use the API patch below so changes are audited and workspace-scoped.
+
 List or create workspace pipeline stages:
 
 ```http
