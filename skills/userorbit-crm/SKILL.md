@@ -409,6 +409,23 @@ PATCH /api/dashboard/preferences
 
 Supported widget keys are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
 
+Review or update the current user's notification preferences for the active workspace:
+
+```http
+GET /api/notification/preferences
+```
+
+```http
+PATCH /api/notification/preferences
+
+{
+  "reportAlertTriggerEnabled": true,
+  "reportAlertRecoveryEnabled": true
+}
+```
+
+Report alerts check the creating user's preferences before sending trigger or recovery notifications.
+
 Create a revocable public aggregate dashboard share:
 
 ```http
@@ -460,7 +477,7 @@ POST /api/report-alerts
 }
 ```
 
-List alerts and recent deliveries with `GET /api/report-alerts`. Run one immediately with `POST /api/report-alerts/<alert_id>/run`, or disable one with `DELETE /api/report-alerts/<alert_id>`. Use `deliveryUrl` for a direct webhook or `integrationId` to deliver through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while an alert remains triggered, and `notifyOnRecovery` to send a recovery notification after the metric returns to normal. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`.
+List alerts and recent deliveries with `GET /api/report-alerts`. Run one immediately with `POST /api/report-alerts/<alert_id>/run`, or disable one with `DELETE /api/report-alerts/<alert_id>`. Use `deliveryUrl` for a direct webhook or `integrationId` to deliver through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while an alert remains triggered, and `notifyOnRecovery` to send a recovery notification after the metric returns to normal. The creating user's notification preferences can mute trigger or recovery delivery. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`.
 
 Import accounts from CSV:
 

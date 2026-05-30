@@ -628,6 +628,7 @@ export const appHtml = String.raw`<!doctype html>
         selectedReportViewId: storageGet("crmReportViewId") || "",
         reportFilters: { sections: ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"] },
         dashboardPreferences: { widgets: ["metrics", "priority_accounts", "due_tasks"] },
+        notificationPreferences: { report_alert_trigger_enabled: 1, report_alert_recovery_enabled: 1 },
         customFields: [],
         selectedSavedViewId: storageGet("crmSavedViewId") || "",
         selectedAccountId: storageGet("crmSelectedAccountId") || "",
@@ -752,12 +753,13 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
-        const [summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
           api("saved-views?resource=reports"),
           api("dashboard/preferences"),
+          api("notification/preferences"),
           api("custom-fields?entity=account"),
           api("reports"),
           api("opportunities"),
@@ -791,7 +793,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
-        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1728,6 +1730,12 @@ Content-Type: application/json
                   <thead><tr><th>Workspace</th><th>Team</th><th>Role</th></tr></thead>
                   <tbody>\${tenant.workspaces.map((workspace) => '<tr><td>' + escapeHtml(workspace.name) + '</td><td>' + escapeHtml(workspace.team_name) + '</td><td><span class="pill">' + escapeHtml(workspace.workspace_role || "") + '</span></td></tr>').join("")}</tbody>
                 </table>
+                <div class="panel-header"><div class="panel-title">My notifications</div></div>
+                <form id="notificationPreferencesForm" class="form-grid" style="padding:0">
+                  <label><input name="reportAlertTriggerEnabled" type="checkbox" \${state.notificationPreferences.report_alert_trigger_enabled ? "checked" : ""} /> Report alert triggers</label>
+                  <label><input name="reportAlertRecoveryEnabled" type="checkbox" \${state.notificationPreferences.report_alert_recovery_enabled ? "checked" : ""} /> Report alert recoveries</label>
+                  <button class="button primary">Save notifications</button>
+                </form>
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Email senders</div></div>' + emailSendersTable(state.emailSenders) : ""}
@@ -2238,6 +2246,20 @@ Content-Type: application/json
             body: JSON.stringify({ widgets: form.getAll("widgets") }),
           });
           notice("Dashboard saved.");
+          await refresh();
+        });
+
+        $("#notificationPreferencesForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("notification/preferences", {
+            method: "PATCH",
+            body: JSON.stringify({
+              reportAlertTriggerEnabled: form.get("reportAlertTriggerEnabled") === "on",
+              reportAlertRecoveryEnabled: form.get("reportAlertRecoveryEnabled") === "on",
+            }),
+          });
+          notice("Notifications saved.");
           await refresh();
         });
 

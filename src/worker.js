@@ -373,6 +373,10 @@ async function routeApi(request, env, url, auth) {
     return json(await getDashboardPreferences(env, workspaceId, auth));
   }
 
+  if (request.method === "GET" && path === "notification/preferences") {
+    return json(await getNotificationPreferences(env, workspaceId, auth));
+  }
+
   if (request.method === "GET" && path === "dashboard/shares") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await listDashboardShares(env, workspaceId));
@@ -380,6 +384,10 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "PATCH" && path === "dashboard/preferences") {
     return json(await updateDashboardPreferences(env, workspaceId, await readJson(request), auth));
+  }
+
+  if (request.method === "PATCH" && path === "notification/preferences") {
+    return json(await updateNotificationPreferences(env, workspaceId, await readJson(request), auth));
   }
 
   if (request.method === "POST" && path === "dashboard/shares") {
@@ -1885,8 +1893,10 @@ async function evaluateReportAlert(env, alert) {
   const canRepeat = triggered && repeatIntervalHours > 0 && alert.last_triggered_at
     ? Date.parse(now) - Date.parse(alert.last_triggered_at) >= repeatIntervalHours * 60 * 60 * 1000
     : false;
-  const shouldDeliverTrigger = triggered && (previousState !== "triggered" || canRepeat || repeatIntervalHours === 0);
-  const shouldDeliverRecovery = !triggered && previousState === "triggered" && Boolean(alert.notify_on_recovery);
+  const preferences = await getReportAlertDeliveryPreferences(env, alert);
+  const shouldDeliverTrigger = preferences.report_alert_trigger_enabled && triggered && (previousState !== "triggered" || canRepeat || repeatIntervalHours === 0);
+  const shouldDeliverRecovery = preferences.report_alert_recovery_enabled && !triggered && previousState === "triggered" && Boolean(alert.notify_on_recovery);
+  const mutedByPreference = (triggered && !preferences.report_alert_trigger_enabled) || (!triggered && previousState === "triggered" && Boolean(alert.notify_on_recovery) && !preferences.report_alert_recovery_enabled);
   let status = "not_triggered";
   let statusCode = null;
   let error = null;
@@ -1904,6 +1914,8 @@ async function evaluateReportAlert(env, alert) {
       INSERT INTO report_alert_deliveries (id, workspace_id, alert_id, metric, value, threshold, status, status_code, error, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(crypto.randomUUID(), alert.workspace_id, alert.id, alert.metric, value, alert.threshold, status, statusCode, cleanNullable(error), now).run();
+  } else if (mutedByPreference) {
+    status = "muted";
   } else if (triggered) {
     status = "suppressed";
   }
@@ -1958,6 +1970,12 @@ async function deliverReportAlertIntegration(env, alert, event, payload) {
   const integration = await env.DB.prepare("SELECT * FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'").bind(alert.integration_id, alert.workspace_id).first();
   if (!integration) return { status: "failed", statusCode: null, error: "Integration is disabled or missing" };
   return deliverNativeIntegration(env, integration, event, alert.id, payload);
+}
+
+async function getReportAlertDeliveryPreferences(env, alert) {
+  if (!alert.created_by_user_id) return notificationPreferencesResponse(alert.workspace_id, null, null);
+  const row = await env.DB.prepare("SELECT * FROM notification_preferences WHERE workspace_id = ? AND user_id = ?").bind(alert.workspace_id, alert.created_by_user_id).first();
+  return notificationPreferencesResponse(alert.workspace_id, alert.created_by_user_id, row);
 }
 
 function reportAlertMetricValue(metric, reports) {
@@ -2050,6 +2068,42 @@ function dashboardPreferencesResponse(workspaceId, userId, row) {
     workspace_id: workspaceId,
     user_id: userId,
     widgets: normalizeDashboardWidgets(parseJsonArray(row?.widgets_json)),
+    created_at: row?.created_at || null,
+    updated_at: row?.updated_at || null,
+  };
+}
+
+async function getNotificationPreferences(env, workspaceId, auth) {
+  const existing = await env.DB.prepare("SELECT * FROM notification_preferences WHERE workspace_id = ? AND user_id = ?").bind(workspaceId, auth.user.id).first();
+  return notificationPreferencesResponse(workspaceId, auth.user.id, existing);
+}
+
+async function updateNotificationPreferences(env, workspaceId, input, auth) {
+  const reportAlertTriggerEnabled = truthyInput(input.reportAlertTriggerEnabled ?? input.report_alert_trigger_enabled) ? 1 : 0;
+  const reportAlertRecoveryEnabled = truthyInput(input.reportAlertRecoveryEnabled ?? input.report_alert_recovery_enabled) ? 1 : 0;
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO notification_preferences (
+      id, workspace_id, user_id, report_alert_trigger_enabled, report_alert_recovery_enabled, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, user_id) DO UPDATE SET
+      report_alert_trigger_enabled = excluded.report_alert_trigger_enabled,
+      report_alert_recovery_enabled = excluded.report_alert_recovery_enabled,
+      updated_at = excluded.updated_at
+  `).bind(id, workspaceId, auth.user.id, reportAlertTriggerEnabled, reportAlertRecoveryEnabled, now, now).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "notification_preferences.update", resource: "notification_preferences", resourceId: workspaceId, metadata: { reportAlertTriggerEnabled: Boolean(reportAlertTriggerEnabled), reportAlertRecoveryEnabled: Boolean(reportAlertRecoveryEnabled) } });
+  return getNotificationPreferences(env, workspaceId, auth);
+}
+
+function notificationPreferencesResponse(workspaceId, userId, row) {
+  return {
+    id: row?.id || null,
+    workspace_id: workspaceId,
+    user_id: userId,
+    report_alert_trigger_enabled: row?.report_alert_trigger_enabled ?? 1,
+    report_alert_recovery_enabled: row?.report_alert_recovery_enabled ?? 1,
     created_at: row?.created_at || null,
     updated_at: row?.updated_at || null,
   };

@@ -518,6 +518,20 @@ curl -X PATCH http://localhost:8787/api/dashboard/preferences \
 
 Dashboard preferences are scoped to the signed-in user and active workspace. Supported widgets are `metrics`, `priority_accounts`, `due_tasks`, `pipeline`, `sequence_performance`, and `stalled_opportunities`.
 
+### Customize notifications
+
+```sh
+curl -X PATCH http://localhost:8787/api/notification/preferences \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "reportAlertTriggerEnabled": true,
+    "reportAlertRecoveryEnabled": true
+  }'
+```
+
+Notification preferences are scoped to the signed-in user and active workspace. Report alerts check the creating user's preferences before sending trigger or recovery notifications.
+
 ### Share a dashboard
 
 ```sh
@@ -574,7 +588,7 @@ curl -X POST http://localhost:8787/api/report-alerts \
   }'
 ```
 
-Report alerts evaluate daily, weekly, or monthly against report metrics and deliver only when the rule triggers. Use `deliveryUrl` for a direct webhook, or `integrationId` to send through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while a metric remains in breach, and set `notifyOnRecovery` to send a recovery notification when the metric returns to normal. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
+Report alerts evaluate daily, weekly, or monthly against report metrics and deliver only when the rule triggers and the creating user's notification preferences allow the event. Use `deliveryUrl` for a direct webhook, or `integrationId` to send through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while a metric remains in breach, and set `notifyOnRecovery` to send a recovery notification when the metric returns to normal. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
 
 ### Import accounts
 
