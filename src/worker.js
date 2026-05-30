@@ -4030,7 +4030,7 @@ async function sendManualEmail(env, input) {
     }),
   );
   const tracking = buildEmailTracking(input.baseUrl || env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
-  const result = await sendEmail(env, {
+  const result = await sendEmailWithWorkspaceLimit(env, input.workspaceId, emailSettings, {
     fromEmail: sender?.email,
     fromName: sender?.name,
     to: contact.email,
@@ -4131,7 +4131,7 @@ async function processDueSequenceEmails(env, options = {}) {
     );
 
     const tracking = buildEmailTracking(env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
-    const result = await sendEmail(env, {
+    const result = await sendEmailWithWorkspaceLimit(env, item.workspace_id, emailSettings, {
       fromEmail: sender?.email,
       fromName: sender?.name,
       to: item.email,
@@ -5572,6 +5572,7 @@ async function getEmailSettings(env, workspaceId) {
     workspace_id: workspaceId,
     open_tracking_enabled: existing?.open_tracking_enabled || 0,
     click_tracking_enabled: existing?.click_tracking_enabled || 0,
+    workspace_daily_send_limit: existing?.workspace_daily_send_limit || 0,
     created_at: existing?.created_at || null,
     updated_at: existing?.updated_at || null,
   };
@@ -5581,15 +5582,17 @@ async function updateEmailSettings(env, workspaceId, input, auth) {
   const now = new Date().toISOString();
   const openTracking = input.openTrackingEnabled || input.open_tracking_enabled ? 1 : 0;
   const clickTracking = input.clickTrackingEnabled || input.click_tracking_enabled ? 1 : 0;
+  const workspaceDailySendLimit = clampInteger(input.workspaceDailySendLimit ?? input.workspace_daily_send_limit ?? 0, 0, 10000, "workspaceDailySendLimit");
   await env.DB.prepare(`
-    INSERT INTO workspace_email_settings (workspace_id, open_tracking_enabled, click_tracking_enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO workspace_email_settings (workspace_id, open_tracking_enabled, click_tracking_enabled, workspace_daily_send_limit, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(workspace_id) DO UPDATE SET
       open_tracking_enabled = excluded.open_tracking_enabled,
       click_tracking_enabled = excluded.click_tracking_enabled,
+      workspace_daily_send_limit = excluded.workspace_daily_send_limit,
       updated_at = excluded.updated_at
-  `).bind(workspaceId, openTracking, clickTracking, now, now).run();
-  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_settings.update", resource: "workspace_email_settings", resourceId: workspaceId, metadata: { openTracking, clickTracking } });
+  `).bind(workspaceId, openTracking, clickTracking, workspaceDailySendLimit, now, now).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_settings.update", resource: "workspace_email_settings", resourceId: workspaceId, metadata: { openTracking, clickTracking, workspaceDailySendLimit } });
   return getEmailSettings(env, workspaceId);
 }
 
@@ -6112,6 +6115,31 @@ async function sendEmail(env, message) {
   } catch (error) {
     return { status: "failed", providerMessageId: null, error: error.message || String(error) };
   }
+}
+
+async function sendEmailWithWorkspaceLimit(env, workspaceId, settings, message) {
+  const limit = Number(settings?.workspace_daily_send_limit || 0);
+  if (limit > 0) {
+    const sentToday = await workspaceSentToday(env, workspaceId);
+    if (sentToday >= limit) {
+      return {
+        status: "failed",
+        providerMessageId: null,
+        error: `Workspace daily send limit reached (${limit})`,
+      };
+    }
+  }
+  return sendEmail(env, message);
+}
+
+async function workspaceSentToday(env, workspaceId) {
+  const today = new Date().toISOString().slice(0, 10);
+  return Number(await scalar(env, `
+    SELECT COUNT(*)
+    FROM email_events ee
+    JOIN accounts a ON a.id = ee.account_id
+    WHERE a.workspace_id = ? AND ee.status = 'sent' AND substr(COALESCE(ee.sent_at, ee.created_at), 1, 10) = ?
+  `, workspaceId, today) || 0);
 }
 
 async function smtpSend(env, message) {

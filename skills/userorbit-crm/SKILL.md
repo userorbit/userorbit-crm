@@ -180,10 +180,10 @@ GET /api/email/settings
 PATCH /api/email/settings
 Content-Type: application/json
 
-{ "openTrackingEnabled": true, "clickTrackingEnabled": true }
+{ "openTrackingEnabled": true, "clickTrackingEnabled": true, "workspaceDailySendLimit": 250 }
 ```
 
-Tracking is off by default. Enable it only when the workspace has a correct public Worker URL configured with `CRM_PUBLIC_URL` so sequence emails can produce valid tracking links.
+Tracking is off by default. Enable it only when the workspace has a correct public Worker URL configured with `CRM_PUBLIC_URL` so sequence emails can produce valid tracking links. Set `workspaceDailySendLimit` to cap successful outbound sends across all senders in a workspace; `0` leaves it uncapped.
 
 Configure sender rotation:
 
@@ -197,7 +197,7 @@ POST /api/email/senders
 }
 ```
 
-List senders with `GET /api/email/senders`. Manual and sequence sends choose the least-used active sender that has not hit its daily cap. If no sender is configured, UserOrbit falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
+List senders with `GET /api/email/senders`. Manual and sequence sends enforce the workspace daily limit first, then choose the least-used active sender that has not hit its daily cap. If no sender is configured, UserOrbit falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
 
 Create an inbound email source for provider parse webhooks:
 

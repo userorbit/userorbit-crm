@@ -648,7 +648,7 @@ export const appHtml = String.raw`<!doctype html>
         calendarEvents: [],
         calendarSources: [],
         leadForms: [],
-        emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
+        emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0, workspace_daily_send_limit: 0 },
         emailSenders: [],
         emailInboundSources: [],
         emailSyncSources: [],
@@ -1860,6 +1860,7 @@ Content-Type: application/json
                 <form id="emailSettingsForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label><input name="openTrackingEnabled" type="checkbox" \${state.emailSettings.open_tracking_enabled ? "checked" : ""} /> Track email opens</label>
                   <label><input name="clickTrackingEnabled" type="checkbox" \${state.emailSettings.click_tracking_enabled ? "checked" : ""} /> Track link clicks</label>
+                  <label>Workspace daily send limit<input name="workspaceDailySendLimit" type="number" min="0" max="10000" value="\${Number(state.emailSettings.workspace_daily_send_limit || 0)}" /></label>
                   <button class="button primary">Save email settings</button>
                 </form>
                 <form id="emailSenderForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -2754,6 +2755,7 @@ Content-Type: application/json
             body: JSON.stringify({
               openTrackingEnabled: form.get("openTrackingEnabled") === "on",
               clickTrackingEnabled: form.get("clickTrackingEnabled") === "on",
+              workspaceDailySendLimit: Number(form.get("workspaceDailySendLimit") || 0),
             }),
           });
           notice("Email settings saved.");

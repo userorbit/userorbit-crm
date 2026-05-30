@@ -268,10 +268,10 @@ After callback, UserOrbit stores the refresh token on the calendar source, syncs
 curl -X PATCH http://localhost:8787/api/email/settings \
   -H "authorization: Bearer $CRM_API_TOKEN" \
   -H "content-type: application/json" \
-  -d '{ "openTrackingEnabled": true, "clickTrackingEnabled": true }'
+  -d '{ "openTrackingEnabled": true, "clickTrackingEnabled": true, "workspaceDailySendLimit": 250 }'
 ```
 
-Email tracking is workspace-scoped and off by default. Opens and clicks are counted on email activity, account/contact detail, and reports.
+Email tracking is workspace-scoped and off by default. Opens and clicks are counted on email activity, account/contact detail, and reports. Set `workspaceDailySendLimit` to cap successful outbound sends across the whole workspace; `0` leaves the workspace uncapped.
 
 ### Configure email sender rotation
 
@@ -286,7 +286,7 @@ curl -X POST http://localhost:8787/api/email/senders \
   }'
 ```
 
-Manual and sequence sends pick the least-used active sender for the workspace and increment usage after successful SMTP delivery. If no sender is configured, the app falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
+Manual and sequence sends first check the workspace daily send limit, then pick the least-used active sender for the workspace and increment usage after successful SMTP delivery. If no sender is configured, the app falls back to `CRM_FROM_EMAIL` or `SMTP_USERNAME`.
 
 ### Configure inbound email sources
 
