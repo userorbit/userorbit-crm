@@ -118,6 +118,29 @@ List integrations and recent delivery status:
 GET /api/integrations
 ```
 
+Create a provider-backed SMS or WhatsApp message channel:
+
+```http
+POST /api/message-channels
+
+{
+  "type": "sms",
+  "provider": "twilio",
+  "name": "Outbound SMS",
+  "accountSid": "AC...",
+  "authToken": "twilio-auth-token",
+  "from": "+15551234567"
+}
+```
+
+List channels and recent delivery status:
+
+```http
+GET /api/message-channels
+```
+
+Only workspace owners/admins can create or disable channels. Owners, admins, and members can send through active channels. Treat stored provider credentials as self-hosted secrets.
+
 Create a workspace-scoped agent token:
 
 ```http
@@ -211,7 +234,7 @@ POST /api/agent/command
     "source": "Product Hunt",
     "observation": "they launched a new onboarding checklist",
     "contacts": [
-      { "name": "Jane Doe", "email": "jane@acme.com", "title": "Head of Product" }
+      { "name": "Jane Doe", "email": "jane@acme.com", "phone": "+15551234567", "title": "Head of Product" }
     ]
   }
 }
@@ -309,11 +332,11 @@ Import accounts from CSV:
 POST /api/import/accounts.csv
 Content-Type: text/csv
 
-name,domain,segment,status,contact_name,contact_email,contact_title
-Acme,acme.com,product,target,Jane Doe,jane@acme.com,Head of Product
+name,domain,segment,status,contact_name,contact_email,contact_phone,contact_title
+Acme,acme.com,product,target,Jane Doe,jane@acme.com,+15551234567,Head of Product
 ```
 
-Supported account columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, and `observation`. Optional contact columns are `contact_name`, `contact_email`, and `contact_title`.
+Supported account columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, and `observation`. Optional contact columns are `contact_name`, `contact_email`, `contact_phone`, and `contact_title`.
 
 For non-standard CSV headers, send JSON with `csv` and `mapping`:
 
@@ -371,6 +394,23 @@ Content-Type: application/json
 ```
 
 Supported `type` values are `call`, `meeting`, `sms`, `whatsapp`, and `note`. The `log_communication` agent command accepts the same fields in `payload`.
+
+Send SMS or WhatsApp through a configured provider channel:
+
+```http
+POST /api/agent/command
+
+{
+  "command": "send_message",
+  "payload": {
+    "channelId": "message_channel_id",
+    "contactId": "contact_id",
+    "body": "Thanks for taking a look. Want me to send the teardown?"
+  }
+}
+```
+
+The contact must have a phone number unless `payload.to` is provided. The send creates a `communication.created` timeline event and a `message.sent` webhook event with delivery status.
 
 Capture calendar meetings directly or from an ICS export:
 

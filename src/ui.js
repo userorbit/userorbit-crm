@@ -600,6 +600,7 @@ export const appHtml = String.raw`<!doctype html>
         warmup: null,
         tasks: [],
         communications: [],
+        messageChannels: { channels: [], deliveries: [] },
         calendarEvents: [],
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0 },
@@ -660,7 +661,8 @@ export const appHtml = String.raw`<!doctype html>
         }
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
+        const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -673,6 +675,7 @@ export const appHtml = String.raw`<!doctype html>
           api("warmup"),
           api("tasks"),
           api("communications"),
+          canWrite ? api("message-channels") : Promise.resolve({ channels: [], deliveries: [] }),
           api("calendar/events"),
           api("email/settings"),
           canManage ? api("lead-forms") : Promise.resolve([]),
@@ -682,7 +685,7 @@ export const appHtml = String.raw`<!doctype html>
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, messageChannels, calendarEvents, emailSettings, leadForms, integrations, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -734,6 +737,11 @@ export const appHtml = String.raw`<!doctype html>
       function canManageCurrentWorkspace(tenant = state.tenant, workspaceId = state.workspaceId) {
         const workspace = tenant?.workspaces?.find((item) => item.id === workspaceId);
         return ["owner", "admin"].includes(workspace?.workspace_role);
+      }
+
+      function canWriteCurrentWorkspace(tenant = state.tenant, workspaceId = state.workspaceId) {
+        const workspace = tenant?.workspaces?.find((item) => item.id === workspaceId);
+        return ["owner", "admin", "member"].includes(workspace?.workspace_role);
       }
 
       function accountListQuery() {
@@ -826,7 +834,8 @@ export const appHtml = String.raw`<!doctype html>
                   <label class="full">Observation<textarea name="observation" placeholder="they launched a new AI onboarding feature last week"></textarea></label>
                   <label>Contact name<input name="contactName" placeholder="Jane Doe" /></label>
                   <label>Email<input name="contactEmail" type="email" placeholder="jane@acme.com" /></label>
-                  <label class="full">Title<input name="contactTitle" placeholder="Head of Product" /></label>
+                  <label>Phone<input name="contactPhone" placeholder="+15551234567" /></label>
+                  <label>Title<input name="contactTitle" placeholder="Head of Product" /></label>
                   \${customFieldInputs({ prefix: "cf_", values: {} })}
                 </div>
                 <button class="button primary">Create account</button>
@@ -845,6 +854,7 @@ export const appHtml = String.raw`<!doctype html>
                     <label>Observation<input name="map_observation" placeholder="Notes" /></label>
                     <label>Contact name<input name="map_contactName" placeholder="Full Name" /></label>
                     <label>Contact email<input name="map_contactEmail" placeholder="Email Address" /></label>
+                    <label>Contact phone<input name="map_contactPhone" placeholder="Phone" /></label>
                     <label>Contact title<input name="map_contactTitle" placeholder="Job Title" /></label>
                     \${importCustomFieldMappingInputs()}
                   </div>
@@ -1161,11 +1171,24 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderCommunications() {
+        const channels = state.messageChannels?.channels || [];
         return header("Communications", "Log calls, meetings, messages, and notes against accounts and contacts.") + \`
           <div class="columns">
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Recent activity</div></div>
               \${communicationTable(state.communications)}
+            </div>
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">Send provider message</div></div>
+              <form id="providerMessageForm" class="stack">
+                <div class="form-grid">
+                  <label>Channel<select name="channelId" required>\${channels.map((channel) => '<option value="' + escapeHtml(channel.id) + '">' + escapeHtml(channel.name + " / " + channel.type) + '</option>').join("")}</select></label>
+                  <label>Contact<select name="contactId" required>\${state.accounts.flatMap((account) => account.contacts || []).map((contact) => '<option value="' + escapeHtml(contact.id) + '">' + escapeHtml(contact.name + " / " + (contact.phone || contact.email || "")) + '</option>').join("")}</select></label>
+                  <label class="full">Body<textarea name="body" required placeholder="Short SMS or WhatsApp follow-up"></textarea></label>
+                </div>
+                <button class="button primary" \${channels.length ? "" : "disabled"}>Send message</button>
+              </form>
+              \${channels.length ? "" : '<div class="empty">Create a message channel in Settings before sending SMS or WhatsApp.</div>'}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Log activity</div></div>
@@ -1430,6 +1453,7 @@ Content-Type: application/json
                 </table>
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Workspace tokens</div></div>' + workspaceTokensTable(state.workspaceTokens) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Team invitations</div></div>' + teamInvitationsTable(state.teamInvitations) : ""}
+                \${canManage ? '<div class="panel-header"><div class="panel-title">Message channels</div></div>' + messageChannelsTable(state.messageChannels) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Integrations</div></div>' + integrationsTable(state.integrations) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Webhooks</div></div>' + webhooksTable(state.webhooks) : ""}
                 \${canManage ? '<div class="panel-header"><div class="panel-title">Audit log</div></div>' + auditLogsTable(state.auditLogs) : ""}
@@ -1469,6 +1493,15 @@ Content-Type: application/json
                   <label>Slack webhook URL<input name="webhookUrl" type="url" required placeholder="https://hooks.slack.com/services/..." /></label>
                   <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
                   <button class="button primary">Create Slack integration</button>
+                </form>
+                <form id="messageChannelForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Outbound SMS" /></label>
+                  <label>Type<select name="type"><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select></label>
+                  <label>Twilio account SID<input name="accountSid" required placeholder="AC..." /></label>
+                  <label>Twilio auth token<input name="authToken" type="password" required placeholder="Token" /></label>
+                  <label>From number<input name="from" required placeholder="+15551234567 or whatsapp:+15551234567" /></label>
+                  <label>API base URL<input name="apiBaseUrl" placeholder="Optional testing/proxy URL" /></label>
+                  <button class="button primary">Create message channel</button>
                 </form>
                 <form id="emailSettingsForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label><input name="openTrackingEnabled" type="checkbox" \${state.emailSettings.open_tracking_enabled ? "checked" : ""} /> Track email opens</label>
@@ -1566,6 +1599,25 @@ Content-Type: application/json
         return integrationTable + deliveryTable;
       }
 
+      function messageChannelsTable(messageChannels) {
+        const channels = messageChannels?.channels || [];
+        const deliveries = messageChannels?.deliveries || [];
+        const channelTable = channels.length ? \`<table>
+          <thead><tr><th>Name</th><th>Type</th><th>Provider</th><th>From</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${channels.map((channel) => \`
+            <tr>
+              <td>\${escapeHtml(channel.name)}<div class="subtitle">\${escapeHtml(channel.config?.accountSid || "")}</div></td>
+              <td>\${escapeHtml(channel.type)}</td>
+              <td>\${escapeHtml(channel.provider)}</td>
+              <td>\${escapeHtml(channel.config?.from || "")}</td>
+              <td><span class="pill">\${escapeHtml(channel.status)}</span></td>
+              <td>\${channel.status === "active" ? '<button class="button" data-disable-message-channel-id="' + escapeHtml(channel.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\` : '<div class="empty">No message channels yet.</div>';
+        const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Message deliveries</div></div>' + reportTable(["Channel", "Type", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.channel_name, delivery.channel_type, delivery.status, delivery.status_code || delivery.error || ""])) : "";
+        return channelTable + deliveryTable;
+      }
+
       function auditLogsTable(logs) {
         if (!logs.length) return '<div class="empty">No audit events yet.</div>';
         return \`<table>
@@ -1643,7 +1695,7 @@ Content-Type: application/json
             source: form.get("source"),
             observation: form.get("observation"),
             customFields: customFieldsFromForm(form, "cf_"),
-            contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: form.get("contactTitle") }] : [],
+            contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, phone: form.get("contactPhone"), title: form.get("contactTitle") }] : [],
           };
           await api("accounts", { method: "POST", body: JSON.stringify(payload) });
           notice("Account created.");
@@ -1741,6 +1793,21 @@ Content-Type: application/json
             }),
           });
           notice("Communication logged.");
+          await refresh();
+        });
+
+        $("#providerMessageForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("messages/send", {
+            method: "POST",
+            body: JSON.stringify({
+              channelId: form.get("channelId"),
+              contactId: form.get("contactId"),
+              body: form.get("body"),
+            }),
+          });
+          notice("Message sent and logged.");
           await refresh();
         });
 
@@ -1957,9 +2024,34 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#messageChannelForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("message-channels", {
+            method: "POST",
+            body: JSON.stringify({
+              provider: "twilio",
+              name: form.get("name"),
+              type: form.get("type"),
+              accountSid: form.get("accountSid"),
+              authToken: form.get("authToken"),
+              from: form.get("from"),
+              apiBaseUrl: form.get("apiBaseUrl") || undefined,
+            }),
+          });
+          notice("Message channel created.");
+          await refresh();
+        });
+
         document.querySelectorAll("[data-disable-integration-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("integrations/" + encodeURIComponent(node.dataset.disableIntegrationId), { method: "DELETE" });
           notice("Integration disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-disable-message-channel-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("message-channels/" + encodeURIComponent(node.dataset.disableMessageChannelId), { method: "DELETE" });
+          notice("Message channel disabled.");
           await refresh();
         }));
 
@@ -2064,7 +2156,7 @@ Content-Type: application/json
 
       function importMappingFromForm(form) {
         const mapping = { customFields: {} };
-        ["name", "domain", "segment", "status", "source", "owner", "observation", "contactName", "contactEmail", "contactTitle"].forEach((field) => {
+        ["name", "domain", "segment", "status", "source", "owner", "observation", "contactName", "contactEmail", "contactPhone", "contactTitle"].forEach((field) => {
           const value = String(form.get("map_" + field) || "").trim();
           if (value) mapping[field] = value;
         });

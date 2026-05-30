@@ -10,6 +10,7 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Account detail timelines with contacts, opportunities, tasks, and email activity.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
 - Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
+- Provider-backed SMS and WhatsApp channels through Twilio-compatible outbound messaging.
 - Calendar meeting capture with manual entry and ICS import.
 - Public lead capture forms that create or match accounts and contacts.
 - Pipeline board with workspace-configurable sales stages.
@@ -242,6 +243,37 @@ curl -X POST http://localhost:8787/api/integrations \
 
 Slack integrations are workspace-scoped. They can subscribe to the same CRM event names as webhooks and keep recent delivery status in Settings.
 
+### Create a message channel
+
+```sh
+curl -X POST http://localhost:8787/api/message-channels \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "type": "sms",
+    "provider": "twilio",
+    "name": "Outbound SMS",
+    "accountSid": "AC...",
+    "authToken": "twilio-auth-token",
+    "from": "+15551234567"
+  }'
+```
+
+Send a provider-backed message and log it on the account/contact timeline:
+
+```sh
+curl -X POST http://localhost:8787/api/messages/send \
+  -H "authorization: Bearer $CRM_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "channelId": "channel-id",
+    "contactId": "contact-id",
+    "body": "Thanks for taking a look. Want me to send the teardown?"
+  }'
+```
+
+WhatsApp channels use `type: "whatsapp"` and accept either `+15551234567` or `whatsapp:+15551234567` in `from`; outbound addresses are normalized before sending. Recent delivery status is visible from Settings.
+
 ### Get reports
 
 ```sh
@@ -266,7 +298,7 @@ curl -X POST http://localhost:8787/api/import/accounts.csv \
   --data-binary @accounts.csv
 ```
 
-Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, and `contact_title`. The Accounts UI also includes a column mapping panel for imports from tools that use different headers.
+Supported columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, `observation`, `contact_name`, `contact_email`, `contact_phone`, and `contact_title`. The Accounts UI also includes a column mapping panel for imports from tools that use different headers.
 
 For scripted imports with custom column names, send JSON:
 
@@ -294,6 +326,7 @@ Supported commands:
 - `create_account`
 - `enroll_contact`
 - `send_email`
+- `send_message`
 - `run_sequences`
 - `run_warmup`
 - `create_task`

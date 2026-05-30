@@ -42,7 +42,8 @@
 - [x] Add field-level read/write permissions for account custom fields.
 - [x] Add OAuth login.
 - [x] Add native Slack integration notifications for CRM events.
-- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, native integrations, and provider-backed communication channels.
+- [x] Add provider-backed SMS/WhatsApp message channels.
+- [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, broader native integrations, and inbound/provider-deeper communication channels.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.
@@ -109,3 +110,5 @@ Added field-level permissions for account custom fields: admins choose read/writ
 Added generic OAuth/OIDC login: self-hosters can configure authorization/token/userinfo endpoints and client credentials, `/api/auth/oauth/start` redirects to the provider, `/api/auth/oauth/callback` creates a browser session, and new OAuth users are gated by `OAUTH_ALLOWED_DOMAINS`.
 
 Added native Slack integrations: workspace admins can create/disable Slack incoming-webhook integrations, subscribe them to selected CRM events, and inspect recent delivery status from Settings alongside webhooks.
+
+Added provider-backed messaging: workspace admins can configure Twilio-compatible SMS/WhatsApp channels, members can send messages from Communications, outbound sends create timeline events plus delivery rows, and agents can use `send_message`.

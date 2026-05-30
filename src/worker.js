@@ -31,6 +31,8 @@ const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
 const INTEGRATION_TYPES = new Set(["slack"]);
+const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp"]);
+const MESSAGE_CHANNEL_PROVIDERS = new Set(["twilio"]);
 
 export default {
   async fetch(request, env) {
@@ -138,6 +140,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listIntegrations(env, workspaceId, auth));
   }
 
+  if (request.method === "GET" && path === "message-channels") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await listMessageChannels(env, workspaceId));
+  }
+
   if (request.method === "GET" && path === "lead-forms") {
     return json(await listLeadForms(env, workspaceId, auth));
   }
@@ -175,6 +182,16 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "DELETE" && path.startsWith("integrations/")) {
     return json(await disableIntegration(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "message-channels") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await createMessageChannel(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("message-channels/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await disableMessageChannel(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "DELETE" && path.startsWith("workspace-tokens/")) {
@@ -315,6 +332,11 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "POST" && path === "communications") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await createCommunication(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "POST" && path === "messages/send") {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await sendProviderMessage(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
   if (request.method === "GET" && path === "calendar/events") {
@@ -734,10 +756,11 @@ async function importAccountsCsv(env, workspaceId, input, auth = null) {
       const contactName = readMapped(row, mapping, "contactName", ["contact_name", "contact", "name_contact", "person", "lead_name"]);
       const contactEmail = cleanEmail(readMapped(row, mapping, "contactEmail", ["contact_email", "email", "person_email", "lead_email"]));
       const contactTitle = readMapped(row, mapping, "contactTitle", ["contact_title", "title", "job_title", "role"]);
+      const contactPhone = readMapped(row, mapping, "contactPhone", ["contact_phone", "phone", "mobile", "phone_number"]);
       const existing = await findImportAccountMatch(env, workspaceId, { name, domain });
       if (existing) {
         if (Object.keys(customFields).length) await upsertCustomFieldValues(env, workspaceId, "account", existing.id, customFields, auth);
-        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, workspaceId, existing.id, { name: contactName, email: contactEmail, title: contactTitle }) : null;
+        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, workspaceId, existing.id, { name: contactName, email: contactEmail, title: contactTitle, phone: contactPhone }) : null;
         results.push({ row: index + 2, ok: true, action: "matched", accountId: existing.id, name: existing.name, contact: contact ? contact.action : "none" });
       } else {
         const account = await createAccount(env, {
@@ -751,7 +774,7 @@ async function importAccountsCsv(env, workspaceId, input, auth = null) {
           owner: readMapped(row, mapping, "owner", ["owner"]),
           observation: readMapped(row, mapping, "observation", ["observation", "notes", "description"]),
           customFields,
-          contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: contactTitle }] : [],
+          contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: contactTitle, phone: contactPhone }] : [],
         });
         results.push({ row: index + 2, ok: true, action: "created", accountId: account.id, name: account.name });
       }
@@ -838,7 +861,7 @@ async function createImportContactIfMissing(env, workspaceId, accountId, input) 
   const email = cleanEmail(input.email);
   const existing = await env.DB.prepare("SELECT id, account_id FROM contacts WHERE email = ?").bind(email).first();
   if (existing) return { action: existing.account_id === accountId ? "existing" : "email_conflict", id: existing.id };
-  const created = await createContact(env, { workspaceId, accountId, name: input.name, email, title: input.title });
+  const created = await createContact(env, { workspaceId, accountId, name: input.name, email, title: input.title, phone: input.phone });
   return { action: "created", id: created.id };
 }
 
@@ -1455,8 +1478,8 @@ async function createContact(env, input) {
   const status = normalizeEnum(input.status || "new", CONTACT_STATUSES, "status");
 
   await env.DB.prepare(`
-    INSERT INTO contacts (id, account_id, name, email, title, linkedin_url, status, notes, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO contacts (id, account_id, name, email, title, phone, linkedin_url, status, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       id,
@@ -1464,6 +1487,7 @@ async function createContact(env, input) {
       input.name.trim(),
       input.email.trim().toLowerCase(),
       cleanNullable(input.title),
+      cleanNullable(input.phone),
       cleanNullable(input.linkedinUrl),
       status,
       cleanNullable(input.notes),
@@ -1727,6 +1751,120 @@ async function createCommunication(env, input, auth) {
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "communication.create", resource: "communication_event", resourceId: id, metadata: { type, accountId: account.id, contactId } });
   await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
   return event;
+}
+
+async function listMessageChannels(env, workspaceId) {
+  const [channels, deliveries] = await Promise.all([
+    env.DB.prepare(`
+      SELECT wmc.*, u.name AS created_by_name
+      FROM workspace_message_channels wmc
+      JOIN users u ON u.id = wmc.created_by_user_id
+      WHERE wmc.workspace_id = ?
+      ORDER BY wmc.created_at DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT md.*, wmc.name AS channel_name, wmc.type AS channel_type
+      FROM message_deliveries md
+      JOIN workspace_message_channels wmc ON wmc.id = md.channel_id
+      WHERE md.workspace_id = ?
+      ORDER BY md.created_at DESC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+  ]);
+  return {
+    channels: channels.results.map(messageChannelResponse),
+    deliveries: deliveries.results,
+  };
+}
+
+async function createMessageChannel(env, input, auth) {
+  requireFields(input, ["name", "type"]);
+  const type = normalizeEnum(input.type, MESSAGE_CHANNEL_TYPES, "type");
+  const provider = normalizeEnum(input.provider || "twilio", MESSAGE_CHANNEL_PROVIDERS, "provider");
+  const config = normalizeMessageChannelConfig(provider, input);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO workspace_message_channels (id, workspace_id, created_by_user_id, type, provider, name, config_json, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, type, provider, input.name.trim(), JSON.stringify(config), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "message_channel.create", resource: "workspace_message_channel", resourceId: id, metadata: { name: input.name, type, provider } });
+  return messageChannelResponse(await getRequired(env, "SELECT * FROM workspace_message_channels WHERE id = ? AND workspace_id = ?", id, input.workspaceId));
+}
+
+async function disableMessageChannel(env, id, workspaceId, auth) {
+  const existing = await getRequired(env, "SELECT * FROM workspace_message_channels WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE workspace_message_channels SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "message_channel.disable", resource: "workspace_message_channel", resourceId: id, metadata: { name: existing.name, type: existing.type, provider: existing.provider } });
+  return { ok: true };
+}
+
+async function sendProviderMessage(env, input, auth) {
+  requireFields(input, ["channelId", "contactId", "body"]);
+  const channel = await getRequired(env, "SELECT * FROM workspace_message_channels WHERE id = ? AND workspace_id = ? AND status = 'active'", input.channelId, input.workspaceId);
+  const contact = await getRequired(env, `
+    SELECT c.*, a.id AS account_id, a.name AS account_name
+    FROM contacts c
+    JOIN accounts a ON a.id = c.account_id
+    WHERE c.id = ? AND a.workspace_id = ?
+  `, input.contactId, input.workspaceId);
+  const type = normalizeEnum(input.type || channel.type, MESSAGE_CHANNEL_TYPES, "type");
+  if (type !== channel.type) throw httpError(400, "Message type must match the selected channel");
+  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  const to = cleanNullable(input.to || input.phone || contact.phone);
+  if (!to) throw httpError(400, "Contact phone is required");
+  const body = String(input.body || "").trim();
+  if (!body) throw httpError(400, "Message body is required");
+
+  const id = input.id || crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO communication_events (
+      id, workspace_id, account_id, contact_id, created_by_user_id,
+      type, direction, outcome, subject, body, occurred_at, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'outbound', NULL, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    input.workspaceId,
+    contact.account_id,
+    contact.id,
+    auth.user.id,
+    type,
+    cleanNullable(input.subject) || `${type.toUpperCase()} to ${contact.name}`,
+    body,
+    now,
+    now,
+    now,
+  ).run();
+
+  const result = await deliverProviderMessage(channel, { type, to, body });
+  await env.DB.prepare(`
+    INSERT INTO message_deliveries (
+      id, workspace_id, channel_id, communication_event_id, account_id, contact_id,
+      provider_message_id, status, status_code, error, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    crypto.randomUUID(),
+    input.workspaceId,
+    channel.id,
+    id,
+    contact.account_id,
+    contact.id,
+    cleanNullable(result.providerMessageId),
+    result.status,
+    result.statusCode || null,
+    cleanNullable(result.error),
+    now,
+  ).run();
+
+  const event = await getRequired(env, "SELECT * FROM communication_events WHERE id = ?", id);
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "message.send", resource: "communication_event", resourceId: id, metadata: { type, channelId: channel.id, provider: channel.provider, contactId: contact.id, status: result.status } });
+  await deliverWebhooks(env, input.workspaceId, "communication.created", id, event);
+  await deliverWebhooks(env, input.workspaceId, "message.sent", id, { ...event, delivery: result });
+  return { communication: event, delivery: result };
 }
 
 async function listCalendarEvents(env, workspaceId) {
@@ -2440,6 +2578,9 @@ async function runAgentCommand(env, input, auth) {
   }
   if (input.command === "log_communication") {
     return { result: await createCommunication(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
+  }
+  if (input.command === "send_message") {
+    return { result: await sendProviderMessage(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
   }
   if (input.command === "import_calendar_ics") {
     return { result: await importCalendarIcs(env, { ...(input.payload || {}), workspaceId: input.workspaceId }, auth) };
@@ -4098,6 +4239,90 @@ function integrationResponse(integration) {
 function maskIntegrationConfig(type, config) {
   if (type === "slack") return { webhookUrl: config.webhookUrl ? "configured" : "" };
   return {};
+}
+
+function normalizeMessageChannelConfig(provider, input) {
+  if (provider === "twilio") {
+    const accountSid = cleanNullable(input.accountSid || input.account_sid);
+    const authToken = cleanNullable(input.authToken || input.auth_token);
+    const from = cleanNullable(input.from || input.fromNumber || input.from_number);
+    if (!accountSid || !authToken || !from) throw httpError(400, "Twilio accountSid, authToken, and from number are required");
+    const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url);
+    if (apiBaseUrl) normalizeWebhookUrl(apiBaseUrl);
+    return { accountSid, authToken, from, apiBaseUrl };
+  }
+  throw httpError(400, "Unsupported message provider");
+}
+
+function messageChannelResponse(channel) {
+  return {
+    ...channel,
+    config: maskMessageChannelConfig(channel.provider, parseJsonObject(channel.config_json)),
+  };
+}
+
+function maskMessageChannelConfig(provider, config) {
+  if (provider === "twilio") {
+    return {
+      accountSid: config.accountSid ? maskTail(config.accountSid) : "",
+      authToken: config.authToken ? "configured" : "",
+      from: config.from || "",
+      apiBaseUrl: config.apiBaseUrl || "",
+    };
+  }
+  return {};
+}
+
+function maskTail(value) {
+  const text = String(value || "");
+  return text.length > 4 ? `...${text.slice(-4)}` : text;
+}
+
+async function deliverProviderMessage(channel, message) {
+  const config = parseJsonObject(channel.config_json);
+  if (channel.provider === "twilio") return deliverTwilioMessage(channel, config, message);
+  return { status: "failed", error: "Unsupported message provider" };
+}
+
+async function deliverTwilioMessage(channel, config, message) {
+  const accountSid = config.accountSid;
+  const authToken = config.authToken;
+  const from = formatProviderAddress(channel.type, config.from);
+  const to = formatProviderAddress(channel.type, message.to);
+  const baseUrl = (config.apiBaseUrl || "https://api.twilio.com").replace(/\/+$/, "");
+  const url = `${baseUrl}/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`;
+  let status = "failed";
+  let statusCode = null;
+  let error = null;
+  let providerMessageId = null;
+  try {
+    const body = new URLSearchParams({ From: from, To: to, Body: message.body });
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+        "content-type": "application/x-www-form-urlencoded",
+        "user-agent": "UserOrbit-CRM-Message",
+      },
+      body,
+    });
+    statusCode = response.status;
+    const responseText = await response.text();
+    const parsed = parseJsonObject(responseText);
+    providerMessageId = cleanNullable(parsed.sid || parsed.messageSid || parsed.id);
+    status = response.ok ? "sent" : "failed";
+    if (!response.ok) error = cleanNullable(parsed.message || parsed.error) || `HTTP ${response.status}`;
+  } catch (caught) {
+    error = caught.message || String(caught);
+  }
+  return { status, statusCode, providerMessageId, error };
+}
+
+function formatProviderAddress(type, value) {
+  const address = cleanNullable(value);
+  if (!address) return "";
+  if (type === "whatsapp" && !address.toLowerCase().startsWith("whatsapp:")) return `whatsapp:${address}`;
+  return address;
 }
 
 function slackMessageForEvent(event, payload) {
