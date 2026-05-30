@@ -430,8 +430,10 @@ export const appHtml = String.raw`<!doctype html>
       <form id="loginForm" class="auth-card">
         <div class="brand"><span class="mark"></span><span>UserOrbit CRM</span></div>
         <h1>Sign in</h1>
-        <p class="subtitle">Enter your self-hosted CRM API token to unlock the workspace.</p>
-        <label>API token<input name="token" type="password" autocomplete="current-password" required /></label>
+        <p class="subtitle">Sign in with your user password, or paste a bootstrap/invitation token for setup.</p>
+        <label>Email<input name="email" type="email" autocomplete="username" placeholder="admin@localhost" /></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" /></label>
+        <label>API token<input name="token" type="password" autocomplete="off" placeholder="Optional setup token" /></label>
         <button class="button primary" style="width:100%; margin-top:14px">Continue</button>
       </form>
     </div>
@@ -1070,6 +1072,10 @@ Content-Type: application/json
               <div class="panel-header"><div class="panel-title">Organization</div></div>
               <div class="stack">
                 <div><strong>\${escapeHtml(tenant.user?.name || "User")}</strong><div class="subtitle">\${escapeHtml(tenant.user?.email || "")}</div></div>
+                <form id="passwordForm" class="stack" style="padding:0">
+                  <label>Set password<input name="password" type="password" autocomplete="new-password" minlength="12" required placeholder="At least 12 characters" /></label>
+                  <button class="button">Update password</button>
+                </form>
                 <table>
                   <thead><tr><th>Team</th><th>Role</th></tr></thead>
                   <tbody>\${tenant.teams.map((team) => '<tr><td>' + escapeHtml(team.name) + '</td><td><span class="pill">' + escapeHtml(team.role) + '</span></td></tr>').join("")}</tbody>
@@ -1514,6 +1520,14 @@ Content-Type: application/json
           notice("Pipeline stage created.");
           await refresh();
         });
+
+        $("#passwordForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("auth/password", { method: "POST", body: JSON.stringify({ password: form.get("password") }) });
+          event.currentTarget.reset();
+          notice("Password updated.");
+        });
       }
 
       function customFieldsFromForm(form, prefix) {
@@ -1591,9 +1605,28 @@ Content-Type: application/json
 
       $("#loginForm").addEventListener("submit", async (event) => {
         event.preventDefault();
-        state.token = new FormData(event.currentTarget).get("token").trim();
-        localStorage.setItem("crmApiToken", state.token);
-        await refresh().catch(showAuth);
+        try {
+          const form = new FormData(event.currentTarget);
+          const token = form.get("token").trim();
+          if (token) {
+            state.token = token;
+          } else {
+            const session = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+            }).then(async (response) => {
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.error || "Sign in failed");
+              return data;
+            });
+            state.token = session.token;
+          }
+          localStorage.setItem("crmApiToken", state.token);
+          await refresh().catch(showAuth);
+        } catch (error) {
+          showAuth(error);
+        }
       });
 
       document.querySelectorAll(".nav button").forEach((button) => {

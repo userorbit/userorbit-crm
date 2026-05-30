@@ -29,7 +29,8 @@
 - [x] Add manual reply handling and sequence pause-on-reply.
 - [x] Add account merge workflow for duplicate accounts.
 - [x] Add inbound email capture that records replies and pauses active sequences.
-- [ ] Add password/OAuth login, workspace membership overrides, and broader audit coverage.
+- [x] Add password login with user-managed session tokens.
+- [ ] Add OAuth login, workspace membership overrides, and broader audit coverage.
 - [ ] Build the next Close-style CRM gaps: advanced import mapping UI, provider-native inbound email sync, native integrations, and communication channels.
 
 ## Review

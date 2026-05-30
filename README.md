@@ -50,7 +50,7 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Open `http://localhost:8787` for the landing page or `http://localhost:8787/app` for the auth-gated CRM. Sign in with `CRM_API_TOKEN`, then use Settings to create teams, workspaces, and workspace-scoped agent tokens.
+Open `http://localhost:8787` for the landing page or `http://localhost:8787/app` for the auth-gated CRM. Sign in with `CRM_API_TOKEN` for first setup, set your user password in Settings, then use Settings to create teams, workspaces, and workspace-scoped agent tokens.
 
 For production:
 
@@ -80,7 +80,17 @@ Cloudflare Workers can open outbound TCP sockets and use StartTLS, but port `25`
 
 ## API
 
-All `/api/*` endpoints require `Authorization: Bearer <token>`. Use `CRM_API_TOKEN` for bootstrap admin access, or create workspace-scoped tokens in Settings for agents and scripts.
+All `/api/*` endpoints require `Authorization: Bearer <token>` except `POST /api/auth/login`. Use `CRM_API_TOKEN` for bootstrap setup, set a user password in Settings for browser sessions, and create workspace-scoped tokens in Settings for agents and scripts.
+
+### Password sign in
+
+```sh
+curl -X POST http://localhost:8787/api/auth/login \
+  -H "content-type: application/json" \
+  -d '{ "email": "admin@localhost", "password": "long-local-password" }'
+```
+
+The response includes a 30-day session token that can be used as `Authorization: Bearer <token>`.
 
 ### Create an account with contacts
 

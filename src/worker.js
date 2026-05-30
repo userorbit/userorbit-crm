@@ -42,6 +42,10 @@ export default {
         return new Response(appHtml, { headers: { "content-type": "text/html; charset=utf-8" } });
       }
 
+      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        return json(await loginWithPassword(env, await readJson(request)));
+      }
+
       if (url.pathname.startsWith("/api/")) {
         const auth = await requireAuth(request, env);
         return await routeApi(request, env, url, auth);
@@ -69,6 +73,10 @@ async function routeApi(request, env, url, auth) {
 
   if (request.method === "GET" && path === "me") {
     return json(await getTenantContext(env, workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "auth/password") {
+    return json(await setOwnPassword(env, { ...(await readJson(request)), workspaceId }, auth));
   }
 
   if (request.method === "POST" && path === "teams") {
@@ -1700,6 +1708,38 @@ async function getTenantContext(env, workspaceId, auth) {
   };
 }
 
+async function loginWithPassword(env, input) {
+  await ensureBootstrapIdentity(env);
+  requireFields(input, ["email", "password"]);
+  const user = await env.DB.prepare("SELECT * FROM users WHERE email = ? AND status = 'active'").bind(cleanEmail(input.email)).first();
+  if (!user?.password_hash || !(await verifyPassword(input.password, user.password_hash))) {
+    throw httpError(401, "Invalid email or password");
+  }
+  const token = `uocrm_session_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+  await env.DB.prepare(`
+    INSERT INTO user_sessions (id, user_id, token_hash, last_used_at, expires_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(crypto.randomUUID(), user.id, await sha256Hex(token), now, expiresAt, now, now).run();
+  return {
+    token,
+    expiresAt,
+    user: { id: user.id, email: user.email, name: user.name, status: user.status },
+  };
+}
+
+async function setOwnPassword(env, input, auth) {
+  requireFields(input, ["password"]);
+  const password = String(input.password);
+  if (password.length < 12) throw httpError(400, "Password must be at least 12 characters");
+  const hash = await hashPassword(password);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").bind(hash, now, auth.user.id).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId || auth.workspaceId, userId: auth.user.id, action: "user.password.set", resource: "user", resourceId: auth.user.id, metadata: { email: auth.user.email } });
+  return { ok: true };
+}
+
 async function createTeam(env, input, auth) {
   requireFields(input, ["name"]);
   const now = new Date().toISOString();
@@ -2571,6 +2611,30 @@ async function requireAuth(request, env) {
     };
   }
 
+  const session = await env.DB.prepare(`
+    SELECT us.*, u.id AS user_id, u.email, u.name AS user_name, u.status AS user_status
+    FROM user_sessions us
+    JOIN users u ON u.id = us.user_id
+    WHERE us.token_hash = ?
+      AND us.expires_at > ?
+      AND u.status = 'active'
+  `).bind(await sha256Hex(token), new Date().toISOString()).first();
+  if (session) {
+    await env.DB.prepare("UPDATE user_sessions SET last_used_at = ?, updated_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), new Date().toISOString(), session.id)
+      .run();
+    return {
+      kind: "session",
+      workspaceId: null,
+      user: {
+        id: session.user_id,
+        email: session.email,
+        name: session.user_name,
+        status: session.user_status,
+      },
+    };
+  }
+
   const inviteToken = await env.DB.prepare(`
     SELECT ti.*, u.email, u.name AS user_name, u.status AS user_status
     FROM team_invitations ti
@@ -2622,6 +2686,54 @@ async function sha256Hex(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = 100000;
+  const key = await pbkdf2(password, salt, iterations);
+  return `pbkdf2_sha256$${iterations}$${base64Encode(salt)}$${base64Encode(key)}`;
+}
+
+async function verifyPassword(password, encoded) {
+  const [scheme, iterationsText, saltText, keyText] = String(encoded || "").split("$");
+  if (scheme !== "pbkdf2_sha256") return false;
+  const iterations = Number(iterationsText);
+  if (!Number.isInteger(iterations) || iterations < 100000) return false;
+  const salt = base64Decode(saltText);
+  const expected = base64Decode(keyText);
+  const actual = await pbkdf2(password, salt, iterations);
+  return timingSafeEqual(actual, expected);
+}
+
+async function pbkdf2(password, salt, iterations) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+  return new Uint8Array(bits);
+}
+
+function timingSafeEqual(left, right) {
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= left[index] ^ right[index];
+  }
+  return diff === 0;
+}
+
+function base64Encode(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64Decode(value) {
+  const binary = atob(value || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 function requireFields(input, fields) {

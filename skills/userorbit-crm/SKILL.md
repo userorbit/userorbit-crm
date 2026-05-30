@@ -8,7 +8,7 @@ description: Use a self-hosted UserOrbit CRM end to end: configure access, creat
 ## Requirements
 
 - Base URL, for example `http://localhost:8787` or the deployed Worker URL.
-- Bearer token from `CRM_API_TOKEN` for bootstrap admin setup, or a workspace-scoped token created from Settings or `POST /api/workspace-tokens`.
+- Bearer token from `CRM_API_TOKEN` for bootstrap admin setup, a user session token from `POST /api/auth/login`, or a workspace-scoped token created from Settings or `POST /api/workspace-tokens`.
 - Optional workspace id. If omitted, the API uses the first workspace.
 
 Use these headers for every API request:
@@ -18,6 +18,17 @@ Authorization: Bearer <CRM_API_TOKEN>
 Content-Type: application/json
 X-Workspace-Id: <workspace_id>
 ```
+
+For browser-style user sessions, first sign in with email and password:
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{ "email": "admin@localhost", "password": "long-local-password" }
+```
+
+For first setup, use `CRM_API_TOKEN` to open Settings and set the bootstrap user's password. Passwords must be at least 12 characters.
 
 ## Discover Context
 
