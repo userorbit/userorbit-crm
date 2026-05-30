@@ -58,6 +58,24 @@ Review team invitations:
 GET /api/team-invitations
 ```
 
+Create a webhook endpoint for integrations:
+
+```http
+POST /api/webhooks
+
+{
+  "name": "Zapier catch hook",
+  "url": "https://hooks.example.com/userorbit",
+  "events": ["account.created", "contact.created", "task.created", "email.created"]
+}
+```
+
+List endpoints and recent deliveries:
+
+```http
+GET /api/webhooks
+```
+
 Create a workspace-scoped agent token:
 
 ```http

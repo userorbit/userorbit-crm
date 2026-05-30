@@ -95,6 +95,18 @@ async function routeApi(request, env, url, auth) {
     return json(await createTeamInvitation(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "GET" && path === "webhooks") {
+    return json(await listWebhooks(env, workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path === "webhooks") {
+    return json(await createWebhook(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (request.method === "DELETE" && path.startsWith("webhooks/")) {
+    return json(await disableWebhook(env, path.split("/")[1], workspaceId, auth));
+  }
+
   if (request.method === "DELETE" && path.startsWith("workspace-tokens/")) {
     return json(await revokeWorkspaceToken(env, path.split("/")[1], workspaceId, auth));
   }
@@ -776,7 +788,9 @@ async function createAccount(env, input) {
     await upsertCustomFieldValues(env, workspaceId, "account", id, input.customFields);
   }
 
-  return getAccount(env, id, workspaceId);
+  const account = await getAccount(env, id, workspaceId);
+  await deliverWebhooks(env, workspaceId, "account.created", account.id, account);
+  return account;
 }
 
 async function updateAccount(env, id, input) {
@@ -832,7 +846,10 @@ async function createContact(env, input) {
     .run();
 
   await touchAccount(env, input.accountId);
-  return getRequired(env, "SELECT * FROM contacts WHERE id = ?", id);
+  const contact = await getRequired(env, "SELECT * FROM contacts WHERE id = ?", id);
+  const account = await getRequired(env, "SELECT id, workspace_id FROM accounts WHERE id = ?", input.accountId);
+  await deliverWebhooks(env, account.workspace_id, "contact.created", contact.id, contact);
+  return contact;
 }
 
 async function createOpportunity(env, input) {
@@ -1002,7 +1019,9 @@ async function createTask(env, input) {
     )
     .run();
 
-  return getRequired(env, "SELECT * FROM tasks WHERE id = ?", id);
+  const task = await getRequired(env, "SELECT * FROM tasks WHERE id = ?", id);
+  await deliverWebhooks(env, workspaceId, "task.created", task.id, task);
+  return task;
 }
 
 async function updateTask(env, id, input) {
@@ -1085,6 +1104,7 @@ async function sendManualEmail(env, input) {
     sentAt: result.status === "sent" ? new Date().toISOString() : null,
   });
 
+  await deliverWebhooks(env, contact.workspace_id, "email.created", event.id, event);
   return { ...event, provider: result };
 }
 
@@ -1601,6 +1621,93 @@ async function createTeamInvitation(env, input, auth) {
   `).bind(id, workspace.team_id, workspace.id, user.id, auth.user.id, email, role, await sha256Hex(token), now, now).run();
   await recordAuditLog(env, { workspaceId: workspace.id, userId: auth.user.id, action: "team_invitation.create", resource: "team_invitation", resourceId: id, metadata: { email, role, teamId: workspace.team_id } });
   return { id, email, role, workspaceId: workspace.id, teamId: workspace.team_id, token, createdAt: now };
+}
+
+async function listWebhooks(env, workspaceId, auth) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const [endpoints, deliveries] = await Promise.all([
+    env.DB.prepare(`
+      SELECT wh.*, u.name AS created_by_name
+      FROM webhook_endpoints wh
+      JOIN users u ON u.id = wh.created_by_user_id
+      WHERE wh.workspace_id = ?
+      ORDER BY wh.created_at DESC
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT wd.*, wh.name AS endpoint_name
+      FROM webhook_deliveries wd
+      JOIN webhook_endpoints wh ON wh.id = wd.endpoint_id
+      WHERE wd.workspace_id = ?
+      ORDER BY wd.created_at DESC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+  ]);
+  return {
+    endpoints: endpoints.results.map((endpoint) => ({ ...endpoint, events: parseJsonArray(endpoint.events_json) })),
+    deliveries: deliveries.results,
+  };
+}
+
+async function createWebhook(env, input, auth) {
+  requireFields(input, ["name", "url"]);
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", input.workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const url = normalizeWebhookUrl(input.url);
+  const events = normalizeWebhookEvents(input.events);
+  const now = new Date().toISOString();
+  const id = input.id || crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO webhook_endpoints (id, workspace_id, created_by_user_id, name, url, events_json, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), url, JSON.stringify(events), now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "webhook.create", resource: "webhook_endpoint", resourceId: id, metadata: { name: input.name, events } });
+  return { ...(await getRequired(env, "SELECT * FROM webhook_endpoints WHERE id = ? AND workspace_id = ?", id, input.workspaceId)), events };
+}
+
+async function disableWebhook(env, id, workspaceId, auth) {
+  const workspace = await getRequired(env, "SELECT w.*, t.id AS team_id FROM workspaces w JOIN teams t ON t.id = w.team_id WHERE w.id = ?", workspaceId);
+  await requireTeamRole(env, auth.user.id, workspace.team_id, ["owner", "admin"]);
+  const existing = await getRequired(env, "SELECT * FROM webhook_endpoints WHERE id = ? AND workspace_id = ?", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE webhook_endpoints SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "webhook.disable", resource: "webhook_endpoint", resourceId: id, metadata: { name: existing.name } });
+  return { ok: true };
+}
+
+async function deliverWebhooks(env, workspaceId, event, resourceId, payload) {
+  const endpoints = await env.DB.prepare(`
+    SELECT * FROM webhook_endpoints
+    WHERE workspace_id = ? AND status = 'active'
+  `).bind(workspaceId).all();
+  for (const endpoint of endpoints.results) {
+    const events = parseJsonArray(endpoint.events_json);
+    if (events.length && !events.includes(event)) continue;
+    await deliverWebhook(env, endpoint, event, resourceId, payload);
+  }
+}
+
+async function deliverWebhook(env, endpoint, event, resourceId, payload) {
+  const now = new Date().toISOString();
+  let status = "failed";
+  let statusCode = null;
+  let error = null;
+  try {
+    const response = await fetch(endpoint.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Webhook" },
+      body: JSON.stringify({ event, workspaceId: endpoint.workspace_id, resourceId, data: payload, sentAt: now }),
+    });
+    statusCode = response.status;
+    status = response.ok ? "sent" : "failed";
+    if (!response.ok) error = `HTTP ${response.status}`;
+  } catch (caught) {
+    error = caught.message || String(caught);
+  }
+  await env.DB.prepare(`
+    INSERT INTO webhook_deliveries (id, workspace_id, endpoint_id, event, resource_id, status, status_code, error, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(crypto.randomUUID(), endpoint.workspace_id, endpoint.id, event, cleanNullable(resourceId), status, statusCode, cleanNullable(error), now).run();
 }
 
 async function createWorkspaceToken(env, input, auth) {
@@ -2122,7 +2229,7 @@ function formatCents(cents) {
 async function getContactWithAccount(env, id) {
   return getRequired(
     env,
-    `SELECT c.*, a.name AS account_name, a.observation
+    `SELECT c.*, a.name AS account_name, a.observation, a.workspace_id
      FROM contacts c
      JOIN accounts a ON a.id = c.account_id
      WHERE c.id = ?`,
@@ -2357,6 +2464,18 @@ function cleanEmail(value) {
 function cleanDomain(value) {
   const cleaned = cleanNullable(value);
   return cleaned ? cleaned.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "") : "";
+}
+
+function normalizeWebhookUrl(value) {
+  const url = cleanNullable(value);
+  if (!url || !/^https?:\/\//i.test(url)) throw httpError(400, "Webhook URL must start with http:// or https://");
+  return url;
+}
+
+function normalizeWebhookEvents(value) {
+  if (!value) return [];
+  const events = Array.isArray(value) ? value : String(value).split(/[\n,]/);
+  return [...new Set(events.map((event) => String(event).trim()).filter(Boolean))];
 }
 
 function slugify(value) {

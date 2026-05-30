@@ -484,6 +484,7 @@ export const appHtml = String.raw`<!doctype html>
         tasks: [],
         workspaceTokens: [],
         teamInvitations: [],
+        webhooks: { endpoints: [], deliveries: [] },
         auditLogs: [],
         generatedToken: "",
         generatedInviteToken: "",
@@ -516,7 +517,7 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -530,9 +531,10 @@ export const appHtml = String.raw`<!doctype html>
           api("tasks"),
           api("workspace-tokens"),
           api("team-invitations"),
+          api("webhooks"),
           api("audit-logs"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, teamInvitations, webhooks, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -1079,6 +1081,8 @@ Content-Type: application/json
                 \${workspaceTokensTable(state.workspaceTokens)}
                 <div class="panel-header"><div class="panel-title">Team invitations</div></div>
                 \${teamInvitationsTable(state.teamInvitations)}
+                <div class="panel-header"><div class="panel-title">Webhooks</div></div>
+                \${webhooksTable(state.webhooks)}
                 <div class="panel-header"><div class="panel-title">Audit log</div></div>
                 \${auditLogsTable(state.auditLogs)}
               </div>
@@ -1105,6 +1109,12 @@ Content-Type: application/json
                   <label>Name<input name="name" placeholder="Teammate" /></label>
                   <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label>
                   <button class="button primary">Create invite</button>
+                </form>
+                <form id="webhookForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Name<input name="name" required placeholder="Zapier catch hook" /></label>
+                  <label>URL<input name="url" type="url" required placeholder="https://hooks.example.com/userorbit" /></label>
+                  <label>Events<textarea name="events" placeholder="account.created&#10;contact.created&#10;task.created&#10;email.created"></textarea></label>
+                  <button class="button primary">Create webhook</button>
                 </form>
                 <form id="customFieldForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Field name<input name="name" required placeholder="Company size" /></label>
@@ -1155,6 +1165,23 @@ Content-Type: application/json
               <td>\${escapeHtml(invite.last_used_at || "Never")}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function webhooksTable(webhooks) {
+        const endpoints = webhooks?.endpoints || [];
+        const deliveries = webhooks?.deliveries || [];
+        const endpointTable = endpoints.length ? \`<table>
+          <thead><tr><th>Name</th><th>Events</th><th>Status</th><th></th></tr></thead>
+          <tbody>\${endpoints.map((endpoint) => \`
+            <tr>
+              <td>\${escapeHtml(endpoint.name)}<div class="subtitle">\${escapeHtml(endpoint.url)}</div></td>
+              <td>\${escapeHtml((endpoint.events || []).join(", ") || "all")}</td>
+              <td><span class="pill">\${escapeHtml(endpoint.status)}</span></td>
+              <td>\${endpoint.status === "active" ? '<button class="button" data-disable-webhook-id="' + escapeHtml(endpoint.id) + '">Disable</button>' : ""}</td>
+            </tr>\`).join("")}</tbody>
+        </table>\` : '<div class="empty">No webhooks yet.</div>';
+        const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Webhook deliveries</div></div>' + reportTable(["Event", "Endpoint", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.event, delivery.endpoint_name, delivery.status, delivery.status_code || delivery.error || ""])) : "";
+        return endpointTable + deliveryTable;
       }
 
       function auditLogsTable(logs) {
@@ -1406,6 +1433,27 @@ Content-Type: application/json
           notice("Team invite created.");
           await refresh();
         });
+
+        $("#webhookForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("webhooks", {
+            method: "POST",
+            body: JSON.stringify({
+              name: form.get("name"),
+              url: form.get("url"),
+              events: String(form.get("events") || "").split(/\\n|,/).map((event) => event.trim()).filter(Boolean),
+            }),
+          });
+          notice("Webhook created.");
+          await refresh();
+        });
+
+        document.querySelectorAll("[data-disable-webhook-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("webhooks/" + encodeURIComponent(node.dataset.disableWebhookId), { method: "DELETE" });
+          notice("Webhook disabled.");
+          await refresh();
+        }));
 
         document.querySelectorAll("[data-revoke-token-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("workspace-tokens/" + encodeURIComponent(node.dataset.revokeTokenId), { method: "DELETE" });

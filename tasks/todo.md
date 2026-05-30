@@ -24,8 +24,9 @@
 - [x] Add weighted forecast reporting.
 - [x] Add duplicate-aware CSV import and account duplicate watchlist.
 - [x] Add token-based team invitations.
+- [x] Add workspace webhooks and delivery logs.
 - [ ] Add password/OAuth login, workspace membership overrides, and broader audit coverage.
-- [ ] Build the next Close-style CRM gaps: advanced import mapping UI, merge workflows, inbound email sync, integrations, and communication channels.
+- [ ] Build the next Close-style CRM gaps: advanced import mapping UI, merge workflows, inbound email sync, native integrations, and communication channels.
 
 ## Review
 
@@ -58,3 +59,5 @@ Added weighted forecast reporting: `/api/reports` now groups open opportunities 
 Added duplicate-aware imports: CSV import matches existing accounts by domain/name before creating, adds missing contacts when safe, returns created/matched counts, and the Accounts UI shows duplicate account groups from `GET /api/duplicates/accounts`.
 
 Added token-based team invitations: owners/admins can invite a teammate from Settings, the invite grants team membership plus an invite token, invite-token auth marks acceptance, and invitation activity is visible in Settings and audit logs.
+
+Added workspace webhooks: admins can create/disable webhook endpoints from Settings, core account/contact/task/email events deliver JSON payloads, and recent delivery status is recorded for troubleshooting.
