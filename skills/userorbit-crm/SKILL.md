@@ -114,6 +114,8 @@ Review admin audit events:
 GET /api/audit-logs
 ```
 
+Audit logs include access/settings changes and core CRM writes such as account/contact/opportunity/task mutations, imports, sequence enrollments, manual sends, warmup administration, and lead form submissions. Use them before making sensitive changes in a shared workspace.
+
 Review or update workspace email tracking settings:
 
 ```http

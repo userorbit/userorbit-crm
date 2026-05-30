@@ -38,7 +38,8 @@
 - [x] Add public lead capture forms for inbound website leads.
 - [x] Add read-only viewer roles and enforce workspace write/admin permissions.
 - [x] Add configurable email open/click tracking and engagement reporting.
-- [ ] Add OAuth login, field-level permissions, and broader audit coverage.
+- [x] Broaden audit coverage for core CRM and workspace operations.
+- [ ] Add OAuth login and field-level permissions.
 - [ ] Build the next Close-style CRM gaps: provider-native inbound email sync, native integrations, and provider-backed communication channels.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -98,3 +99,5 @@ Added reporting depth: `/api/reports` now includes owner performance and source 
 Added calendar capture: `calendar_events` stores meetings, `/api/calendar/events` and `/api/calendar/import.ics` create timeline-linked meetings, the Calendar UI supports manual and ICS import flows, and agents can use `import_calendar_ics`.
 
 Added lead capture forms: workspace admins can create/disable public lead forms, `/forms/<public_key>` accepts browser or JSON submissions, submissions match existing accounts by domain/name before creating contacts, and `lead_form.submitted` webhooks plus audit logs record inbound lead activity.
+
+Broadened audit coverage: account/contact/opportunity/task creation, account/opportunity/task updates, account imports, custom-field administration, sequence enrollments, manual sends, warmup administration, and relevant agent-command writes now record compact workspace audit events without storing sensitive message bodies.
