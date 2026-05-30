@@ -70,6 +70,7 @@
 - [x] Add scheduled report JSON exports.
 - [x] Add scheduled report threshold alerts.
 - [x] Add native integration destinations for report alerts.
+- [x] Add repeat suppression and recovery notifications for report alerts.
 - [x] Add revocable read-only dashboard share links.
 - [x] Add iframe-friendly embedded dashboard share controls.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
@@ -149,3 +150,5 @@ Added AI insights: account and contact detail pages can generate summaries, next
 Added calendar source sync: workspace admins can create ICS/webcal sources mapped to accounts and contacts, run them manually, and scheduled Workers check active sources for due imports.
 
 Added email sender rotation: workspace admins can configure active sender identities with daily caps, and manual/sequence emails pick the least-used sender before falling back to the SMTP env sender.
+
+Added report alert notification preferences: admins can suppress repeated threshold notifications with `repeatIntervalHours`, enable recovery notifications, and see the alert preference summary in Settings. Verified local migration, syntax checks, direct webhook trigger/suppression/recovery delivery, and Settings form markup.

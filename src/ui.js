@@ -1789,6 +1789,8 @@ Content-Type: application/json
                   <label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
                   <label>Native integration<select name="integrationId"><option value="">Webhook URL</option>\${nativeIntegrationOptions()}</select></label>
                   <label>Delivery URL<input name="deliveryUrl" type="url" placeholder="Required when no native integration is selected" /></label>
+                  <label>Repeat after<input name="repeatIntervalHours" type="number" min="0" value="0" placeholder="Hours between repeated alerts" /></label>
+                  <label><input name="notifyOnRecovery" type="checkbox" /> Notify when recovered</label>
                   <button class="button primary">Create report alert</button>
                 </form>
                 <form id="dashboardShareForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
@@ -1960,7 +1962,7 @@ Content-Type: application/json
           <tbody>\${alerts.map((alert) => \`
             <tr>
               <td>\${escapeHtml(alert.name)}<div class="subtitle">\${escapeHtml(reportAlertDestination(alert))}</div></td>
-              <td>\${escapeHtml(reportAlertMetricLabel(alert.metric) + " " + alert.operator + " " + alert.threshold)}<div class="subtitle">\${escapeHtml(alert.last_value === null || alert.last_value === undefined ? "" : "Last value " + alert.last_value)}</div></td>
+              <td>\${escapeHtml(reportAlertMetricLabel(alert.metric) + " " + alert.operator + " " + alert.threshold)}<div class="subtitle">\${escapeHtml(reportAlertPreferenceLabel(alert))}</div></td>
               <td>\${escapeHtml(alert.next_run_at ? formatDateTime(alert.next_run_at) : "Not scheduled")}<div class="subtitle">\${escapeHtml(alert.last_error || (alert.last_triggered_at ? "Triggered " + formatDateTime(alert.last_triggered_at) : ""))}</div></td>
               <td><span class="pill">\${escapeHtml(alert.status)}</span></td>
               <td>\${alert.status === "active" ? '<button class="button" data-run-report-alert-id="' + escapeHtml(alert.id) + '">Run</button> <button class="button" data-disable-report-alert-id="' + escapeHtml(alert.id) + '">Disable</button>' : ""}</td>
@@ -1986,6 +1988,14 @@ Content-Type: application/json
           return integration ? "Integration: " + integration.name + " (" + integration.type + ")" : "Integration: " + alert.integration_id;
         }
         return alert.delivery_url || "";
+      }
+
+      function reportAlertPreferenceLabel(alert) {
+        const parts = [];
+        if (alert.last_value !== null && alert.last_value !== undefined) parts.push("Last value " + alert.last_value);
+        if (Number(alert.repeat_interval_hours || 0) > 0) parts.push("repeat after " + alert.repeat_interval_hours + "h");
+        if (alert.notify_on_recovery) parts.push("recovery on");
+        return parts.join(" / ");
       }
 
       function nativeIntegrationOptions() {
@@ -2814,6 +2824,8 @@ Content-Type: application/json
               frequency: form.get("frequency"),
               deliveryUrl: form.get("deliveryUrl") || undefined,
               integrationId: form.get("integrationId") || undefined,
+              repeatIntervalHours: Number(form.get("repeatIntervalHours") || 0),
+              notifyOnRecovery: form.get("notifyOnRecovery") === "on",
             }),
           });
           notice("Report alert created.");

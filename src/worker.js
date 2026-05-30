@@ -1822,17 +1822,20 @@ async function createReportAlert(env, input, auth) {
   const deliveryUrl = cleanNullable(input.deliveryUrl || input.delivery_url);
   if (!deliveryUrl && !integrationId) throw httpError(400, "deliveryUrl or integrationId is required");
   const normalizedDeliveryUrl = deliveryUrl ? normalizeWebhookUrl(deliveryUrl) : "";
+  const notifyOnRecovery = truthyInput(input.notifyOnRecovery ?? input.notify_on_recovery) ? 1 : 0;
+  const repeatIntervalHours = Math.max(0, Math.trunc(Number(input.repeatIntervalHours ?? input.repeat_interval_hours ?? 0)));
+  if (!Number.isFinite(repeatIntervalHours)) throw httpError(400, "repeatIntervalHours must be a number");
   const now = new Date().toISOString();
   const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
     INSERT INTO report_alerts (
       id, workspace_id, created_by_user_id, name, metric, operator, threshold, frequency, delivery_url, integration_id,
-      status, last_run_at, next_run_at, last_value, last_triggered_at, last_error, created_at, updated_at
+      notify_on_recovery, repeat_interval_hours, last_state, status, last_run_at, next_run_at, last_value, last_triggered_at, last_error, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, NULL, NULL, ?, ?)
-  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, nextRunAt, now, now).run();
-  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId } });
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', 'active', NULL, ?, NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, notifyOnRecovery, repeatIntervalHours, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId, notifyOnRecovery: Boolean(notifyOnRecovery), repeatIntervalHours } });
   return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
@@ -1877,13 +1880,22 @@ async function evaluateReportAlert(env, alert) {
   const reports = await getReports(env, alert.workspace_id, null);
   const value = reportAlertMetricValue(alert.metric, reports);
   const triggered = compareReportAlert(value, alert.operator, alert.threshold);
+  const previousState = alert.last_state || "ok";
+  const repeatIntervalHours = Math.max(0, Number(alert.repeat_interval_hours || 0));
+  const canRepeat = triggered && repeatIntervalHours > 0 && alert.last_triggered_at
+    ? Date.parse(now) - Date.parse(alert.last_triggered_at) >= repeatIntervalHours * 60 * 60 * 1000
+    : false;
+  const shouldDeliverTrigger = triggered && (previousState !== "triggered" || canRepeat || repeatIntervalHours === 0);
+  const shouldDeliverRecovery = !triggered && previousState === "triggered" && Boolean(alert.notify_on_recovery);
   let status = "not_triggered";
   let statusCode = null;
   let error = null;
-  if (triggered) {
-    const payload = reportAlertPayload(alert, value, now);
+  let deliveryEvent = null;
+  if (shouldDeliverTrigger || shouldDeliverRecovery) {
+    deliveryEvent = shouldDeliverRecovery ? "report_alert.recovered" : "report_alert.triggered";
+    const payload = reportAlertPayload(alert, value, now, shouldDeliverRecovery ? "recovered" : "triggered");
     const delivery = alert.integration_id
-      ? await deliverReportAlertIntegration(env, alert, payload)
+      ? await deliverReportAlertIntegration(env, alert, deliveryEvent, payload)
       : await deliverReportAlertWebhook(alert, payload);
     status = delivery.status;
     statusCode = delivery.statusCode;
@@ -1892,15 +1904,17 @@ async function evaluateReportAlert(env, alert) {
       INSERT INTO report_alert_deliveries (id, workspace_id, alert_id, metric, value, threshold, status, status_code, error, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(crypto.randomUUID(), alert.workspace_id, alert.id, alert.metric, value, alert.threshold, status, statusCode, cleanNullable(error), now).run();
+  } else if (triggered) {
+    status = "suppressed";
   }
   const nextRunAt = nextExportRunAt(alert.frequency, now);
-  await env.DB.prepare("UPDATE report_alerts SET last_run_at = ?, next_run_at = ?, last_value = ?, last_triggered_at = ?, last_error = ?, updated_at = ? WHERE id = ?")
-    .bind(now, nextRunAt, value, triggered ? now : cleanNullable(alert.last_triggered_at), cleanNullable(error), now, alert.id)
+  await env.DB.prepare("UPDATE report_alerts SET last_run_at = ?, next_run_at = ?, last_value = ?, last_triggered_at = ?, last_error = ?, last_state = ?, updated_at = ? WHERE id = ?")
+    .bind(now, nextRunAt, value, shouldDeliverTrigger ? now : cleanNullable(alert.last_triggered_at), cleanNullable(error), triggered ? "triggered" : "ok", now, alert.id)
     .run();
-  return { alertId: alert.id, status, triggered, value, threshold: alert.threshold, statusCode, error };
+  return { alertId: alert.id, status, triggered, value, threshold: alert.threshold, deliveryEvent, statusCode, error };
 }
 
-function reportAlertPayload(alert, value, triggeredAt) {
+function reportAlertPayload(alert, value, evaluatedAt, state) {
   return {
     alertId: alert.id,
     workspaceId: alert.workspace_id,
@@ -1909,7 +1923,10 @@ function reportAlertPayload(alert, value, triggeredAt) {
     operator: alert.operator,
     threshold: alert.threshold,
     value,
-    triggeredAt,
+    state,
+    triggeredAt: state === "triggered" ? evaluatedAt : null,
+    recoveredAt: state === "recovered" ? evaluatedAt : null,
+    evaluatedAt,
   };
 }
 
@@ -1937,10 +1954,10 @@ async function deliverReportAlertWebhook(alert, payload) {
   return { status, statusCode, error };
 }
 
-async function deliverReportAlertIntegration(env, alert, payload) {
+async function deliverReportAlertIntegration(env, alert, event, payload) {
   const integration = await env.DB.prepare("SELECT * FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'").bind(alert.integration_id, alert.workspace_id).first();
   if (!integration) return { status: "failed", statusCode: null, error: "Integration is disabled or missing" };
-  return deliverNativeIntegration(env, integration, "report_alert.triggered", alert.id, payload);
+  return deliverNativeIntegration(env, integration, event, alert.id, payload);
 }
 
 function reportAlertMetricValue(metric, reports) {
@@ -7035,6 +7052,10 @@ function cleanNullable(value) {
   return cleaned ? cleaned : null;
 }
 
+function truthyInput(value) {
+  return value === true || value === 1 || value === "1" || String(value || "").toLowerCase() === "true" || String(value || "").toLowerCase() === "on";
+}
+
 function cleanEmail(value) {
   const cleaned = cleanNullable(value);
   return cleaned ? cleaned.toLowerCase() : "";
@@ -7752,6 +7773,7 @@ function integrationEventTitle(event, payload) {
   if (event === "lead_form.submitted") return `Lead form submitted: ${payload?.form?.name || "Lead form"}`;
   if (event === "ai_notes.created") return `AI notes generated: ${payload?.communication?.subject || "Communication"}`;
   if (event === "report_alert.triggered") return `Report alert: ${payload?.name || payload?.metric || "Alert"}`;
+  if (event === "report_alert.recovered") return `Report alert recovered: ${payload?.name || payload?.metric || "Alert"}`;
   return `UserOrbit event: ${event}`;
 }
 
@@ -7765,6 +7787,7 @@ function integrationEventDetail(event, payload) {
   if (event === "lead_form.submitted") return [payload?.account?.name, payload?.contact?.action ? `contact ${payload.contact.action}` : ""].filter(Boolean).join(" / ");
   if (event === "ai_notes.created") return payload?.insight?.summary || "";
   if (event === "report_alert.triggered") return [payload?.metric, payload?.operator && payload?.threshold !== undefined ? `${payload.operator} ${payload.threshold}` : "", payload?.value !== undefined ? `value ${payload.value}` : ""].filter(Boolean).join(" / ");
+  if (event === "report_alert.recovered") return [payload?.metric, payload?.value !== undefined ? `recovered at ${payload.value}` : ""].filter(Boolean).join(" / ");
   return "";
 }
 

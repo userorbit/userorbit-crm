@@ -454,11 +454,13 @@ POST /api/report-alerts
   "operator": "gte",
   "threshold": 1,
   "frequency": "daily",
+  "repeatIntervalHours": 24,
+  "notifyOnRecovery": true,
   "deliveryUrl": "https://hooks.example.com/userorbit/report-alert"
 }
 ```
 
-List alerts and recent deliveries with `GET /api/report-alerts`. Run one immediately with `POST /api/report-alerts/<alert_id>/run`, or disable one with `DELETE /api/report-alerts/<alert_id>`. Use `deliveryUrl` for a direct webhook or `integrationId` to deliver through an active native Slack, Teams, Discord, Zapier, or Segment integration. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`.
+List alerts and recent deliveries with `GET /api/report-alerts`. Run one immediately with `POST /api/report-alerts/<alert_id>/run`, or disable one with `DELETE /api/report-alerts/<alert_id>`. Use `deliveryUrl` for a direct webhook or `integrationId` to deliver through an active native Slack, Teams, Discord, Zapier, or Segment integration. Set `repeatIntervalHours` to suppress repeated notifications while an alert remains triggered, and `notifyOnRecovery` to send a recovery notification after the metric returns to normal. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`.
 
 Import accounts from CSV:
 
