@@ -130,6 +130,10 @@ async function routeApi(request, env, url, auth) {
     return csv(await exportAccountsCsv(env, workspaceId), "userorbit-accounts.csv");
   }
 
+  if (request.method === "GET" && path === "duplicates/accounts") {
+    return json(await listAccountDuplicates(env, workspaceId));
+  }
+
   if (request.method === "POST" && path === "import/accounts.csv") {
     return json(await importAccountsCsv(env, workspaceId, await request.text()), 201);
   }
@@ -389,6 +393,30 @@ async function exportAccountsCsv(env, workspaceId) {
   ]);
 }
 
+async function listAccountDuplicates(env, workspaceId) {
+  const [domains, names] = await Promise.all([
+    env.DB.prepare(`
+      SELECT lower(domain) AS key, COUNT(*) AS accounts, GROUP_CONCAT(name, ', ') AS names
+      FROM accounts
+      WHERE workspace_id = ? AND domain IS NOT NULL AND trim(domain) != ''
+      GROUP BY lower(domain)
+      HAVING accounts > 1
+      ORDER BY accounts DESC, key ASC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+    env.DB.prepare(`
+      SELECT lower(name) AS key, COUNT(*) AS accounts, GROUP_CONCAT(name, ', ') AS names
+      FROM accounts
+      WHERE workspace_id = ?
+      GROUP BY lower(name)
+      HAVING accounts > 1
+      ORDER BY accounts DESC, key ASC
+      LIMIT 25
+    `).bind(workspaceId).all(),
+  ]);
+  return { domains: domains.results, names: names.results };
+}
+
 async function importAccountsCsv(env, workspaceId, body) {
   const rows = parseCsv(body);
   if (!rows.length) throw httpError(400, "CSV must include a header row and at least one account row");
@@ -400,27 +428,55 @@ async function importAccountsCsv(env, workspaceId, body) {
       if (!name) throw new Error("Missing account name");
       const contactName = cleanNullable(row.contact_name || row.contact || row.name_contact);
       const contactEmail = cleanEmail(row.contact_email || row.email);
-      const account = await createAccount(env, {
-        workspaceId,
-        name,
-        domain: row.domain,
-        segment: row.segment,
-        status: row.status,
-        source: row.source || "CSV import",
-        owner: row.owner,
-        observation: row.observation || row.notes,
-        contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: row.contact_title || row.title }] : [],
-      });
-      results.push({ row: index + 2, ok: true, accountId: account.id, name: account.name });
+      const existing = await findImportAccountMatch(env, workspaceId, { name, domain: row.domain });
+      if (existing) {
+        const contact = contactName && contactEmail ? await createImportContactIfMissing(env, existing.id, { name: contactName, email: contactEmail, title: row.contact_title || row.title }) : null;
+        results.push({ row: index + 2, ok: true, action: "matched", accountId: existing.id, name: existing.name, contact: contact ? contact.action : "none" });
+      } else {
+        const account = await createAccount(env, {
+          workspaceId,
+          name,
+          domain: row.domain,
+          segment: row.segment,
+          status: row.status,
+          source: row.source || "CSV import",
+          owner: row.owner,
+          observation: row.observation || row.notes,
+          contacts: contactName && contactEmail ? [{ name: contactName, email: contactEmail, title: row.contact_title || row.title }] : [],
+        });
+        results.push({ row: index + 2, ok: true, action: "created", accountId: account.id, name: account.name });
+      }
     } catch (error) {
       results.push({ row: index + 2, ok: false, error: error.message || String(error) });
     }
   }
   return {
-    imported: results.filter((result) => result.ok).length,
+    imported: results.filter((result) => result.action === "created").length,
+    matched: results.filter((result) => result.action === "matched").length,
     failed: results.filter((result) => !result.ok).length,
     results,
   };
+}
+
+async function findImportAccountMatch(env, workspaceId, input) {
+  const domain = cleanDomain(input.domain);
+  if (domain) {
+    const byDomain = await env.DB.prepare("SELECT * FROM accounts WHERE workspace_id = ? AND lower(domain) = ? ORDER BY updated_at DESC LIMIT 1")
+      .bind(workspaceId, domain)
+      .first();
+    if (byDomain) return byDomain;
+  }
+  return env.DB.prepare("SELECT * FROM accounts WHERE workspace_id = ? AND lower(name) = lower(?) ORDER BY updated_at DESC LIMIT 1")
+    .bind(workspaceId, input.name)
+    .first();
+}
+
+async function createImportContactIfMissing(env, accountId, input) {
+  const email = cleanEmail(input.email);
+  const existing = await env.DB.prepare("SELECT id, account_id FROM contacts WHERE email = ?").bind(email).first();
+  if (existing) return { action: existing.account_id === accountId ? "existing" : "email_conflict", id: existing.id };
+  const created = await createContact(env, { accountId, name: input.name, email, title: input.title });
+  return { action: "created", id: created.id };
 }
 
 function parseCsv(input) {
@@ -2219,6 +2275,11 @@ function cleanNullable(value) {
 function cleanEmail(value) {
   const cleaned = cleanNullable(value);
   return cleaned ? cleaned.toLowerCase() : "";
+}
+
+function cleanDomain(value) {
+  const cleaned = cleanNullable(value);
+  return cleaned ? cleaned.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "") : "";
 }
 
 function slugify(value) {

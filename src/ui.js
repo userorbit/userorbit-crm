@@ -478,6 +478,7 @@ export const appHtml = String.raw`<!doctype html>
         reports: null,
         opportunities: [],
         opportunityStages: [],
+        accountDuplicates: { domains: [], names: [] },
         sequences: [],
         warmup: null,
         tasks: [],
@@ -513,7 +514,7 @@ export const appHtml = String.raw`<!doctype html>
           localStorage.setItem("crmWorkspaceId", state.workspaceId);
         }
         const accountQuery = accountListQuery();
-        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, sequences, warmup, tasks, workspaceTokens, auditLogs] = await Promise.all([
+        const [summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, auditLogs] = await Promise.all([
           api("summary"),
           api("accounts" + accountQuery),
           api("saved-views?resource=accounts"),
@@ -521,13 +522,14 @@ export const appHtml = String.raw`<!doctype html>
           api("reports"),
           api("opportunities"),
           api("opportunity-stages"),
+          api("duplicates/accounts"),
           api("sequences"),
           api("warmup"),
           api("tasks"),
           api("workspace-tokens"),
           api("audit-logs"),
         ]);
-        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, sequences, warmup, tasks, workspaceTokens, auditLogs });
+        Object.assign(state, { tenant, summary, accounts, savedViews, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, workspaceTokens, auditLogs });
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -644,6 +646,7 @@ export const appHtml = String.raw`<!doctype html>
                 </div>
               </div>
               \${accountsTable(state.accounts)}
+              \${duplicateAccountsPanel()}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">New account</div></div>
@@ -1204,7 +1207,7 @@ Content-Type: application/json
           event.preventDefault();
           const csv = new FormData(event.currentTarget).get("csv");
           const result = await api("import/accounts.csv", { method: "POST", headers: { "content-type": "text/csv" }, body: csv });
-          notice("Imported " + result.imported + " account(s), " + result.failed + " failed.");
+          notice("Imported " + result.imported + " account(s), matched " + (result.matched || 0) + ", " + result.failed + " failed.");
           await refresh();
         });
 
@@ -1441,6 +1444,16 @@ Content-Type: application/json
       function customFieldReportPanels(breakdowns) {
         if (!breakdowns.length) return "";
         return '<div class="columns" style="margin-top:14px">' + breakdowns.slice(0, 2).map((field) => '<div class="panel"><div class="panel-header"><div class="panel-title">' + escapeHtml(field.name) + '</div></div>' + reportTable(["Value", "Accounts"], field.values.map((row) => [row.value, row.accounts])) + '</div>').join("") + '</div>';
+      }
+
+      function duplicateAccountsPanel() {
+        const duplicates = state.accountDuplicates || { domains: [], names: [] };
+        const rows = [
+          ...duplicates.domains.map((item) => ["Domain", item.key, item.accounts, item.names]),
+          ...duplicates.names.map((item) => ["Name", item.key, item.accounts, item.names]),
+        ];
+        if (!rows.length) return "";
+        return '<div class="stack" style="border-top:1px solid var(--border)"><div class="panel-header"><div class="panel-title">Duplicate watchlist</div></div>' + reportTable(["Match", "Key", "Accounts", "Names"], rows.slice(0, 8)) + '</div>';
       }
 
       function pipelineStages() {

@@ -170,6 +170,14 @@ Acme,acme.com,product,target,Jane Doe,jane@acme.com,Head of Product
 
 Supported account columns include `name`, `domain`, `segment`, `status`, `source`, `owner`, and `observation`. Optional contact columns are `contact_name`, `contact_email`, and `contact_title`.
 
+CSV import matches existing accounts by normalized domain first, then exact account name. The response includes `imported`, `matched`, `failed`, and per-row `action` values.
+
+Review possible duplicate accounts:
+
+```http
+GET /api/duplicates/accounts
+```
+
 Review or move pipeline opportunities:
 
 ```http
