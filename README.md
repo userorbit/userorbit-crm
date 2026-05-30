@@ -538,7 +538,7 @@ curl http://localhost:8787/api/export/accounts.csv \
   -o userorbit-accounts.csv
 ```
 
-### Schedule account exports
+### Schedule account and report exports
 
 ```sh
 curl -X POST http://localhost:8787/api/export-schedules \
@@ -552,7 +552,7 @@ curl -X POST http://localhost:8787/api/export-schedules \
   }'
 ```
 
-Workspace admins can schedule daily, weekly, or monthly account CSV exports to a webhook-compatible URL. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`; scheduled Worker jobs also process due exports and record delivery status in Settings.
+Workspace admins can schedule daily, weekly, or monthly exports to a webhook-compatible URL. Use `"resource": "accounts"` for CSV account exports or `"resource": "reports"` for JSON snapshots of pipeline, forecast, activity, task, sequence, owner-performance, source-conversion, stalled-opportunity, and custom-field reports. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`; scheduled Worker jobs also process due exports and record delivery status in Settings.
 
 ### Import accounts
 

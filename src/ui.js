@@ -1743,9 +1743,10 @@ Content-Type: application/json
                   <button class="button primary">Create webhook</button>
                 </form>
                 <form id="exportScheduleForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
-                  <label>Name<input name="name" required placeholder="Weekly account export" /></label>
+                  <label>Name<input name="name" required placeholder="Weekly report snapshot" /></label>
+                  <label>Resource<select name="resource"><option value="accounts">Accounts CSV</option><option value="reports">Reports JSON</option></select></label>
                   <label>Frequency<select name="frequency"><option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option></select></label>
-                  <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/accounts.csv" /></label>
+                  <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/userorbit-export" /></label>
                   <label>Next run<input name="nextRunAt" type="datetime-local" /></label>
                   <button class="button primary">Create export schedule</button>
                 </form>
@@ -2694,7 +2695,7 @@ Content-Type: application/json
             method: "POST",
             body: JSON.stringify({
               name: form.get("name"),
-              resource: "accounts",
+              resource: form.get("resource"),
               frequency: form.get("frequency"),
               deliveryUrl: form.get("deliveryUrl"),
               nextRunAt,

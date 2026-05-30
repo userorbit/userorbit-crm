@@ -43,7 +43,7 @@ const DASHBOARD_WIDGETS = new Set(["metrics", "priority_accounts", "due_tasks", 
 const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "priority_accounts", "due_tasks"];
 const REPORT_SECTIONS = new Set(["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"]);
 const DEFAULT_REPORT_SECTIONS = ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"];
-const EXPORT_RESOURCES = new Set(["accounts"]);
+const EXPORT_RESOURCES = new Set(["accounts", "reports"]);
 const EXPORT_FREQUENCIES = new Set(["daily", "weekly", "monthly"]);
 
 export default {
@@ -1621,9 +1621,10 @@ async function deliverExportSchedule(env, schedule) {
     const response = await fetch(schedule.delivery_url, {
       method: "POST",
       headers: {
-        "content-type": "text/csv; charset=utf-8",
+        "content-type": exported.contentType,
         "user-agent": "UserOrbit-CRM-Export",
         "x-userorbit-export-resource": schedule.resource,
+        "x-userorbit-export-format": exported.format,
         "x-userorbit-export-schedule-id": schedule.id,
         "x-userorbit-export-row-count": String(exported.rowCount),
       },
@@ -1649,7 +1650,23 @@ async function deliverExportSchedule(env, schedule) {
 async function buildExportPayload(env, schedule) {
   if (schedule.resource === "accounts") {
     const body = await exportAccountsCsv(env, schedule.workspace_id);
-    return { body, rowCount: Math.max(0, body.split(/\r?\n/).filter(Boolean).length - 1) };
+    return {
+      body,
+      rowCount: Math.max(0, body.split(/\r?\n/).filter(Boolean).length - 1),
+      contentType: "text/csv; charset=utf-8",
+      format: "csv",
+    };
+  }
+  if (schedule.resource === "reports") {
+    const reports = await getReports(env, schedule.workspace_id, null);
+    const body = JSON.stringify({
+      resource: "reports",
+      workspaceId: schedule.workspace_id,
+      generatedAt: new Date().toISOString(),
+      reports,
+    }, null, 2);
+    const rowCount = Object.values(reports).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
+    return { body, rowCount, contentType: "application/json; charset=utf-8", format: "json" };
   }
   throw httpError(400, "Unsupported export resource");
 }
