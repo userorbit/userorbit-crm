@@ -9,14 +9,14 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Accounts, contacts, opportunities, and tasks.
 - Account detail timelines with contacts, opportunities, tasks, and email activity.
 - Contact detail timelines with tasks, opportunities, sequence enrollments, and emails.
-- Communication activity logging for calls, meetings, SMS, WhatsApp, and notes.
+- Communication activity logging for calls, meetings, SMS, WhatsApp, notes, recordings, and transcripts.
+- Power dialer queues, call outcome logging, and Twilio-compatible native outbound calling.
 - Provider-backed SMS and WhatsApp channels through Twilio-compatible outbound and inbound messaging.
-- Calendar meeting capture with manual entry and ICS import.
-- Calendar source sync from ICS/webcal feeds.
+- Calendar meeting capture with manual entry, ICS import, recurring ICS/webcal sync, and Google/Microsoft OAuth calendar sync.
 - Public lead capture forms that create or match accounts and contacts.
 - Pipeline board with drag-and-drop movement and workspace-configurable sales stages.
-- A seeded 4-email UserOrbit outreach sequence.
-- Manual email sending, inbound reply capture, and scheduled sequence processing.
+- A seeded 4-email UserOrbit outreach sequence with assignable approved workspace templates.
+- Manual email sending, inbound reply capture, mailbox sync, template previews, template approvals, and scheduled sequence processing.
 - Configurable first-party email open and click tracking.
 - Workspace email sender rotation with per-sender daily caps.
 - Contact unsubscribe handling for manual sends and sequences.
@@ -26,12 +26,16 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - Users, role-based team/workspace memberships, team invitations, teams, and workspaces for separating sales motions, clients, or products.
 - Workspace token revocation and audit logs for admin operations plus core CRM mutations.
 - Workspace webhooks for account, contact, task, communication, email, and lead form events.
-- Native Slack notifications for selected CRM events.
+- Native Slack, Microsoft Teams, Discord, Zapier, Segment, Airtable, GitHub Issues, and Linear integrations for selected CRM events.
 - AI account/contact summaries, next steps, risks, and lead scores with optional OpenAI Responses API support.
+- AI website research, email draft generation, and call/meeting follow-up notes.
+- Native HubSpot, Pipedrive, and Salesforce imports plus generic enrichment-provider connectors.
 - Account custom fields with role-based read/write permissions for self-hosted CRM data modeling.
 - Saved account views for reusable search, segment, status, and custom-field filters.
-- Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, and stalled opportunities.
+- Reporting for pipeline health, weighted forecast, activity, owner performance, source conversion, sequence performance, custom fields, and stalled opportunities.
+- Report alerts with native destinations, owner/runbook context, repeat suppression, recovery notifications, two-step escalation, and acknowledge/resolve incident controls.
 - Per-user dashboard widget preferences for each workspace.
+- Scheduled account/report exports with CSV, JSON, and JSONL warehouse-friendly payloads.
 - Account CSV import/export with duplicate matching and merge workflow for backups and spreadsheet workflows.
 - A landing page at `/` and the CRM app at `/app`.
 - A lightweight Linear/Coss-inspired UI served by the Worker.

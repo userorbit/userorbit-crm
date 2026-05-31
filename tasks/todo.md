@@ -92,7 +92,7 @@
 - [x] Add Airtable native event destination for deeper integration coverage.
 - [x] Add GitHub Issues native event destination for deeper integration coverage.
 - [x] Add Linear issue native event destination for deeper integration coverage.
-- [ ] Build the next Close-style CRM gaps: deeper native integrations.
+- [x] Reconcile Close-style CRM gap tracker with implemented native integration depth.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
   - [x] Align dashboard/lab content density and hierarchy with Campsite's workspace UI.
@@ -209,3 +209,7 @@ Added report alert owner and runbook context: report alerts now store owner labe
 Added two-step report alert escalation policies: admins can configure a second escalation threshold plus webhook/native integration destination, and each escalation step fires once per triggered incident before recovery resets the incident. Verified local migration, syntax checks, Settings markup, first-run primary plus first escalation delivery, and second-run primary plus second escalation delivery.
 
 Added report alert acknowledge and resolve controls: members can acknowledge active alert incidents and resolve them after remediation, with resolve clearing triggered state, run counters, acknowledgement, and escalation timestamps so future breaches can notify again. Verified local migration, syntax checks, live trigger/acknowledge/resolve API flow, reset state, and Settings markup.
+
+Reconciled the Close-style CRM gap tracker with the implemented native integration, email governance, reporting incident, and warehouse/export depth. The remaining integration notes are now framed as optional future provider-specific presets rather than a blocking product gap.
+
+Ran a broad product sanity pass after tracker reconciliation: local migrations had no pending work, Worker syntax checks passed, landing page exposed Cloudflare deploy and GitHub links, unauthenticated `/app` showed the sign-in gate, authenticated `/app` showed the shell and recent controls, `/api/me` returned user/team/workspace context, `/api/reports` returned pipeline/forecast/owner/source/custom-field sections, `/api/integrations` returned native integrations and deliveries, `/api/email/templates` returned approval-aware default/workspace templates, `/api/report-alerts` returned lifecycle-aware alerts/deliveries, and README/agent skill references were present.
