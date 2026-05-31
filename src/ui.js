@@ -1867,12 +1867,14 @@ Content-Type: application/json
                 </form>
                 <form id="integrationForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Sales alerts" /></label>
-                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option><option value="segment">Segment</option><option value="zapier">Zapier</option><option value="airtable">Airtable</option></select></label>
+                  <label>Type<select name="type"><option value="slack">Slack</option><option value="teams">Microsoft Teams</option><option value="discord">Discord</option><option value="segment">Segment</option><option value="zapier">Zapier</option><option value="airtable">Airtable</option><option value="github">GitHub Issues</option></select></label>
                   <label>Webhook URL<input name="webhookUrl" type="url" placeholder="Provider webhook URL or Zapier Catch Hook" /></label>
                   <label>Write key<input name="writeKey" type="password" placeholder="Segment write key" /></label>
-                  <label>Access token<input name="accessToken" type="password" placeholder="Airtable personal access token" /></label>
+                  <label>Access token<input name="accessToken" type="password" placeholder="Airtable or GitHub token" /></label>
                   <label>Base ID<input name="baseId" placeholder="app..." /></label>
                   <label>Table name<input name="tableName" placeholder="Events" /></label>
+                  <label>GitHub repo<input name="repo" placeholder="owner/repository" /></label>
+                  <label>Labels<input name="labels" placeholder="crm,userorbit" /></label>
                   <label>API base URL<input name="apiBaseUrl" type="url" placeholder="Optional provider API base URL" /></label>
                   <label>Events<textarea name="events" placeholder="lead_form.submitted&#10;email.received&#10;task.created"></textarea></label>
                   <button class="button primary">Create integration</button>
@@ -2122,6 +2124,7 @@ Content-Type: application/json
       function integrationSubtitle(item) {
         if (item.type === "segment") return item.config?.apiBaseUrl || "Segment Track API";
         if (item.type === "airtable") return [item.config?.baseId, item.config?.tableName].filter(Boolean).join(" / ") || "Airtable";
+        if (item.type === "github") return item.config?.repo || "GitHub Issues";
         return item.config?.webhookUrl || "";
       }
 
@@ -2931,6 +2934,8 @@ Content-Type: application/json
               accessToken: form.get("accessToken") || undefined,
               baseId: form.get("baseId") || undefined,
               tableName: form.get("tableName") || undefined,
+              repo: form.get("repo") || undefined,
+              labels: String(form.get("labels") || "").split(/\\n|,/).map((label) => label.trim()).filter(Boolean),
               apiBaseUrl: form.get("apiBaseUrl") || undefined,
               events: String(form.get("events") || "").split(/\\n|,/).map((event) => event.trim()).filter(Boolean),
             }),

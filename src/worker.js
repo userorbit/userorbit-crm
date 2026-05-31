@@ -30,7 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
-const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier", "airtable"]);
+const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier", "airtable", "github"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
 const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
@@ -6490,6 +6490,18 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
         },
         body: JSON.stringify(airtableEventPayload(integration, event, resourceId, payload, now)),
       });
+    } else if (integration.type === "github") {
+      response = await fetch(githubIssuesUrl(config), {
+        method: "POST",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${config.accessToken}`,
+          "content-type": "application/json",
+          "user-agent": "UserOrbit-CRM-Integration",
+          "x-github-api-version": "2022-11-28",
+        },
+        body: JSON.stringify(githubIssuePayload(integration, config, event, resourceId, payload, now)),
+      });
     } else {
       response = await fetch(config.webhookUrl, {
         method: "POST",
@@ -8046,6 +8058,18 @@ function normalizeWebhookEvents(value) {
   return [...new Set(events.map((event) => String(event).trim()).filter(Boolean))];
 }
 
+function normalizeGitHubRepo(value) {
+  const repo = cleanNullable(value);
+  if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw httpError(400, "GitHub repo must be owner/name");
+  return repo;
+}
+
+function normalizeIntegrationLabels(value) {
+  if (!value) return [];
+  const labels = Array.isArray(value) ? value : String(value).split(/[\n,]/);
+  return [...new Set(labels.map((label) => String(label).trim()).filter(Boolean))].slice(0, 10);
+}
+
 function normalizeIntegrationConfig(type, input) {
   if (type === "segment") {
     const writeKey = cleanNullable(input.writeKey || input.write_key || input.accessToken || input.access_token);
@@ -8064,6 +8088,19 @@ function normalizeIntegrationConfig(type, input) {
     const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url) || "https://api.airtable.com/v0";
     normalizeWebhookUrl(apiBaseUrl);
     return { accessToken, baseId, tableName, apiBaseUrl };
+  }
+  if (type === "github") {
+    const accessToken = cleanNullable(input.accessToken || input.access_token || input.writeKey || input.write_key);
+    if (!accessToken) throw httpError(400, "GitHub accessToken is required");
+    const repo = normalizeGitHubRepo(input.repo || input.repository || input.repoName || input.repo_name);
+    const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url) || "https://api.github.com";
+    normalizeWebhookUrl(apiBaseUrl);
+    return {
+      accessToken,
+      repo,
+      labels: normalizeIntegrationLabels(input.labels),
+      apiBaseUrl,
+    };
   }
   if (INTEGRATION_TYPES.has(type)) {
     const webhookUrl = normalizeWebhookUrl(input.webhookUrl || input.webhook_url || input.url);
@@ -8121,6 +8158,7 @@ function maskEnrichmentProviderConfig(config) {
 function maskIntegrationConfig(type, config) {
   if (type === "segment") return { writeKey: config.writeKey ? "configured" : "", apiBaseUrl: config.apiBaseUrl || "https://api.segment.io/v1/track" };
   if (type === "airtable") return { accessToken: config.accessToken ? "configured" : "", baseId: config.baseId || "", tableName: config.tableName || "", apiBaseUrl: config.apiBaseUrl || "https://api.airtable.com/v0" };
+  if (type === "github") return { accessToken: config.accessToken ? "configured" : "", repo: config.repo || "", labels: Array.isArray(config.labels) ? config.labels : [], apiBaseUrl: config.apiBaseUrl || "https://api.github.com" };
   if (INTEGRATION_TYPES.has(type)) return { webhookUrl: config.webhookUrl ? "configured" : "" };
   return {};
 }
@@ -8443,6 +8481,30 @@ function airtableEventPayload(integration, event, resourceId, payload, sentAt) {
         Payload: JSON.stringify(payload || {}).slice(0, 90000),
       },
     }],
+  };
+}
+
+function githubIssuesUrl(config) {
+  return `${String(config.apiBaseUrl || "https://api.github.com").replace(/\/+$/, "")}/repos/${config.repo}/issues`;
+}
+
+function githubIssuePayload(integration, config, event, resourceId, payload, sentAt) {
+  const title = integrationEventTitle(event, payload);
+  const detail = integrationEventDetail(event, payload);
+  return {
+    title: `[UserOrbit] ${title}`.slice(0, 256),
+    body: [
+      detail,
+      `Event: ${event}`,
+      `Workspace: ${integration.workspace_id}`,
+      resourceId ? `Resource: ${resourceId}` : "",
+      `Sent at: ${sentAt}`,
+      "",
+      "```json",
+      JSON.stringify(payload || {}, null, 2).slice(0, 60000),
+      "```",
+    ].filter((line) => line !== "").join("\n"),
+    labels: Array.isArray(config.labels) ? config.labels : undefined,
   };
 }
 
