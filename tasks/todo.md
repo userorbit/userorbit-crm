@@ -84,6 +84,7 @@
 - [x] Add AI contact email draft generation.
 - [x] Add email template preview testing.
 - [x] Add email template approval controls.
+- [x] Add sequence step template assignment controls.
 - [x] Add warehouse-friendly scheduled export formats.
 - [x] Add Airtable native event destination for deeper integration coverage.
 - [x] Add GitHub Issues native event destination for deeper integration coverage.
@@ -197,3 +198,5 @@ Added Linear native issue destinations: workspace admins can create Linear integ
 Added email template preview testing: members can render active default or workspace templates against a real workspace contact and optional sender without sending or recording an email event, and Settings exposes template/contact/sender preview controls with missing-variable notes. Verified syntax checks, Settings markup, and a live preview of the seeded close-loop template against a smoke contact with rendered subject/body, variables, contact, and fallback sender.
 
 Added email template approval controls: workspace templates now start as draft, Settings shows approval status and an approve action, template updates reset approval to draft, manual sends that reference a workspace template require approval, and scheduled sequence sends skip unapproved workspace templates while seeded defaults remain approved. Verified local migration, syntax checks, draft send blocking, approve endpoint behavior, approved send success, and Settings markup.
+
+Added sequence step template assignment controls: owners/admins can assign approved default or workspace templates to sequence steps from the Sequences view or `PATCH /api/sequence-steps/<step_id>`, and draft workspace templates are rejected until approved. Verified syntax checks, live draft rejection, approval, successful assignment, sequence list reflection, and Sequences markup.

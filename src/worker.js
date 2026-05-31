@@ -684,6 +684,11 @@ async function routeApi(request, env, url, auth) {
     return json(await listSequences(env));
   }
 
+  if (request.method === "PATCH" && path.startsWith("sequence-steps/")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await updateSequenceStepTemplate(env, path.split("/")[1], { ...(await readJson(request)), workspaceId, auditUserId: auth.user.id }));
+  }
+
   if (request.method === "POST" && path === "enrollments") {
     await requireWorkspaceWrite(env, auth, workspaceId);
     return json(await enrollContact(env, { ...(await readJson(request)), workspaceId, auditUserId: auth.user.id }), 201);
@@ -4270,7 +4275,7 @@ async function listSequences(env) {
   `).all();
 
   const steps = await env.DB.prepare(`
-    SELECT ss.*, et.name AS template_name, et.subject
+    SELECT ss.*, et.name AS template_name, et.subject, et.workspace_id AS template_workspace_id, et.approval_status AS template_approval_status
     FROM sequence_steps ss
     JOIN email_templates et ON et.id = ss.template_id
     ORDER BY ss.sequence_id, ss.step_order
@@ -4280,6 +4285,30 @@ async function listSequences(env) {
     ...sequence,
     steps: steps.results.filter((step) => step.sequence_id === sequence.id),
   }));
+}
+
+async function updateSequenceStepTemplate(env, id, input) {
+  requireFields(input, ["templateId"]);
+  const step = await getRequired(env, `
+    SELECT ss.*, s.name AS sequence_name
+    FROM sequence_steps ss
+    JOIN sequences s ON s.id = ss.sequence_id
+    WHERE ss.id = ?
+  `, id);
+  await assertEmailTemplateApproved(env, input.templateId, input.workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE sequence_steps SET template_id = ?, updated_at = ? WHERE id = ?")
+    .bind(input.templateId, now, id)
+    .run();
+  if (input.auditUserId) {
+    await recordAuditLog(env, { workspaceId: input.workspaceId, userId: input.auditUserId, action: "sequence_step.update_template", resource: "sequence_step", resourceId: id, metadata: { sequenceId: step.sequence_id, sequenceName: step.sequence_name, stepOrder: step.step_order, templateId: input.templateId } });
+  }
+  return getRequired(env, `
+    SELECT ss.*, et.name AS template_name, et.subject, et.workspace_id AS template_workspace_id, et.approval_status AS template_approval_status
+    FROM sequence_steps ss
+    JOIN email_templates et ON et.id = ss.template_id
+    WHERE ss.id = ?
+  `, id);
 }
 
 async function enrollContact(env, input) {

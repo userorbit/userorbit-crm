@@ -701,6 +701,8 @@ Email subjects and bodies support template variables in manual sends and sequenc
 
 Workspace admins can manage reusable outreach templates from Settings or the API. `GET /api/email/templates` returns read-only seeded defaults plus workspace-owned templates. Use `POST /api/email/templates` with `name`, `subject`, and `body` to create a workspace template, `PATCH /api/email/templates/<id>` to update a workspace template, and `DELETE /api/email/templates/<id>` to disable it. Workspace templates start as `draft`; approve them with `POST /api/email/templates/<id>/approve` before using them in sends or sequence runs. Render a non-sending template test with `POST /api/email/templates/<id>/preview` and `{ "contactId": "...", "senderId": "..." }`; `senderId` is optional and falls back to sender rotation. Global seeded templates remain available for default sequences and cannot be modified from a workspace.
 
+Owners and admins can assign an approved default or workspace template to a sequence step from the Sequences view or with `PATCH /api/sequence-steps/<step_id>` and `{ "templateId": "..." }`. Draft workspace templates are rejected until approved.
+
 Members can generate a reviewable, non-sending email draft for a contact from account/contact timeline context:
 
 ```sh

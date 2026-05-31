@@ -1346,6 +1346,7 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderSequences() {
+        const assignableTemplates = state.emailTemplates.filter((template) => (template.approvalStatus || template.approval_status || "approved") === "approved");
         return header("Sequences", "Enroll researched contacts into the 4-email UserOrbit sequence.", '<button id="runSequences" class="button primary">Run due sends</button>') + \`
           <div class="columns">
             <div class="panel">
@@ -1358,6 +1359,13 @@ export const appHtml = String.raw`<!doctype html>
                 </div>\`).join("")}
             </div>
             <div class="panel">
+              <div class="panel-header"><div class="panel-title">Step templates</div></div>
+              <form id="sequenceStepTemplateForm" class="stack">
+                <label>Step<select name="stepId">\${state.sequences.flatMap((sequence) => (sequence.steps || []).map((step) => '<option value="' + escapeHtml(step.id) + '">' + escapeHtml(sequence.name + " / day +" + step.delay_days + " / " + step.template_name) + '</option>')).join("")}</select></label>
+                <label>Template<select name="templateId">\${assignableTemplates.map((template) => '<option value="' + escapeHtml(template.id) + '">' + escapeHtml(template.name + " / " + template.subject) + '</option>').join("")}</select></label>
+                <button class="button primary" \${assignableTemplates.length ? "" : "disabled"}>Assign template</button>
+              </form>
+              <div class="subtitle">Only approved templates can be assigned to sequence steps.</div>
               <div class="panel-header"><div class="panel-title">Enroll contact</div></div>
               <form id="enrollForm" class="stack">
                 <label>Sequence<select name="sequenceId">\${state.sequences.map((s) => '<option value="' + s.id + '">' + escapeHtml(s.name) + "</option>").join("")}</select></label>
@@ -2756,6 +2764,17 @@ Content-Type: application/json
           const form = new FormData(event.currentTarget);
           await api("enrollments", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           notice("Contact enrolled.");
+          await refresh();
+        });
+
+        $("#sequenceStepTemplateForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          await api("sequence-steps/" + encodeURIComponent(form.get("stepId")), {
+            method: "PATCH",
+            body: JSON.stringify({ templateId: form.get("templateId") }),
+          });
+          notice("Sequence step template updated.");
           await refresh();
         });
 
