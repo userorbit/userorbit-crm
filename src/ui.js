@@ -2182,16 +2182,25 @@ Content-Type: application/json
       function emailTemplatesTable(templates = []) {
         if (!templates.length) return '<div class="empty">No email templates yet.</div>';
         return \`<table>
-          <thead><tr><th>Name</th><th>Subject</th><th>Scope</th><th>Used</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Subject</th><th>Scope</th><th>Approval</th><th>Used</th><th></th></tr></thead>
           <tbody>\${templates.map((template) => \`
             <tr>
               <td>\${escapeHtml(template.name)}<div class="subtitle">\${escapeHtml(template.created_by_name || "")}</div></td>
               <td>\${escapeHtml(template.subject)}</td>
               <td><span class="pill">\${escapeHtml(template.scope || "workspace")}</span></td>
+              <td><span class="pill">\${escapeHtml(template.approvalStatus || template.approval_status || "approved")}</span></td>
               <td>\${Number(template.sequenceStepCount || template.sequence_step_count || 0)}</td>
-              <td>\${template.scope === "workspace" ? '<button class="button" data-disable-email-template-id="' + escapeHtml(template.id) + '">Disable</button>' : ""}</td>
+              <td>\${template.scope === "workspace" ? emailTemplateActions(template) : ""}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function emailTemplateActions(template) {
+        const approval = template.approvalStatus || template.approval_status || "draft";
+        return [
+          approval !== "approved" ? '<button class="button" data-approve-email-template-id="' + escapeHtml(template.id) + '">Approve</button>' : "",
+          '<button class="button" data-disable-email-template-id="' + escapeHtml(template.id) + '">Disable</button>',
+        ].filter(Boolean).join(" ");
       }
 
       function emailContactOptions() {
@@ -3165,6 +3174,12 @@ Content-Type: application/json
         document.querySelectorAll("[data-disable-email-template-id]").forEach((node) => node.addEventListener("click", async () => {
           await api("email/templates/" + encodeURIComponent(node.dataset.disableEmailTemplateId), { method: "DELETE" });
           notice("Email template disabled.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-approve-email-template-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("email/templates/" + encodeURIComponent(node.dataset.approveEmailTemplateId) + "/approve", { method: "POST", body: "{}" });
+          notice("Email template approved.");
           await refresh();
         }));
 

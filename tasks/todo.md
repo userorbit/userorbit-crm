@@ -83,6 +83,7 @@
 - [x] Add per-user dismissal controls for next-best actions.
 - [x] Add AI contact email draft generation.
 - [x] Add email template preview testing.
+- [x] Add email template approval controls.
 - [x] Add warehouse-friendly scheduled export formats.
 - [x] Add Airtable native event destination for deeper integration coverage.
 - [x] Add GitHub Issues native event destination for deeper integration coverage.
@@ -194,3 +195,5 @@ Added GitHub Issues native event destinations: workspace admins can create GitHu
 Added Linear native issue destinations: workspace admins can create Linear integrations with access token, team ID, optional project ID, optional label IDs, optional GraphQL URL, and event subscriptions; CRM events create `issueCreate` mutations with event context and JSON details. Verified syntax checks, Settings markup, a live account-created delivery to a local Linear-compatible GraphQL endpoint, token auth, mutation variables, project/label fields, and `sent` delivery logging.
 
 Added email template preview testing: members can render active default or workspace templates against a real workspace contact and optional sender without sending or recording an email event, and Settings exposes template/contact/sender preview controls with missing-variable notes. Verified syntax checks, Settings markup, and a live preview of the seeded close-loop template against a smoke contact with rendered subject/body, variables, contact, and fallback sender.
+
+Added email template approval controls: workspace templates now start as draft, Settings shows approval status and an approve action, template updates reset approval to draft, manual sends that reference a workspace template require approval, and scheduled sequence sends skip unapproved workspace templates while seeded defaults remain approved. Verified local migration, syntax checks, draft send blocking, approve endpoint behavior, approved send success, and Settings markup.

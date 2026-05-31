@@ -263,6 +263,11 @@ async function routeApi(request, env, url, auth) {
     return json(await previewEmailTemplate(env, path.split("/")[2], { ...(await readJson(request)), workspaceId }));
   }
 
+  if (request.method === "POST" && path.startsWith("email/templates/") && path.endsWith("/approve")) {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    return json(await approveEmailTemplate(env, path.split("/")[2], workspaceId, auth));
+  }
+
   if (request.method === "PATCH" && path.startsWith("email/templates/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await updateEmailTemplate(env, path.split("/")[2], { ...(await readJson(request)), workspaceId }, auth));
@@ -4307,6 +4312,7 @@ async function enrollContact(env, input) {
 
 async function sendManualEmail(env, input) {
   requireFields(input, ["contactId", "subject", "body"]);
+  if (input.templateId || input.template_id) await assertEmailTemplateApproved(env, input.templateId || input.template_id, input.workspaceId);
   const contact = await getContactWithAccount(env, input.contactId);
   if (contact.workspace_id !== input.workspaceId) throw httpError(404, "Not found");
   if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
@@ -4379,6 +4385,7 @@ async function processDueSequenceEmails(env, options = {}) {
     JOIN contacts c ON c.id = se.contact_id
     JOIN accounts a ON a.id = c.account_id
     WHERE se.status = 'active' AND c.status != 'unsubscribed' AND se.next_send_at <= ?
+      AND (et.workspace_id IS NULL OR et.approval_status = 'approved')
     ORDER BY se.next_send_at ASC
     LIMIT ?
   `)
@@ -6008,9 +6015,11 @@ async function listEmailTemplates(env, workspaceId) {
     SELECT
       et.*,
       u.name AS created_by_name,
+      approver.name AS approved_by_name,
       COUNT(ss.id) AS sequence_step_count
     FROM email_templates et
     LEFT JOIN users u ON u.id = et.created_by_user_id
+    LEFT JOIN users approver ON approver.id = et.approved_by_user_id
     LEFT JOIN sequence_steps ss ON ss.template_id = et.id
     WHERE et.status = 'active' AND (et.workspace_id IS NULL OR et.workspace_id = ?)
     GROUP BY et.id
@@ -6028,8 +6037,8 @@ async function createEmailTemplate(env, input, auth) {
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
-    INSERT INTO email_templates (id, workspace_id, created_by_user_id, name, subject, body, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    INSERT INTO email_templates (id, workspace_id, created_by_user_id, name, subject, body, status, approval_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', 'draft', ?, ?)
   `).bind(
     id,
     input.workspaceId,
@@ -6053,11 +6062,21 @@ async function updateEmailTemplate(env, id, input, auth) {
   if (!name || !subject || !body) throw httpError(400, "Template name, subject, and body are required");
   await env.DB.prepare(`
     UPDATE email_templates
-    SET name = ?, subject = ?, body = ?, updated_at = ?
+    SET name = ?, subject = ?, body = ?, approval_status = 'draft', approved_by_user_id = NULL, approved_at = NULL, updated_at = ?
     WHERE id = ? AND workspace_id = ?
   `).bind(name, subject, body, now, id, input.workspaceId).run();
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_template.update", resource: "email_template", resourceId: id, metadata: { changedFields: changedInputFields(input, ["name", "subject", "body"]) } });
   return emailTemplateResponse(await getRequired(env, "SELECT et.*, COUNT(ss.id) AS sequence_step_count FROM email_templates et LEFT JOIN sequence_steps ss ON ss.template_id = et.id WHERE et.id = ? AND et.workspace_id = ? GROUP BY et.id", id, input.workspaceId));
+}
+
+async function approveEmailTemplate(env, id, workspaceId, auth) {
+  const existing = await getRequired(env, "SELECT * FROM email_templates WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE email_templates SET approval_status = 'approved', approved_by_user_id = ?, approved_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
+    .bind(auth.user.id, now, now, id, workspaceId)
+    .run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "email_template.approve", resource: "email_template", resourceId: id, metadata: { name: existing.name } });
+  return emailTemplateResponse(await getRequired(env, "SELECT et.*, 0 AS sequence_step_count FROM email_templates et WHERE et.id = ? AND et.workspace_id = ?", id, workspaceId));
 }
 
 async function disableEmailTemplate(env, id, workspaceId, auth) {
@@ -6088,10 +6107,17 @@ async function previewEmailTemplate(env, id, input) {
   };
 }
 
+async function assertEmailTemplateApproved(env, id, workspaceId) {
+  const template = await getRequired(env, "SELECT id, workspace_id, approval_status FROM email_templates WHERE id = ? AND status = 'active' AND (workspace_id IS NULL OR workspace_id = ?)", id, workspaceId);
+  if (template.workspace_id && template.approval_status !== "approved") throw httpError(400, "Email template must be approved before sending");
+  return template;
+}
+
 function emailTemplateResponse(row) {
   return {
     ...row,
     scope: row.workspace_id ? "workspace" : "default",
+    approvalStatus: row.workspace_id ? row.approval_status || "draft" : "approved",
     sequenceStepCount: Number(row.sequence_step_count || 0),
   };
 }
