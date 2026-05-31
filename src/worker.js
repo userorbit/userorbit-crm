@@ -30,7 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
-const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier", "airtable", "github"]);
+const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier", "airtable", "github", "linear"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
 const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
@@ -6502,6 +6502,16 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
         },
         body: JSON.stringify(githubIssuePayload(integration, config, event, resourceId, payload, now)),
       });
+    } else if (integration.type === "linear") {
+      response = await fetch(config.apiBaseUrl, {
+        method: "POST",
+        headers: {
+          authorization: config.accessToken,
+          "content-type": "application/json",
+          "user-agent": "UserOrbit-CRM-Integration",
+        },
+        body: JSON.stringify(linearIssuePayload(integration, config, event, resourceId, payload, now)),
+      });
     } else {
       response = await fetch(config.webhookUrl, {
         method: "POST",
@@ -8102,6 +8112,21 @@ function normalizeIntegrationConfig(type, input) {
       apiBaseUrl,
     };
   }
+  if (type === "linear") {
+    const accessToken = cleanNullable(input.accessToken || input.access_token || input.writeKey || input.write_key);
+    if (!accessToken) throw httpError(400, "Linear accessToken is required");
+    const teamId = cleanNullable(input.teamId || input.team_id);
+    if (!teamId) throw httpError(400, "Linear teamId is required");
+    const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url) || "https://api.linear.app/graphql";
+    normalizeWebhookUrl(apiBaseUrl);
+    return {
+      accessToken,
+      teamId,
+      projectId: cleanNullable(input.projectId || input.project_id),
+      labelIds: normalizeIntegrationLabels(input.labelIds || input.label_ids || input.labels),
+      apiBaseUrl,
+    };
+  }
   if (INTEGRATION_TYPES.has(type)) {
     const webhookUrl = normalizeWebhookUrl(input.webhookUrl || input.webhook_url || input.url);
     return { webhookUrl };
@@ -8159,6 +8184,7 @@ function maskIntegrationConfig(type, config) {
   if (type === "segment") return { writeKey: config.writeKey ? "configured" : "", apiBaseUrl: config.apiBaseUrl || "https://api.segment.io/v1/track" };
   if (type === "airtable") return { accessToken: config.accessToken ? "configured" : "", baseId: config.baseId || "", tableName: config.tableName || "", apiBaseUrl: config.apiBaseUrl || "https://api.airtable.com/v0" };
   if (type === "github") return { accessToken: config.accessToken ? "configured" : "", repo: config.repo || "", labels: Array.isArray(config.labels) ? config.labels : [], apiBaseUrl: config.apiBaseUrl || "https://api.github.com" };
+  if (type === "linear") return { accessToken: config.accessToken ? "configured" : "", teamId: config.teamId || "", projectId: config.projectId || "", labelIds: Array.isArray(config.labelIds) ? config.labelIds : [], apiBaseUrl: config.apiBaseUrl || "https://api.linear.app/graphql" };
   if (INTEGRATION_TYPES.has(type)) return { webhookUrl: config.webhookUrl ? "configured" : "" };
   return {};
 }
@@ -8505,6 +8531,42 @@ function githubIssuePayload(integration, config, event, resourceId, payload, sen
       "```",
     ].filter((line) => line !== "").join("\n"),
     labels: Array.isArray(config.labels) ? config.labels : undefined,
+  };
+}
+
+function linearIssuePayload(integration, config, event, resourceId, payload, sentAt) {
+  const title = integrationEventTitle(event, payload);
+  const detail = integrationEventDetail(event, payload);
+  const input = {
+    teamId: config.teamId,
+    title: `[UserOrbit] ${title}`.slice(0, 256),
+    description: [
+      detail,
+      `Event: ${event}`,
+      `Workspace: ${integration.workspace_id}`,
+      resourceId ? `Resource: ${resourceId}` : "",
+      `Sent at: ${sentAt}`,
+      "",
+      "```json",
+      JSON.stringify(payload || {}, null, 2).slice(0, 60000),
+      "```",
+    ].filter((line) => line !== "").join("\n"),
+  };
+  if (config.projectId) input.projectId = config.projectId;
+  if (Array.isArray(config.labelIds) && config.labelIds.length) input.labelIds = config.labelIds;
+  return {
+    query: `mutation UserOrbitIssueCreate($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue {
+      id
+      identifier
+      title
+      url
+    }
+  }
+}`,
+    variables: { input },
   };
 }
 

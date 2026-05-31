@@ -85,6 +85,7 @@
 - [x] Add warehouse-friendly scheduled export formats.
 - [x] Add Airtable native event destination for deeper integration coverage.
 - [x] Add GitHub Issues native event destination for deeper integration coverage.
+- [x] Add Linear issue native event destination for deeper integration coverage.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -188,3 +189,5 @@ Added warehouse-friendly scheduled export formats: export schedules now support 
 Added Airtable native event destinations: workspace admins can create Airtable integrations with access token, base ID, table name, optional API base URL, and event subscriptions; CRM events create Airtable-compatible records with event, title, detail, workspace, resource, timestamp, and JSON payload fields. Verified syntax checks, Settings markup, a live account-created delivery to a local Airtable-compatible capture endpoint, bearer auth, record payload shape, and `sent` delivery logging.
 
 Added GitHub Issues native event destinations: workspace admins can create GitHub integrations with access token, `owner/repo`, optional labels, optional API base URL, and event subscriptions; CRM events create issue payloads with event context and JSON details. Verified syntax checks, Settings markup, a live account-created delivery to a local GitHub-compatible capture endpoint, GitHub headers, bearer auth, labels, issue body shape, and `sent` delivery logging.
+
+Added Linear native issue destinations: workspace admins can create Linear integrations with access token, team ID, optional project ID, optional label IDs, optional GraphQL URL, and event subscriptions; CRM events create `issueCreate` mutations with event context and JSON details. Verified syntax checks, Settings markup, a live account-created delivery to a local Linear-compatible GraphQL endpoint, token auth, mutation variables, project/label fields, and `sent` delivery logging.
