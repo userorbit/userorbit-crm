@@ -83,6 +83,7 @@
 - [x] Add per-user dismissal controls for next-best actions.
 - [x] Add AI contact email draft generation.
 - [x] Add warehouse-friendly scheduled export formats.
+- [x] Add Airtable native event destination for deeper integration coverage.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -182,3 +183,5 @@ Added per-user next-best-action dismissals: recommendations can be dismissed fro
 Added AI contact email draft generation: contacts can generate non-sending draft subjects/bodies from timeline context through the API, contact UI, and `generate_email_draft` agent command, with OpenAI support and local fallback. Verified syntax checks, live fallback draft output, and contact UI markup.
 
 Added warehouse-friendly scheduled export formats: export schedules now support `destinationType` and `payloadFormat`, including JSONL for account/report snapshots, reuse delivery history, and expose controls in Settings. Verified local migration, syntax checks, live schedule creation/run output, and Settings markup.
+
+Added Airtable native event destinations: workspace admins can create Airtable integrations with access token, base ID, table name, optional API base URL, and event subscriptions; CRM events create Airtable-compatible records with event, title, detail, workspace, resource, timestamp, and JSON payload fields. Verified syntax checks, Settings markup, a live account-created delivery to a local Airtable-compatible capture endpoint, bearer auth, record payload shape, and `sent` delivery logging.

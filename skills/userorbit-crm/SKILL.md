@@ -112,7 +112,7 @@ POST /api/integrations
 }
 ```
 
-Supported `type` values are `slack`, `teams`, `discord`, `segment`, and `zapier`. Use the provider's incoming webhook URL for chat destinations, a Zapier Catch Hook URL for `zapier`, or `writeKey` plus optional `apiBaseUrl` for Segment Track API destinations. UserOrbit formats the event for that destination and records delivery status.
+Supported `type` values are `slack`, `teams`, `discord`, `segment`, `zapier`, and `airtable`. Use the provider's incoming webhook URL for chat destinations, a Zapier Catch Hook URL for `zapier`, `writeKey` plus optional `apiBaseUrl` for Segment Track API destinations, or `accessToken`, `baseId`, and `tableName` for Airtable event records. UserOrbit formats the event for that destination and records delivery status.
 
 List integrations and recent delivery status:
 

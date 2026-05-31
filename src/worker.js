@@ -30,7 +30,7 @@ const WORKSPACE_ADMIN_ROLES = ["owner", "admin"];
 const COMMUNICATION_TYPES = new Set(["call", "meeting", "sms", "whatsapp", "note"]);
 const COMMUNICATION_DIRECTIONS = new Set(["inbound", "outbound", "internal"]);
 const COMMUNICATION_OUTCOMES = new Set(["connected", "left_message", "no_answer", "scheduled", "completed", "cancelled", "positive", "negative", "neutral"]);
-const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier"]);
+const INTEGRATION_TYPES = new Set(["slack", "teams", "discord", "segment", "zapier", "airtable"]);
 const ENRICHMENT_PROVIDER_TYPES = new Set(["generic"]);
 const NATIVE_IMPORT_PROVIDERS = new Set(["hubspot", "pipedrive", "salesforce"]);
 const MESSAGE_CHANNEL_TYPES = new Set(["sms", "whatsapp", "call"]);
@@ -6469,8 +6469,9 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
   let statusCode = null;
   let error = null;
   try {
-    const response = integration.type === "segment"
-      ? await fetch(config.apiBaseUrl, {
+    let response;
+    if (integration.type === "segment") {
+      response = await fetch(config.apiBaseUrl, {
         method: "POST",
         headers: {
           authorization: `Basic ${btoa(`${config.writeKey}:`)}`,
@@ -6478,12 +6479,24 @@ async function deliverNativeIntegration(env, integration, event, resourceId, pay
           "user-agent": "UserOrbit-CRM-Integration",
         },
         body: JSON.stringify(segmentTrackPayload(integration, event, resourceId, payload, now)),
-      })
-      : await fetch(config.webhookUrl, {
+      });
+    } else if (integration.type === "airtable") {
+      response = await fetch(airtableRecordsUrl(config), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.accessToken}`,
+          "content-type": "application/json",
+          "user-agent": "UserOrbit-CRM-Integration",
+        },
+        body: JSON.stringify(airtableEventPayload(integration, event, resourceId, payload, now)),
+      });
+    } else {
+      response = await fetch(config.webhookUrl, {
         method: "POST",
         headers: { "content-type": "application/json", "user-agent": "UserOrbit-CRM-Integration" },
         body: JSON.stringify(integration.type === "zapier" ? zapierEventPayload(integration, event, resourceId, payload, now) : integrationMessageForEvent(integration.type, event, payload)),
       });
+    }
     statusCode = response.status;
     status = response.ok ? "sent" : "failed";
     if (!response.ok) error = `HTTP ${response.status}`;
@@ -8041,6 +8054,17 @@ function normalizeIntegrationConfig(type, input) {
     normalizeWebhookUrl(apiBaseUrl);
     return { writeKey, apiBaseUrl };
   }
+  if (type === "airtable") {
+    const accessToken = cleanNullable(input.accessToken || input.access_token || input.writeKey || input.write_key);
+    if (!accessToken) throw httpError(400, "Airtable accessToken is required");
+    const baseId = cleanNullable(input.baseId || input.base_id);
+    const tableName = cleanNullable(input.tableName || input.table_name);
+    if (!baseId) throw httpError(400, "Airtable baseId is required");
+    if (!tableName) throw httpError(400, "Airtable tableName is required");
+    const apiBaseUrl = cleanNullable(input.apiBaseUrl || input.api_base_url) || "https://api.airtable.com/v0";
+    normalizeWebhookUrl(apiBaseUrl);
+    return { accessToken, baseId, tableName, apiBaseUrl };
+  }
   if (INTEGRATION_TYPES.has(type)) {
     const webhookUrl = normalizeWebhookUrl(input.webhookUrl || input.webhook_url || input.url);
     return { webhookUrl };
@@ -8096,6 +8120,7 @@ function maskEnrichmentProviderConfig(config) {
 
 function maskIntegrationConfig(type, config) {
   if (type === "segment") return { writeKey: config.writeKey ? "configured" : "", apiBaseUrl: config.apiBaseUrl || "https://api.segment.io/v1/track" };
+  if (type === "airtable") return { accessToken: config.accessToken ? "configured" : "", baseId: config.baseId || "", tableName: config.tableName || "", apiBaseUrl: config.apiBaseUrl || "https://api.airtable.com/v0" };
   if (INTEGRATION_TYPES.has(type)) return { webhookUrl: config.webhookUrl ? "configured" : "" };
   return {};
 }
@@ -8398,6 +8423,26 @@ function segmentTrackPayload(integration, event, resourceId, payload, sentAt) {
       app: { name: "UserOrbit CRM" },
       integration: { name: integration.name, type: integration.type },
     },
+  };
+}
+
+function airtableRecordsUrl(config) {
+  return `${String(config.apiBaseUrl || "https://api.airtable.com/v0").replace(/\/+$/, "")}/${encodeURIComponent(config.baseId)}/${encodeURIComponent(config.tableName)}`;
+}
+
+function airtableEventPayload(integration, event, resourceId, payload, sentAt) {
+  return {
+    records: [{
+      fields: {
+        Event: event,
+        Title: integrationEventTitle(event, payload),
+        Detail: integrationEventDetail(event, payload),
+        Workspace: integration.workspace_id,
+        ResourceId: cleanNullable(resourceId) || "",
+        SentAt: sentAt,
+        Payload: JSON.stringify(payload || {}).slice(0, 90000),
+      },
+    }],
   };
 }
 
