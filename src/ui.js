@@ -1858,8 +1858,11 @@ Content-Type: application/json
                   <label>Operator<select name="operator"><option value="gte">At least</option><option value="gt">Greater than</option><option value="lte">At most</option><option value="lt">Less than</option><option value="eq">Equals</option></select></label>
                   <label>Threshold<input name="threshold" type="number" required value="1" /></label>
                   <label>Frequency<select name="frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+                  <label>Owner<input name="ownerLabel" placeholder="RevOps / pipeline owner" /></label>
                   <label>Native integration<select name="integrationId"><option value="">Webhook URL</option>\${nativeIntegrationOptions()}</select></label>
                   <label>Delivery URL<input name="deliveryUrl" type="url" placeholder="Required when no native integration is selected" /></label>
+                  <label>Runbook URL<input name="runbookUrl" type="url" placeholder="https://docs.example.com/pipeline-alert" /></label>
+                  <label>Runbook note<textarea name="runbookNote" placeholder="First check stalled opp owners, then review forecast changes."></textarea></label>
                   <label>Repeat after<input name="repeatIntervalHours" type="number" min="0" value="0" placeholder="Hours between repeated alerts" /></label>
                   <label><input name="notifyOnRecovery" type="checkbox" /> Notify when recovered</label>
                   <label>Escalate after<input name="escalationAfterRuns" type="number" min="0" value="0" placeholder="Triggered runs before escalation" /></label>
@@ -2088,6 +2091,8 @@ Content-Type: application/json
       function reportAlertPreferenceLabel(alert) {
         const parts = [];
         if (alert.last_value !== null && alert.last_value !== undefined) parts.push("Last value " + alert.last_value);
+        if (alert.owner_label) parts.push("owner " + alert.owner_label);
+        if (alert.runbook_url || alert.runbook_note) parts.push("runbook");
         if (Number(alert.repeat_interval_hours || 0) > 0) parts.push("repeat after " + alert.repeat_interval_hours + "h");
         if (alert.notify_on_recovery) parts.push("recovery on");
         if (Number(alert.escalation_after_runs || 0) > 0) parts.push("escalates after " + alert.escalation_after_runs + " runs");
@@ -3046,8 +3051,11 @@ Content-Type: application/json
               operator: form.get("operator"),
               threshold: Number(form.get("threshold") || 0),
               frequency: form.get("frequency"),
+              ownerLabel: form.get("ownerLabel") || undefined,
               deliveryUrl: form.get("deliveryUrl") || undefined,
               integrationId: form.get("integrationId") || undefined,
+              runbookUrl: form.get("runbookUrl") || undefined,
+              runbookNote: form.get("runbookNote") || undefined,
               repeatIntervalHours: Number(form.get("repeatIntervalHours") || 0),
               notifyOnRecovery: form.get("notifyOnRecovery") === "on",
               escalationAfterRuns: Number(form.get("escalationAfterRuns") || 0),

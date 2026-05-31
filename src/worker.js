@@ -2140,6 +2140,10 @@ async function createReportAlert(env, input, auth) {
   if (!Number.isFinite(repeatIntervalHours)) throw httpError(400, "repeatIntervalHours must be a number");
   const escalationAfterRuns = Math.max(0, Math.trunc(Number(input.escalationAfterRuns ?? input.escalation_after_runs ?? 0)));
   if (!Number.isFinite(escalationAfterRuns)) throw httpError(400, "escalationAfterRuns must be a number");
+  const ownerLabel = cleanNullable(input.ownerLabel || input.owner_label);
+  const runbookUrl = cleanNullable(input.runbookUrl || input.runbook_url);
+  const normalizedRunbookUrl = runbookUrl ? normalizeWebhookUrl(runbookUrl) : "";
+  const runbookNote = cleanNullable(input.runbookNote || input.runbook_note);
   const now = new Date().toISOString();
   const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
   const id = input.id || crypto.randomUUID();
@@ -2147,11 +2151,12 @@ async function createReportAlert(env, input, auth) {
     INSERT INTO report_alerts (
       id, workspace_id, created_by_user_id, name, metric, operator, threshold, frequency, delivery_url, integration_id,
       notify_on_recovery, repeat_interval_hours, escalation_after_runs, escalation_delivery_url, escalation_integration_id,
-      consecutive_triggered_runs, last_state, status, last_run_at, next_run_at, last_value, last_triggered_at, last_escalated_at, last_error, created_at, updated_at
+      owner_label, runbook_url, runbook_note, consecutive_triggered_runs, last_state, status, last_run_at, next_run_at, last_value,
+      last_triggered_at, last_escalated_at, last_error, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ok', 'active', NULL, ?, NULL, NULL, NULL, NULL, ?, ?)
-  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, notifyOnRecovery, repeatIntervalHours, escalationAfterRuns, normalizedEscalationDeliveryUrl, escalationIntegrationId, nextRunAt, now, now).run();
-  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId, notifyOnRecovery: Boolean(notifyOnRecovery), repeatIntervalHours, escalationAfterRuns, escalationIntegrationId } });
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ok', 'active', NULL, ?, NULL, NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, notifyOnRecovery, repeatIntervalHours, escalationAfterRuns, normalizedEscalationDeliveryUrl, escalationIntegrationId, ownerLabel, normalizedRunbookUrl, runbookNote, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId, notifyOnRecovery: Boolean(notifyOnRecovery), repeatIntervalHours, escalationAfterRuns, escalationIntegrationId, ownerLabel, hasRunbook: Boolean(normalizedRunbookUrl || runbookNote) } });
   return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
@@ -2262,6 +2267,11 @@ function reportAlertPayload(alert, value, evaluatedAt, state) {
     operator: alert.operator,
     threshold: alert.threshold,
     value,
+    owner: cleanNullable(alert.owner_label),
+    runbook: {
+      url: cleanNullable(alert.runbook_url),
+      note: cleanNullable(alert.runbook_note),
+    },
     state,
     triggeredAt: state === "triggered" ? evaluatedAt : null,
     recoveredAt: state === "recovered" ? evaluatedAt : null,
