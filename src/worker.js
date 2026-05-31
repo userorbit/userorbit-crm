@@ -2130,20 +2130,26 @@ async function createReportAlert(env, input, auth) {
   if (integrationId) await getRequired(env, "SELECT id FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'", integrationId, input.workspaceId);
   const escalationIntegrationId = cleanNullable(input.escalationIntegrationId || input.escalation_integration_id);
   if (escalationIntegrationId) await getRequired(env, "SELECT id FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'", escalationIntegrationId, input.workspaceId);
+  const secondEscalationIntegrationId = cleanNullable(input.secondEscalationIntegrationId || input.second_escalation_integration_id);
+  if (secondEscalationIntegrationId) await getRequired(env, "SELECT id FROM workspace_integrations WHERE id = ? AND workspace_id = ? AND status = 'active'", secondEscalationIntegrationId, input.workspaceId);
   const deliveryUrl = cleanNullable(input.deliveryUrl || input.delivery_url);
   if (!deliveryUrl && !integrationId) throw httpError(400, "deliveryUrl or integrationId is required");
   const normalizedDeliveryUrl = deliveryUrl ? normalizeWebhookUrl(deliveryUrl) : "";
   const escalationDeliveryUrl = cleanNullable(input.escalationDeliveryUrl || input.escalation_delivery_url);
   const normalizedEscalationDeliveryUrl = escalationDeliveryUrl ? normalizeWebhookUrl(escalationDeliveryUrl) : "";
+  const secondEscalationDeliveryUrl = cleanNullable(input.secondEscalationDeliveryUrl || input.second_escalation_delivery_url);
+  const normalizedSecondEscalationDeliveryUrl = secondEscalationDeliveryUrl ? normalizeWebhookUrl(secondEscalationDeliveryUrl) : "";
   const notifyOnRecovery = truthyInput(input.notifyOnRecovery ?? input.notify_on_recovery) ? 1 : 0;
   const repeatIntervalHours = Math.max(0, Math.trunc(Number(input.repeatIntervalHours ?? input.repeat_interval_hours ?? 0)));
   if (!Number.isFinite(repeatIntervalHours)) throw httpError(400, "repeatIntervalHours must be a number");
   const escalationAfterRuns = Math.max(0, Math.trunc(Number(input.escalationAfterRuns ?? input.escalation_after_runs ?? 0)));
   if (!Number.isFinite(escalationAfterRuns)) throw httpError(400, "escalationAfterRuns must be a number");
-  const ownerLabel = cleanNullable(input.ownerLabel || input.owner_label);
+  const secondEscalationAfterRuns = Math.max(0, Math.trunc(Number(input.secondEscalationAfterRuns ?? input.second_escalation_after_runs ?? 0)));
+  if (!Number.isFinite(secondEscalationAfterRuns)) throw httpError(400, "secondEscalationAfterRuns must be a number");
+  const ownerLabel = cleanNullable(input.ownerLabel || input.owner_label) || "";
   const runbookUrl = cleanNullable(input.runbookUrl || input.runbook_url);
   const normalizedRunbookUrl = runbookUrl ? normalizeWebhookUrl(runbookUrl) : "";
-  const runbookNote = cleanNullable(input.runbookNote || input.runbook_note);
+  const runbookNote = cleanNullable(input.runbookNote || input.runbook_note) || "";
   const now = new Date().toISOString();
   const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
   const id = input.id || crypto.randomUUID();
@@ -2151,12 +2157,13 @@ async function createReportAlert(env, input, auth) {
     INSERT INTO report_alerts (
       id, workspace_id, created_by_user_id, name, metric, operator, threshold, frequency, delivery_url, integration_id,
       notify_on_recovery, repeat_interval_hours, escalation_after_runs, escalation_delivery_url, escalation_integration_id,
-      owner_label, runbook_url, runbook_note, consecutive_triggered_runs, last_state, status, last_run_at, next_run_at, last_value,
-      last_triggered_at, last_escalated_at, last_error, created_at, updated_at
+      second_escalation_after_runs, second_escalation_delivery_url, second_escalation_integration_id, owner_label, runbook_url, runbook_note,
+      consecutive_triggered_runs, last_state, status, last_run_at, next_run_at, last_value, last_triggered_at, last_escalated_at,
+      last_second_escalated_at, last_error, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ok', 'active', NULL, ?, NULL, NULL, NULL, NULL, ?, ?)
-  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, notifyOnRecovery, repeatIntervalHours, escalationAfterRuns, normalizedEscalationDeliveryUrl, escalationIntegrationId, ownerLabel, normalizedRunbookUrl, runbookNote, nextRunAt, now, now).run();
-  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId, notifyOnRecovery: Boolean(notifyOnRecovery), repeatIntervalHours, escalationAfterRuns, escalationIntegrationId, ownerLabel, hasRunbook: Boolean(normalizedRunbookUrl || runbookNote) } });
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ok', 'active', NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), metric, operator, threshold, frequency, normalizedDeliveryUrl, integrationId, notifyOnRecovery, repeatIntervalHours, escalationAfterRuns, normalizedEscalationDeliveryUrl, escalationIntegrationId, secondEscalationAfterRuns, normalizedSecondEscalationDeliveryUrl, secondEscalationIntegrationId, ownerLabel, normalizedRunbookUrl, runbookNote, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "report_alert.create", resource: "report_alert", resourceId: id, metadata: { name: input.name, metric, operator, threshold, frequency, integrationId, notifyOnRecovery: Boolean(notifyOnRecovery), repeatIntervalHours, escalationAfterRuns, escalationIntegrationId, secondEscalationAfterRuns, secondEscalationIntegrationId, ownerLabel, hasRunbook: Boolean(normalizedRunbookUrl || runbookNote) } });
   return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
@@ -2211,6 +2218,7 @@ async function evaluateReportAlert(env, alert) {
   const shouldDeliverTrigger = preferences.report_alert_trigger_enabled && triggered && (previousState !== "triggered" || canRepeat || repeatIntervalHours === 0);
   const shouldDeliverRecovery = preferences.report_alert_recovery_enabled && !triggered && previousState === "triggered" && Boolean(alert.notify_on_recovery);
   const shouldEscalate = triggered && Number(alert.escalation_after_runs || 0) > 0 && consecutiveTriggeredRuns >= Number(alert.escalation_after_runs || 0) && !alert.last_escalated_at;
+  const shouldSecondEscalate = triggered && Number(alert.second_escalation_after_runs || 0) > 0 && consecutiveTriggeredRuns >= Number(alert.second_escalation_after_runs || 0) && !alert.last_second_escalated_at;
   const mutedByPreference = (triggered && !preferences.report_alert_trigger_enabled) || (!triggered && previousState === "triggered" && Boolean(alert.notify_on_recovery) && !preferences.report_alert_recovery_enabled);
   let status = "not_triggered";
   let statusCode = null;
@@ -2250,12 +2258,32 @@ async function evaluateReportAlert(env, alert) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(crypto.randomUUID(), alert.workspace_id, alert.id, alert.metric, value, alert.threshold, delivery.status, delivery.statusCode, cleanNullable(delivery.error), now).run();
   }
+  let secondEscalation = null;
+  if (shouldSecondEscalate) {
+    const payload = reportAlertPayload(alert, value, now, "second_escalated");
+    const delivery = alert.second_escalation_integration_id
+      ? await deliverReportAlertIntegration(env, { ...alert, integration_id: alert.second_escalation_integration_id }, "report_alert.second_escalated", payload)
+      : alert.second_escalation_delivery_url
+        ? await deliverReportAlertWebhook({ ...alert, delivery_url: alert.second_escalation_delivery_url }, payload)
+        : alert.escalation_integration_id
+          ? await deliverReportAlertIntegration(env, { ...alert, integration_id: alert.escalation_integration_id }, "report_alert.second_escalated", payload)
+          : alert.escalation_delivery_url
+            ? await deliverReportAlertWebhook({ ...alert, delivery_url: alert.escalation_delivery_url }, payload)
+            : alert.integration_id
+              ? await deliverReportAlertIntegration(env, alert, "report_alert.second_escalated", payload)
+              : await deliverReportAlertWebhook(alert, payload);
+    secondEscalation = { status: delivery.status, statusCode: delivery.statusCode, error: delivery.error };
+    await env.DB.prepare(`
+      INSERT INTO report_alert_deliveries (id, workspace_id, alert_id, metric, value, threshold, status, status_code, error, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(crypto.randomUUID(), alert.workspace_id, alert.id, alert.metric, value, alert.threshold, delivery.status, delivery.statusCode, cleanNullable(delivery.error), now).run();
+  }
   const nextRunAt = nextExportRunAt(alert.frequency, now);
-  const lastError = cleanNullable(error || escalation?.error);
-  await env.DB.prepare("UPDATE report_alerts SET last_run_at = ?, next_run_at = ?, last_value = ?, last_triggered_at = ?, last_escalated_at = ?, last_error = ?, last_state = ?, consecutive_triggered_runs = ?, updated_at = ? WHERE id = ?")
-    .bind(now, nextRunAt, value, shouldDeliverTrigger ? now : cleanNullable(alert.last_triggered_at), shouldEscalate ? now : (triggered ? cleanNullable(alert.last_escalated_at) : null), lastError, triggered ? "triggered" : "ok", consecutiveTriggeredRuns, now, alert.id)
+  const lastError = cleanNullable(error || escalation?.error || secondEscalation?.error);
+  await env.DB.prepare("UPDATE report_alerts SET last_run_at = ?, next_run_at = ?, last_value = ?, last_triggered_at = ?, last_escalated_at = ?, last_second_escalated_at = ?, last_error = ?, last_state = ?, consecutive_triggered_runs = ?, updated_at = ? WHERE id = ?")
+    .bind(now, nextRunAt, value, shouldDeliverTrigger ? now : cleanNullable(alert.last_triggered_at), shouldEscalate ? now : (triggered ? cleanNullable(alert.last_escalated_at) : null), shouldSecondEscalate ? now : (triggered ? cleanNullable(alert.last_second_escalated_at) : null), lastError, triggered ? "triggered" : "ok", consecutiveTriggeredRuns, now, alert.id)
     .run();
-  return { alertId: alert.id, status, triggered, value, threshold: alert.threshold, deliveryEvent, escalation, statusCode, error: lastError };
+  return { alertId: alert.id, status, triggered, value, threshold: alert.threshold, deliveryEvent, escalation, secondEscalation, statusCode, error: lastError };
 }
 
 function reportAlertPayload(alert, value, evaluatedAt, state) {
@@ -2275,7 +2303,7 @@ function reportAlertPayload(alert, value, evaluatedAt, state) {
     state,
     triggeredAt: state === "triggered" ? evaluatedAt : null,
     recoveredAt: state === "recovered" ? evaluatedAt : null,
-    escalatedAt: state === "escalated" ? evaluatedAt : null,
+    escalatedAt: state === "escalated" || state === "second_escalated" ? evaluatedAt : null,
     evaluatedAt,
   };
 }
@@ -8707,6 +8735,7 @@ function integrationEventTitle(event, payload) {
   if (event === "report_alert.triggered") return `Report alert: ${payload?.name || payload?.metric || "Alert"}`;
   if (event === "report_alert.recovered") return `Report alert recovered: ${payload?.name || payload?.metric || "Alert"}`;
   if (event === "report_alert.escalated") return `Report alert escalated: ${payload?.name || payload?.metric || "Alert"}`;
+  if (event === "report_alert.second_escalated") return `Report alert second escalation: ${payload?.name || payload?.metric || "Alert"}`;
   return `UserOrbit event: ${event}`;
 }
 
@@ -8722,6 +8751,7 @@ function integrationEventDetail(event, payload) {
   if (event === "report_alert.triggered") return [payload?.metric, payload?.operator && payload?.threshold !== undefined ? `${payload.operator} ${payload.threshold}` : "", payload?.value !== undefined ? `value ${payload.value}` : ""].filter(Boolean).join(" / ");
   if (event === "report_alert.recovered") return [payload?.metric, payload?.value !== undefined ? `recovered at ${payload.value}` : ""].filter(Boolean).join(" / ");
   if (event === "report_alert.escalated") return [payload?.metric, payload?.operator && payload?.threshold !== undefined ? `${payload.operator} ${payload.threshold}` : "", payload?.value !== undefined ? `value ${payload.value}` : ""].filter(Boolean).join(" / ");
+  if (event === "report_alert.second_escalated") return [payload?.metric, payload?.operator && payload?.threshold !== undefined ? `${payload.operator} ${payload.threshold}` : "", payload?.value !== undefined ? `value ${payload.value}` : ""].filter(Boolean).join(" / ");
   return "";
 }
 

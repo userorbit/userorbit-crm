@@ -77,6 +77,7 @@
 - [x] Add per-user report alert notification preferences.
 - [x] Add one-time escalation policies for report alerts.
 - [x] Add report alert owner and runbook context.
+- [x] Add two-step escalation policies for report alerts.
 - [x] Add revocable read-only dashboard share links.
 - [x] Add iframe-friendly embedded dashboard share controls.
 - [x] Add workspace email template management.
@@ -203,3 +204,5 @@ Added email template approval controls: workspace templates now start as draft, 
 Added sequence step template assignment controls: owners/admins can assign approved default or workspace templates to sequence steps from the Sequences view or `PATCH /api/sequence-steps/<step_id>`, and draft workspace templates are rejected until approved. Verified syntax checks, live draft rejection, approval, successful assignment, sequence list reflection, and Sequences markup.
 
 Added report alert owner and runbook context: report alerts now store owner labels, runbook URLs, and runbook notes, show that context in Settings, and include it in triggered/recovered/escalated alert payloads. Verified local migration, syntax checks, live alert creation/run delivery to a capture endpoint, payload owner/runbook fields, and Settings markup.
+
+Added two-step report alert escalation policies: admins can configure a second escalation threshold plus webhook/native integration destination, and each escalation step fires once per triggered incident before recovery resets the incident. Verified local migration, syntax checks, Settings markup, first-run primary plus first escalation delivery, and second-run primary plus second escalation delivery.
