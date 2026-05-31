@@ -652,6 +652,7 @@ export const appHtml = String.raw`<!doctype html>
         leadForms: [],
         emailSettings: { open_tracking_enabled: 0, click_tracking_enabled: 0, workspace_daily_send_limit: 0 },
         emailTemplates: [],
+        emailTemplatePreview: null,
         emailSenders: [],
         emailInboundSources: [],
         emailSyncSources: [],
@@ -1921,6 +1922,13 @@ Content-Type: application/json
                   <label>Body<textarea name="body" required placeholder="Hi {{contact.firstName}},"></textarea></label>
                   <button class="button primary">Create email template</button>
                 </form>
+                <form id="emailTemplatePreviewForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
+                  <label>Preview template<select name="templateId" required>\${state.emailTemplates.map((template) => '<option value="' + escapeHtml(template.id) + '">' + escapeHtml(template.name + " / " + template.subject) + '</option>').join("")}</select></label>
+                  <label>Contact<select name="contactId" required>\${emailContactOptions()}</select></label>
+                  <label>Sender<select name="senderId"><option value="">Auto sender</option>\${state.emailSenders.filter((sender) => sender.status === "active").map((sender) => '<option value="' + escapeHtml(sender.id) + '">' + escapeHtml((sender.name || sender.email) + " / " + sender.email) + '</option>').join("")}</select></label>
+                  <button class="button primary" \${state.emailTemplates.length && emailContactOptions() ? "" : "disabled"}>Preview template</button>
+                </form>
+                \${emailTemplatePreviewPanel(state.emailTemplatePreview)}
                 <form id="emailSenderForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Sender email<input name="email" type="email" required placeholder="founder@example.com" /></label>
                   <label>Sender name<input name="name" placeholder="Founder" /></label>
@@ -2184,6 +2192,22 @@ Content-Type: application/json
               <td>\${template.scope === "workspace" ? '<button class="button" data-disable-email-template-id="' + escapeHtml(template.id) + '">Disable</button>' : ""}</td>
             </tr>\`).join("")}</tbody>
         </table>\`;
+      }
+
+      function emailContactOptions() {
+        return state.accounts.flatMap((account) => (account.contacts || []).map((contact) => ({ ...contact, accountName: account.name })))
+          .map((contact) => '<option value="' + escapeHtml(contact.id) + '">' + escapeHtml((contact.name || contact.email) + " / " + contact.accountName) + '</option>')
+          .join("");
+      }
+
+      function emailTemplatePreviewPanel(preview) {
+        if (!preview) return "";
+        const missing = (preview.variables || []).filter((variable) => variable.missing).map((variable) => variable.path).join(", ");
+        return \`<div class="empty">
+          <strong>\${escapeHtml(preview.rendered?.subject || "")}</strong>
+          <div style="white-space:pre-wrap; margin-top:8px">\${escapeHtml(preview.rendered?.body || "")}</div>
+          <div class="subtitle" style="margin-top:8px">\${escapeHtml([preview.contact?.email, preview.sender?.email ? "from " + preview.sender.email : "", missing ? "missing: " + missing : ""].filter(Boolean).join(" · "))}</div>
+        </div>\`;
       }
 
       function emailSendersTable(senders = []) {
@@ -2870,6 +2894,20 @@ Content-Type: application/json
           });
           notice("Email template created.");
           await refresh();
+        });
+
+        $("#emailTemplatePreviewForm")?.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          state.emailTemplatePreview = await api("email/templates/" + encodeURIComponent(form.get("templateId")) + "/preview", {
+            method: "POST",
+            body: JSON.stringify({
+              contactId: form.get("contactId"),
+              senderId: form.get("senderId") || undefined,
+            }),
+          });
+          render();
+          notice("Email template preview rendered.");
         });
 
         $("#emailSenderForm")?.addEventListener("submit", async (event) => {

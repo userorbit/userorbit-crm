@@ -258,6 +258,11 @@ async function routeApi(request, env, url, auth) {
     return json(await createEmailTemplate(env, { ...(await readJson(request)), workspaceId }, auth), 201);
   }
 
+  if (request.method === "POST" && path.startsWith("email/templates/") && path.endsWith("/preview")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await previewEmailTemplate(env, path.split("/")[2], { ...(await readJson(request)), workspaceId }));
+  }
+
   if (request.method === "PATCH" && path.startsWith("email/templates/")) {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await updateEmailTemplate(env, path.split("/")[2], { ...(await readJson(request)), workspaceId }, auth));
@@ -6063,6 +6068,26 @@ async function disableEmailTemplate(env, id, workspaceId, auth) {
   return { ok: true };
 }
 
+async function previewEmailTemplate(env, id, input) {
+  requireFields(input, ["contactId"]);
+  const template = await getRequired(env, "SELECT * FROM email_templates WHERE id = ? AND status = 'active' AND (workspace_id IS NULL OR workspace_id = ?)", id, input.workspaceId);
+  const contact = await getContactWithAccount(env, input.contactId);
+  if (contact.workspace_id !== input.workspaceId) throw httpError(404, "Not found");
+  const senderId = cleanNullable(input.senderId || input.sender_id);
+  const sender = senderId
+    ? await getRequired(env, "SELECT * FROM workspace_email_senders WHERE id = ? AND workspace_id = ? AND status = 'active'", senderId, input.workspaceId)
+    : await chooseEmailSender(env, input.workspaceId);
+  const data = await buildEmailTemplateData(env, { workspaceId: input.workspaceId, contact, sender });
+  const rendered = renderTemplate(template, data);
+  return {
+    template: emailTemplateResponse({ ...template, sequence_step_count: 0 }),
+    contact: { id: contact.id, name: contact.name, email: contact.email, accountId: contact.account_id, accountName: contact.account_name },
+    sender: sender ? { id: sender.id || null, name: sender.name || "", email: sender.email || "" } : null,
+    rendered,
+    variables: emailTemplateVariables(template, data),
+  };
+}
+
 function emailTemplateResponse(row) {
   return {
     ...row,
@@ -7350,6 +7375,17 @@ function renderTemplate(template, data) {
     });
 
   return { subject: replace(template.subject), body: replace(template.body) };
+}
+
+function emailTemplateVariables(template, data) {
+  const paths = new Set();
+  for (const value of [template.subject, template.body]) {
+    for (const match of String(value || "").matchAll(/\{\{\s*([a-z0-9_.]+)\s*\}\}/gi)) paths.add(match[1]);
+  }
+  return [...paths].sort().map((path) => {
+    const value = path.split(".").reduce((cursor, key) => cursor?.[key], data);
+    return { path, value: value === undefined || value === null ? "" : String(value), missing: value === undefined || value === null || value === "" };
+  });
 }
 
 async function buildEmailTemplateData(env, { workspaceId, contact, sender }) {
