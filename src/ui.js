@@ -1835,7 +1835,9 @@ Content-Type: application/json
                 </form>
                 <form id="exportScheduleForm" class="stack" style="padding:0; border-top:1px solid var(--border); padding-top:10px">
                   <label>Name<input name="name" required placeholder="Weekly report snapshot" /></label>
+                  <label>Destination<select name="destinationType"><option value="webhook">Webhook</option><option value="warehouse">Warehouse loader</option></select></label>
                   <label>Resource<select name="resource"><option value="accounts">Accounts CSV</option><option value="reports">Reports JSON</option></select></label>
+                  <label>Payload format<select name="payloadFormat"><option value="auto">Auto</option><option value="csv">CSV</option><option value="json">JSON</option><option value="jsonl">JSONL</option></select></label>
                   <label>Frequency<select name="frequency"><option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option></select></label>
                   <label>Delivery URL<input name="deliveryUrl" type="url" required placeholder="https://hooks.example.com/userorbit-export" /></label>
                   <label>Next run<input name="nextRunAt" type="datetime-local" /></label>
@@ -2014,7 +2016,7 @@ Content-Type: application/json
           <tbody>\${schedules.map((schedule) => \`
             <tr>
               <td>\${escapeHtml(schedule.name)}<div class="subtitle">\${escapeHtml(schedule.delivery_url)}</div></td>
-              <td>\${escapeHtml(schedule.resource)} · \${escapeHtml(schedule.frequency)}</td>
+              <td>\${escapeHtml(schedule.resource)} · \${escapeHtml(schedule.frequency)}<div class="subtitle">\${escapeHtml((schedule.destination_type || "webhook") + " / " + (schedule.payload_format || "auto"))}</div></td>
               <td>\${escapeHtml(schedule.next_run_at ? formatDateTime(schedule.next_run_at) : "Not scheduled")}<div class="subtitle">\${escapeHtml(schedule.last_error || (schedule.last_run_at ? "Last run " + formatDateTime(schedule.last_run_at) : ""))}</div></td>
               <td><span class="pill">\${escapeHtml(schedule.status)}</span></td>
               <td>\${schedule.status === "active" ? '<button class="button" data-run-export-schedule-id="' + escapeHtml(schedule.id) + '">Run</button> <button class="button" data-disable-export-schedule-id="' + escapeHtml(schedule.id) + '">Disable</button>' : ""}</td>
@@ -2938,7 +2940,9 @@ Content-Type: application/json
             method: "POST",
             body: JSON.stringify({
               name: form.get("name"),
+              destinationType: form.get("destinationType"),
               resource: form.get("resource"),
+              payloadFormat: form.get("payloadFormat"),
               frequency: form.get("frequency"),
               deliveryUrl: form.get("deliveryUrl"),
               nextRunAt,

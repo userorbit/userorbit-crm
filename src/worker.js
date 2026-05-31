@@ -44,7 +44,9 @@ const DEFAULT_DASHBOARD_WIDGETS = ["metrics", "next_best_actions", "priority_acc
 const REPORT_SECTIONS = new Set(["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"]);
 const DEFAULT_REPORT_SECTIONS = ["metrics", "pipeline", "forecast", "account_status", "sequence_performance", "owner_performance", "source_conversion", "stalled_opportunities", "custom_fields"];
 const EXPORT_RESOURCES = new Set(["accounts", "reports"]);
+const EXPORT_DESTINATIONS = new Set(["webhook", "warehouse"]);
 const EXPORT_FREQUENCIES = new Set(["daily", "weekly", "monthly"]);
+const EXPORT_PAYLOAD_FORMATS = new Set(["auto", "csv", "json", "jsonl"]);
 const REPORT_ALERT_METRICS = new Set(["open_pipeline_cents", "weighted_forecast_cents", "overdue_tasks", "stalled_opportunities", "emails_failed"]);
 const REPORT_ALERT_OPERATORS = new Set(["gt", "gte", "lt", "lte", "eq"]);
 
@@ -1237,6 +1239,28 @@ function groupRowsByKey(rows, key, limit) {
 }
 
 async function exportAccountsCsv(env, workspaceId) {
+  const rows = await exportAccountRows(env, workspaceId);
+  return toCsv(rows, EXPORT_ACCOUNT_FIELDS);
+}
+
+const EXPORT_ACCOUNT_FIELDS = [
+  "id",
+  "name",
+  "domain",
+  "segment",
+  "status",
+  "source",
+  "owner",
+  "observation",
+  "contacts_count",
+  "opportunities_count",
+  "open_pipeline_cents",
+  "last_activity_at",
+  "created_at",
+  "updated_at",
+];
+
+async function exportAccountRows(env, workspaceId) {
   const rows = await env.DB.prepare(`
     SELECT
       a.id,
@@ -1261,22 +1285,7 @@ async function exportAccountsCsv(env, workspaceId) {
     GROUP BY a.id
     ORDER BY a.updated_at DESC
   `).bind(workspaceId).all();
-  return toCsv(rows.results, [
-    "id",
-    "name",
-    "domain",
-    "segment",
-    "status",
-    "source",
-    "owner",
-    "observation",
-    "contacts_count",
-    "opportunities_count",
-    "open_pipeline_cents",
-    "last_activity_at",
-    "created_at",
-    "updated_at",
-  ]);
+  return rows.results;
 }
 
 async function listAccountDuplicates(env, workspaceId) {
@@ -1903,18 +1912,21 @@ async function createExportSchedule(env, input, auth) {
   requireFields(input, ["name", "deliveryUrl"]);
   const resource = normalizeEnum(input.resource || "accounts", EXPORT_RESOURCES, "resource");
   const frequency = normalizeEnum(input.frequency || "weekly", EXPORT_FREQUENCIES, "frequency");
+  const destinationType = normalizeEnum(input.destinationType || input.destination_type || "webhook", EXPORT_DESTINATIONS, "destinationType");
+  const payloadFormat = normalizeEnum(input.payloadFormat || input.payload_format || "auto", EXPORT_PAYLOAD_FORMATS, "payloadFormat");
+  if (payloadFormat === "csv" && resource !== "accounts") throw httpError(400, "CSV export format is only supported for accounts");
   const deliveryUrl = normalizeWebhookUrl(input.deliveryUrl || input.delivery_url);
   const now = new Date().toISOString();
   const nextRunAt = normalizeOptionalDateTime(input.nextRunAt || input.next_run_at) || nextExportRunAt(frequency, now);
   const id = input.id || crypto.randomUUID();
   await env.DB.prepare(`
     INSERT INTO export_schedules (
-      id, workspace_id, created_by_user_id, name, resource, frequency, delivery_url,
+      id, workspace_id, created_by_user_id, name, resource, frequency, delivery_url, destination_type, payload_format,
       status, last_run_at, next_run_at, last_error, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, ?, ?)
-  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), resource, frequency, deliveryUrl, nextRunAt, now, now).run();
-  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "export_schedule.create", resource: "export_schedule", resourceId: id, metadata: { name: input.name, resource, frequency } });
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, NULL, ?, ?)
+  `).bind(id, input.workspaceId, auth.user.id, input.name.trim(), resource, frequency, deliveryUrl, destinationType, payloadFormat, nextRunAt, now, now).run();
+  await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "export_schedule.create", resource: "export_schedule", resourceId: id, metadata: { name: input.name, resource, frequency, destinationType, payloadFormat } });
   return getRequired(env, "SELECT * FROM export_schedules WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
 }
 
@@ -1966,6 +1978,7 @@ async function deliverExportSchedule(env, schedule) {
       headers: {
         "content-type": exported.contentType,
         "user-agent": "UserOrbit-CRM-Export",
+        "x-userorbit-export-destination": schedule.destination_type || "webhook",
         "x-userorbit-export-resource": schedule.resource,
         "x-userorbit-export-format": exported.format,
         "x-userorbit-export-schedule-id": schedule.id,
@@ -1991,17 +2004,40 @@ async function deliverExportSchedule(env, schedule) {
 }
 
 async function buildExportPayload(env, schedule) {
+  const format = normalizeExportFormat(schedule);
   if (schedule.resource === "accounts") {
-    const body = await exportAccountsCsv(env, schedule.workspace_id);
+    const rows = await exportAccountRows(env, schedule.workspace_id);
+    if (format === "json") {
+      return {
+        body: JSON.stringify({ resource: "accounts", workspaceId: schedule.workspace_id, generatedAt: new Date().toISOString(), rows }, null, 2),
+        rowCount: rows.length,
+        contentType: "application/json; charset=utf-8",
+        format,
+      };
+    }
+    if (format === "jsonl") {
+      return {
+        body: toJsonLines(rows.map((row) => ({ resource: "accounts", workspaceId: schedule.workspace_id, generatedAt: new Date().toISOString(), ...row }))),
+        rowCount: rows.length,
+        contentType: "application/x-ndjson; charset=utf-8",
+        format,
+      };
+    }
+    const body = toCsv(rows, EXPORT_ACCOUNT_FIELDS);
     return {
       body,
-      rowCount: Math.max(0, body.split(/\r?\n/).filter(Boolean).length - 1),
+      rowCount: rows.length,
       contentType: "text/csv; charset=utf-8",
       format: "csv",
     };
   }
   if (schedule.resource === "reports") {
     const reports = await getReports(env, schedule.workspace_id, null);
+    if (format === "jsonl") {
+      const generatedAt = new Date().toISOString();
+      const rows = flattenReportRows(reports).map((row) => ({ workspaceId: schedule.workspace_id, generatedAt, ...row }));
+      return { body: toJsonLines(rows), rowCount: rows.length, contentType: "application/x-ndjson; charset=utf-8", format };
+    }
     const body = JSON.stringify({
       resource: "reports",
       workspaceId: schedule.workspace_id,
@@ -2012,6 +2048,29 @@ async function buildExportPayload(env, schedule) {
     return { body, rowCount, contentType: "application/json; charset=utf-8", format: "json" };
   }
   throw httpError(400, "Unsupported export resource");
+}
+
+function normalizeExportFormat(schedule) {
+  const requested = EXPORT_PAYLOAD_FORMATS.has(schedule.payload_format) ? schedule.payload_format : "auto";
+  if (requested !== "auto") return requested;
+  if ((schedule.destination_type || "webhook") === "warehouse") return "jsonl";
+  return schedule.resource === "accounts" ? "csv" : "json";
+}
+
+function flattenReportRows(reports) {
+  const rows = [];
+  for (const [section, value] of Object.entries(reports || {})) {
+    if (Array.isArray(value)) {
+      rows.push(...value.map((row) => ({ resource: "reports", section, row })));
+    } else if (value && typeof value === "object" && !Array.isArray(value)) {
+      rows.push({ resource: "reports", section, row: value });
+    }
+  }
+  return rows;
+}
+
+function toJsonLines(rows) {
+  return rows.map((row) => JSON.stringify(row)).join("\n");
 }
 
 function nextExportRunAt(frequency, fromIso) {

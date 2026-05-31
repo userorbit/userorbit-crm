@@ -395,6 +395,8 @@ POST /api/saved-views
 
 List saved report views with `GET /api/saved-views?resource=reports`. Delete one with `DELETE /api/saved-views/<view_id>`. Supported report sections are `metrics`, `pipeline`, `forecast`, `account_status`, `sequence_performance`, `owner_performance`, `source_conversion`, `stalled_opportunities`, and `custom_fields`.
 
+Create scheduled account/report exports with `POST /api/export-schedules`. Use `destinationType: "webhook"` for ordinary webhook receivers and `destinationType: "warehouse"` for warehouse or object-ingestion endpoints. `payloadFormat` supports `auto`, `csv`, `json`, and `jsonl`; warehouse exports default to JSONL, while webhook exports default to account CSV or report JSON. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`.
+
 Review or update the current user's dashboard widgets for the active workspace:
 
 ```http

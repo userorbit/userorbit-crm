@@ -82,6 +82,7 @@
 - [x] Add computed next-best-action queue.
 - [x] Add per-user dismissal controls for next-best actions.
 - [x] Add AI contact email draft generation.
+- [x] Add warehouse-friendly scheduled export formats.
 - [ ] Build the next Close-style CRM gaps: deeper native integrations.
 - [x] Restyle the app and lab to match Campsite's design system.
   - [x] Port Campsite-like design tokens, shell, sidebar, buttons, inputs, panels, tables, and pills.
@@ -179,3 +180,5 @@ Added computed next-best actions: `/api/next-best-actions` ranks overdue tasks, 
 Added per-user next-best-action dismissals: recommendations can be dismissed from the API or dashboard with a reason, dismissal is scoped to the signed-in user/workspace, and dismissed items are filtered out of future queue reads without mutating the underlying CRM record. Verified local migration, syntax checks, API dismissal filtering, and dashboard markup.
 
 Added AI contact email draft generation: contacts can generate non-sending draft subjects/bodies from timeline context through the API, contact UI, and `generate_email_draft` agent command, with OpenAI support and local fallback. Verified syntax checks, live fallback draft output, and contact UI markup.
+
+Added warehouse-friendly scheduled export formats: export schedules now support `destinationType` and `payloadFormat`, including JSONL for account/report snapshots, reuse delivery history, and expose controls in Settings. Verified local migration, syntax checks, live schedule creation/run output, and Settings markup.

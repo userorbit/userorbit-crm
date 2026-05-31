@@ -583,12 +583,14 @@ curl -X POST http://localhost:8787/api/export-schedules \
   -d '{
     "name": "Weekly account backup",
     "resource": "accounts",
+    "destinationType": "warehouse",
+    "payloadFormat": "jsonl",
     "frequency": "weekly",
     "deliveryUrl": "https://hooks.example.com/userorbit/accounts.csv"
   }'
 ```
 
-Workspace admins can schedule daily, weekly, or monthly exports to a webhook-compatible URL. Use `"resource": "accounts"` for CSV account exports or `"resource": "reports"` for JSON snapshots of pipeline, forecast, activity, task, sequence, owner-performance, source-conversion, stalled-opportunity, and custom-field reports. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`; scheduled Worker jobs also process due exports and record delivery status in Settings.
+Workspace admins can schedule daily, weekly, or monthly exports to a webhook-compatible URL or warehouse loader endpoint. Use `"resource": "accounts"` for account snapshots or `"resource": "reports"` for pipeline, forecast, activity, task, sequence, owner-performance, source-conversion, stalled-opportunity, and custom-field report snapshots. `destinationType` can be `webhook` or `warehouse`; `payloadFormat` can be `auto`, `csv`, `json`, or `jsonl`. Warehouse schedules default to JSONL. Run a schedule immediately with `POST /api/export-schedules/<schedule_id>/run`; scheduled Worker jobs also process due exports and record delivery status in Settings.
 
 ### Create report alerts
 
