@@ -2066,7 +2066,7 @@ Content-Type: application/json
               <td>\${escapeHtml(reportAlertMetricLabel(alert.metric) + " " + alert.operator + " " + alert.threshold)}<div class="subtitle">\${escapeHtml(reportAlertPreferenceLabel(alert))}</div></td>
               <td>\${escapeHtml(alert.next_run_at ? formatDateTime(alert.next_run_at) : "Not scheduled")}<div class="subtitle">\${escapeHtml(alert.last_error || (alert.last_triggered_at ? "Triggered " + formatDateTime(alert.last_triggered_at) : ""))}</div></td>
               <td><span class="pill">\${escapeHtml(alert.status)}</span></td>
-              <td>\${alert.status === "active" ? '<button class="button" data-run-report-alert-id="' + escapeHtml(alert.id) + '">Run</button> <button class="button" data-disable-report-alert-id="' + escapeHtml(alert.id) + '">Disable</button>' : ""}</td>
+              <td>\${alert.status === "active" ? reportAlertActions(alert) : ""}</td>
             </tr>\`).join("")}</tbody>
         </table>\` : '<div class="empty">No report alerts yet.</div>';
         const deliveryTable = deliveries.length ? '<div class="panel-header"><div class="panel-title">Report alert deliveries</div></div>' + reportTable(["Alert", "Metric", "Value", "Status", "Code"], deliveries.slice(0, 8).map((delivery) => [delivery.alert_name, reportAlertMetricLabel(delivery.metric), delivery.value ?? "", delivery.status, delivery.status_code || delivery.error || ""])) : "";
@@ -2083,6 +2083,15 @@ Content-Type: application/json
         }[metric] || metric;
       }
 
+      function reportAlertActions(alert) {
+        return [
+          '<button class="button" data-run-report-alert-id="' + escapeHtml(alert.id) + '">Run</button>',
+          '<button class="button" data-acknowledge-report-alert-id="' + escapeHtml(alert.id) + '">Acknowledge</button>',
+          '<button class="button" data-resolve-report-alert-id="' + escapeHtml(alert.id) + '">Resolve</button>',
+          '<button class="button" data-disable-report-alert-id="' + escapeHtml(alert.id) + '">Disable</button>',
+        ].join(" ");
+      }
+
       function reportAlertDestination(alert) {
         if (alert.integration_id) {
           const integration = (state.integrations?.integrations || []).find((item) => item.id === alert.integration_id);
@@ -2094,6 +2103,8 @@ Content-Type: application/json
       function reportAlertPreferenceLabel(alert) {
         const parts = [];
         if (alert.last_value !== null && alert.last_value !== undefined) parts.push("Last value " + alert.last_value);
+        if (alert.acknowledged_at) parts.push("acknowledged " + formatDateTime(alert.acknowledged_at));
+        if (alert.resolved_at) parts.push("resolved " + formatDateTime(alert.resolved_at));
         if (alert.owner_label) parts.push("owner " + alert.owner_label);
         if (alert.runbook_url || alert.runbook_note) parts.push("runbook");
         if (Number(alert.repeat_interval_hours || 0) > 0) parts.push("repeat after " + alert.repeat_interval_hours + "h");
@@ -3160,6 +3171,18 @@ Content-Type: application/json
         document.querySelectorAll("[data-run-report-alert-id]").forEach((node) => node.addEventListener("click", async () => {
           const result = await api("report-alerts/" + encodeURIComponent(node.dataset.runReportAlertId) + "/run", { method: "POST", body: "{}" });
           notice(result.evaluation?.triggered ? "Report alert triggered." : "Report alert did not trigger.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-acknowledge-report-alert-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("report-alerts/" + encodeURIComponent(node.dataset.acknowledgeReportAlertId) + "/acknowledge", { method: "POST", body: "{}" });
+          notice("Report alert acknowledged.");
+          await refresh();
+        }));
+
+        document.querySelectorAll("[data-resolve-report-alert-id]").forEach((node) => node.addEventListener("click", async () => {
+          await api("report-alerts/" + encodeURIComponent(node.dataset.resolveReportAlertId) + "/resolve", { method: "POST", body: "{}" });
+          notice("Report alert resolved.");
           await refresh();
         }));
 

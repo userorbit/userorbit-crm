@@ -332,6 +332,16 @@ async function routeApi(request, env, url, auth) {
     return json(await runReportAlert(env, path.split("/")[1], workspaceId, auth), 201);
   }
 
+  if (request.method === "POST" && path.startsWith("report-alerts/") && path.endsWith("/acknowledge")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await acknowledgeReportAlert(env, path.split("/")[1], workspaceId, auth));
+  }
+
+  if (request.method === "POST" && path.startsWith("report-alerts/") && path.endsWith("/resolve")) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await resolveReportAlert(env, path.split("/")[1], workspaceId, auth));
+  }
+
   if (request.method === "DELETE" && path.startsWith("webhooks/")) {
     return json(await disableWebhook(env, path.split("/")[1], workspaceId, auth));
   }
@@ -2173,6 +2183,36 @@ async function disableReportAlert(env, id, workspaceId, auth) {
   await env.DB.prepare("UPDATE report_alerts SET status = 'disabled', updated_at = ? WHERE id = ? AND workspace_id = ?").bind(now, id, workspaceId).run();
   await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "report_alert.disable", resource: "report_alert", resourceId: id, metadata: { name: alert.name, metric: alert.metric } });
   return { ok: true };
+}
+
+async function acknowledgeReportAlert(env, id, workspaceId, auth) {
+  const alert = await getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE report_alerts SET acknowledged_by_user_id = ?, acknowledged_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
+    .bind(auth.user.id, now, now, id, workspaceId)
+    .run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "report_alert.acknowledge", resource: "report_alert", resourceId: id, metadata: { name: alert.name, metric: alert.metric, lastState: alert.last_state } });
+  return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, workspaceId);
+}
+
+async function resolveReportAlert(env, id, workspaceId, auth) {
+  const alert = await getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ? AND status = 'active'", id, workspaceId);
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    UPDATE report_alerts
+    SET last_state = 'ok',
+        consecutive_triggered_runs = 0,
+        last_escalated_at = NULL,
+        last_second_escalated_at = NULL,
+        acknowledged_by_user_id = NULL,
+        acknowledged_at = NULL,
+        resolved_by_user_id = ?,
+        resolved_at = ?,
+        updated_at = ?
+    WHERE id = ? AND workspace_id = ?
+  `).bind(auth.user.id, now, now, id, workspaceId).run();
+  await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "report_alert.resolve", resource: "report_alert", resourceId: id, metadata: { name: alert.name, metric: alert.metric, previousState: alert.last_state, previousRuns: Number(alert.consecutive_triggered_runs || 0) } });
+  return getRequired(env, "SELECT * FROM report_alerts WHERE id = ? AND workspace_id = ?", id, workspaceId);
 }
 
 async function runReportAlert(env, id, workspaceId, auth = null) {

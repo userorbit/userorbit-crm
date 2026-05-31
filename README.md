@@ -614,6 +614,8 @@ curl -X POST http://localhost:8787/api/report-alerts \
 
 Report alerts evaluate daily, weekly, or monthly against report metrics and deliver only when the rule triggers and the creating user's notification preferences allow the event. Use `deliveryUrl` for a direct webhook, or `integrationId` to send through an active native integration. Set `ownerLabel`, `runbookUrl`, and `runbookNote` to include accountable owner and response instructions in alert payloads. Set `repeatIntervalHours` to suppress repeated notifications while a metric remains in breach, and set `notifyOnRecovery` to send a recovery notification when the metric returns to normal. Set `escalationAfterRuns` for the first escalation and `secondEscalationAfterRuns` for a second escalation after the alert remains triggered for more evaluations; each step can use its own webhook or native integration destination. Supported metrics are `open_pipeline_cents`, `weighted_forecast_cents`, `overdue_tasks`, `stalled_opportunities`, and `emails_failed`; supported operators are `gt`, `gte`, `lt`, `lte`, and `eq`. Run an alert immediately with `POST /api/report-alerts/<alert_id>/run`.
 
+Active alert incidents can be acknowledged with `POST /api/report-alerts/<alert_id>/acknowledge` and resolved with `POST /api/report-alerts/<alert_id>/resolve`. Resolving clears the current incident counters and escalation timestamps so a future breach can notify and escalate again.
+
 ### Import accounts
 
 ```sh

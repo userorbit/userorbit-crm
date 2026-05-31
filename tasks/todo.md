@@ -78,6 +78,7 @@
 - [x] Add one-time escalation policies for report alerts.
 - [x] Add report alert owner and runbook context.
 - [x] Add two-step escalation policies for report alerts.
+- [x] Add report alert acknowledge and resolve controls.
 - [x] Add revocable read-only dashboard share links.
 - [x] Add iframe-friendly embedded dashboard share controls.
 - [x] Add workspace email template management.
@@ -206,3 +207,5 @@ Added sequence step template assignment controls: owners/admins can assign appro
 Added report alert owner and runbook context: report alerts now store owner labels, runbook URLs, and runbook notes, show that context in Settings, and include it in triggered/recovered/escalated alert payloads. Verified local migration, syntax checks, live alert creation/run delivery to a capture endpoint, payload owner/runbook fields, and Settings markup.
 
 Added two-step report alert escalation policies: admins can configure a second escalation threshold plus webhook/native integration destination, and each escalation step fires once per triggered incident before recovery resets the incident. Verified local migration, syntax checks, Settings markup, first-run primary plus first escalation delivery, and second-run primary plus second escalation delivery.
+
+Added report alert acknowledge and resolve controls: members can acknowledge active alert incidents and resolve them after remediation, with resolve clearing triggered state, run counters, acknowledgement, and escalation timestamps so future breaches can notify again. Verified local migration, syntax checks, live trigger/acknowledge/resolve API flow, reset state, and Settings markup.
