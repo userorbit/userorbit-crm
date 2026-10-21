@@ -243,3 +243,16 @@ Implemented all twelve additions across six isolated feature chats and integrate
 User explicitly selected migration of existing records before domain switch. No domain change until reconciliation and authentication/access checks pass.
 
 Migration validation: full PostgreSQL backup restored locally (57 tables, 8,307 rows, every value, 27 triggers; zero mismatches). Staging native counts 594/1,068/119/393; 8,251 business history records and 14 attachments reconcile exactly. All seven users and all 28 private-mailbox combinations pass API access checks. Browser confirms IC dashboard, manager account pages 1–100 and 101–171, and authorized history. 135 Bun tests/772 assertions plus four importer regressions pass. Original workflows retained separately; this is not full source-feature parity or ongoing synchronization.
+
+## Apollo interface rebuild
+
+- [x] Capture live Apollo shell, table, tabs, form, dropdown and empty-state references.
+- [x] Implement shared tokens, typography, icons, navigation, custom controls and responsive shell.
+- [x] Rebuild every core CRM view, including reports, settings and record detail.
+- [x] Apply the same system to all assistant views, history and authentication.
+- [x] Browser-check every page with populated/empty data, custom dropdowns, dates, keyboard and narrow layouts.
+- [ ] Run existing regression suite/build; merge, deploy and verify live pages.
+
+Visual bar: compact Apollo layout and controls; no exposed native select/date/checkbox styling. Preserve all current data, API contracts, permissions and interactions.
+
+Apollo review: all 14 core views, 9 assistant sections, 9 settings categories, sign-in, migrated history and public surfaces checked against live Apollo. Desktop1512 and phone390 layouts verified; all main pages have zero horizontal page overflow and no visible native select/date inputs. Custom menus, keyboard Escape priority, calendar/time, sidebar collapse, local company/task submissions and founder/manager/IC/viewer access checked. Existing 141 Bun tests (826 assertions) and 4 importer tests pass. Migrated encoded account/contact/task paths fixed without changing workspace checks.
