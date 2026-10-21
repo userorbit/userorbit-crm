@@ -4,6 +4,7 @@ import { assistantHtml } from "./assistant/ui.js";
 import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
 import { readBody } from "./assistant/shared.js";
+import { isLegacyPasswordHash, verifyLegacyPassword } from "./legacy-password.js";
 
 const assistantHelpers = configureAssistantHelpers({
   json, readJson: readBody, httpError, requireAuth, resolveWorkspaceId, requireWorkspaceRole,
@@ -5807,6 +5808,11 @@ async function loginWithPassword(env, input) {
   if (!user?.password_hash || !(await verifyPassword(input.password, user.password_hash))) {
     throw httpError(401, "Invalid email or password");
   }
+  if (isLegacyPasswordHash(user.password_hash)) {
+    const upgradedHash = await hashPassword(input.password);
+    await env.DB.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash = ?")
+      .bind(upgradedHash, new Date().toISOString(), user.id, user.password_hash).run();
+  }
   return createUserSession(env, user);
 }
 
@@ -7817,6 +7823,7 @@ async function hashPassword(password) {
 }
 
 async function verifyPassword(password, encoded) {
+  if (isLegacyPasswordHash(encoded)) return verifyLegacyPassword(password, encoded);
   const [scheme, iterationsText, saltText, keyText] = String(encoded || "").split("$");
   if (scheme !== "pbkdf2_sha256") return false;
   const iterations = Number(iterationsText);
