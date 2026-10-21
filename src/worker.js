@@ -2706,6 +2706,10 @@ async function getCustomFieldBreakdowns(env, workspaceId, auth = null) {
 }
 
 async function listAccounts(env, url, workspaceId, auth) {
+  const pageLimit = Number(url.searchParams.get("limit") || 100);
+  const pageOffset = Number(url.searchParams.get("offset") || 0);
+  const limit = Number.isFinite(pageLimit) ? Math.max(1, Math.min(100, Math.floor(pageLimit))) : 100;
+  const offset = Number.isFinite(pageOffset) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(pageOffset))) : 0;
   const filters = await resolveAccountFilters(env, url, workspaceId, auth);
   await assertReadableCustomFieldFilters(env, workspaceId, filters.customFields || {}, auth);
   const search = `%${filters.q || ""}%`;
@@ -2750,10 +2754,10 @@ async function listAccounts(env, url, workspaceId, auth) {
     LEFT JOIN email_events e ON e.account_id = a.id
     ${where}
     GROUP BY a.id
-    ORDER BY a.updated_at DESC
-    LIMIT 100
+    ORDER BY a.updated_at DESC, a.id ASC
+    LIMIT ? OFFSET ?
   `)
-    .bind(...params)
+    .bind(...params, limit, offset)
     .all();
 
   return rows.results;
