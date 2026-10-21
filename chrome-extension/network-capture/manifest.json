@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Userorbit Profile Capture",
+  "version": "1.0.0",
+  "description": "Explicitly save a reviewed LinkedIn profile to your Userorbit network review queue.",
+  "permissions": ["activeTab"],
+  "optional_host_permissions": ["https://*/*"],
+  "action": { "default_title": "Capture profile to Userorbit", "default_popup": "popup.html" }
+}
