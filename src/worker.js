@@ -1,6 +1,7 @@
 import { connect } from "cloudflare:sockets";
 import { appHtml, landingHtml } from "./ui.js";
 import { interFontBase64 } from "./inter-font.js";
+import { designSystemCss, icon } from "./design-system.js";
 import { assistantHtml } from "./assistant/ui.js";
 import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
@@ -104,7 +105,8 @@ export default {
       }
 
       if (url.pathname === "/app") {
-        return new Response(appHtml, { headers: { "content-type": "text/html; charset=utf-8" } });
+        const oauthLinkState = ["OAUTH_AUTHORIZATION_URL", "OAUTH_TOKEN_URL", "OAUTH_USERINFO_URL", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET"].every((key) => cleanNullable(env[key])) ? "" : "hidden";
+        return new Response(appHtml.replaceAll("__CRM_OAUTH_LINK_STATE__", oauthLinkState), { headers: { "content-type": "text/html; charset=utf-8" } });
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/t/open/")) {
@@ -174,7 +176,16 @@ export default {
 };
 
 async function routeApi(request, env, url, auth) {
-  const path = url.pathname.replace(/^\/api\/?/, "");
+  let path;
+  try {
+    path = url.pathname.replace(/^\/api\/?/, "").split("/").map((segment) => {
+      const decoded = decodeURIComponent(segment);
+      if (decoded.includes("/") || decoded.includes("\\")) throw new Error("Invalid path segment");
+      return decoded;
+    }).join("/");
+  } catch {
+    throw httpError(400, "Invalid API path");
+  }
   const workspaceId = await resolveWorkspaceId(env, request, auth);
   request = await enforceMigrationPolicy(request, env, path, workspaceId, auth);
 
@@ -8069,42 +8080,74 @@ function oauthSuccessHtml(token) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>Signed in</title></head><body><script>localStorage.setItem("crmApiToken", "${escaped}"); location.replace("/app");</script><p>Signed in. Redirecting...</p></body></html>`;
 }
 
+function publicPageHead(title) {
+  return `<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtmlText(title)}</title>
+  <style>${designSystemCss}
+    .public-site-header { display:flex; align-items:center; height:56px; padding:0 24px; border-bottom:1px solid var(--border-primary); }
+    .public-brand { display:inline-flex; align-items:center; gap:9px; font-size:14px; font-weight:500; color:var(--text-primary); }
+    .public-form-main { width:min(100%,560px); margin:56px auto; padding:0 24px; }
+    .public-page-heading { margin:0 0 24px; font-size:24px; line-height:32px; font-weight:500; letter-spacing:-.5px; overflow-wrap:anywhere; }
+    .public-form { display:grid; gap:18px; padding:24px; border:1px solid var(--border-primary); border-radius:10px; background:var(--bg-primary); }
+    .public-form label { display:grid; gap:7px; }
+    .public-form textarea { min-height:110px; }
+    .public-form .button { justify-self:start; margin-top:2px; min-width:92px; }
+    .public-state { display:flex; flex-direction:column; align-items:center; padding:40px 24px; border:1px solid var(--border-primary); border-radius:10px; background:var(--bg-primary); text-align:center; }
+    .public-state-symbol { display:grid; place-items:center; width:48px; height:48px; margin-bottom:20px; border:1px solid var(--border-primary); border-radius:12px; background:var(--bg-tertiary); color:var(--text-secondary); }
+    .public-state-symbol.success { color:var(--green); background:color-mix(in srgb,var(--green) 10%,transparent); }
+    .public-state h1 { margin:0 0 10px; font-size:22px; line-height:30px; font-weight:500; letter-spacing:-.4px; }
+    .public-state p { max-width:360px; margin:0; color:var(--text-tertiary); font-size:13px; line-height:22px; }
+    .public-dashboard-main { width:100%; max-width:1120px; margin:0 auto; padding:32px 24px 48px; }
+    .public-dashboard-heading { margin-bottom:24px; }
+    .public-dashboard-heading h1 { margin:0 0 8px; font-size:24px; line-height:32px; font-weight:500; letter-spacing:-.5px; overflow-wrap:anywhere; }
+    .public-dashboard-subtitle { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--text-tertiary); font-size:12px; }
+    .public-dashboard-main section { margin-top:20px; border:1px solid var(--border-primary); border-radius:10px; overflow:hidden; background:var(--bg-primary); }
+    .public-dashboard-main section h2 { display:flex; align-items:center; gap:8px; margin:0; padding:15px 18px; border-bottom:1px solid var(--border-primary); font-size:14px; font-weight:500; line-height:20px; }
+    .public-dashboard-main section h2 .ds-icon { color:var(--text-tertiary); }
+    .public-dashboard-main section.metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:0; padding:0; border:0; border-radius:0; overflow:visible; background:none; }
+    .public-dashboard-main .card { min-width:0; padding:18px; border:1px solid var(--border-primary); border-radius:9px; background:var(--bg-primary); }
+    .public-dashboard-main .card span { display:block; color:var(--text-tertiary); font-size:12px; font-weight:400; }
+    .public-dashboard-main .card strong { display:block; margin-top:10px; font-size:26px; line-height:34px; font-weight:500; overflow-wrap:anywhere; }
+    .public-dashboard-main .table-scroll { overflow-x:auto; }
+    .public-dashboard-main table { width:100%; min-width:420px; border-collapse:collapse; font-size:13px; }
+    .public-dashboard-main th,.public-dashboard-main td { padding:12px 18px; border-bottom:1px solid var(--border-secondary); text-align:left; vertical-align:top; }
+    .public-dashboard-main th { color:var(--text-tertiary); background:var(--bg-secondary); font-size:11px; font-weight:500; white-space:nowrap; }
+    .public-dashboard-main td { color:var(--text-secondary); }
+    .public-dashboard-main tr:last-child td { border-bottom:0; }
+    .public-dashboard-main tbody tr:hover { background:var(--bg-tertiary); }
+    .public-dashboard-main .empty { display:flex; align-items:center; justify-content:center; gap:9px; min-height:150px; padding:24px; color:var(--text-tertiary); font-size:13px; }
+    .public-dashboard-main.embedded { max-width:none; padding:16px; }
+    .public-dashboard-main.embedded .public-dashboard-heading { margin-bottom:18px; }
+    .public-dashboard-main.embedded .public-dashboard-heading h1 { font-size:20px; line-height:28px; }
+    @media(max-width:560px) { .public-site-header { padding:0 16px; } .public-form-main { margin:32px auto; padding:0 16px; } .public-form { padding:20px; } .public-dashboard-main { padding:24px 16px 32px; } .public-dashboard-main section.metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .public-dashboard-main .card { padding:14px; } .public-dashboard-main .card strong { font-size:22px; line-height:30px; } }
+  </style>`;
+}
+
+function publicSiteHeader() {
+  return `<header class="public-site-header"><span class="public-brand">${icon("orbit", 24)}<span>Userorbit</span></span></header>`;
+}
+
 function leadFormNotFoundHtml() {
-  return "<!doctype html><html><head><meta charset=\"utf-8\"><title>Lead form not found</title></head><body><h1>Lead form not found</h1></body></html>";
+  return `<!doctype html><html lang="en"><head>${publicPageHead("Lead form not found")}</head><body>${publicSiteHeader()}<main class="public-form-main"><section class="public-state"><span class="public-state-symbol">${icon("search", 24)}</span><h1>Lead form not found</h1><p>This form is unavailable. Check the link or contact the person who shared it.</p></section></main></body></html>`;
 }
 
 function publicLeadFormHtml(form) {
   const title = escapeHtmlText(form.name);
   return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${title}</title>
-  <style>
-    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f4ef; color: #1f2933; }
-    main { max-width: 560px; margin: 8vh auto; padding: 24px; }
-    form { display: grid; gap: 14px; background: #fff; border: 1px solid #d9d5ca; border-radius: 8px; padding: 24px; }
-    h1 { margin: 0 0 18px; font-size: 30px; }
-    label { display: grid; gap: 6px; font-size: 14px; font-weight: 650; }
-    input, textarea { box-sizing: border-box; width: 100%; border: 1px solid #c7c1b5; border-radius: 6px; padding: 11px 12px; font: inherit; }
-    textarea { min-height: 110px; resize: vertical; }
-    button { border: 0; border-radius: 6px; padding: 12px 14px; background: #0f766e; color: #fff; font: inherit; font-weight: 750; cursor: pointer; }
-    .hidden { display: none; }
-  </style>
-</head>
+<html lang="en">
+<head>${publicPageHead(form.name)}</head>
 <body>
-  <main>
-    <h1>${title}</h1>
-    <form method="post">
+  ${publicSiteHeader()}
+  <main class="public-form-main">
+    <h1 class="public-page-heading">${title}</h1>
+    <form class="public-form" method="post">
       <label>Company<input name="company" required autocomplete="organization" /></label>
       <label>Domain<input name="domain" placeholder="example.com" /></label>
       <label>Your name<input name="contactName" required autocomplete="name" /></label>
       <label>Email<input name="email" type="email" required autocomplete="email" /></label>
       <label>Title<input name="title" autocomplete="organization-title" /></label>
       <label>Message<textarea name="message"></textarea></label>
-      <label class="hidden">Website<input name="website" tabindex="-1" autocomplete="off" /></label>
-      <button>Submit</button>
+      <label hidden>Website<input name="website" tabindex="-1" autocomplete="off" /></label>
+      <button class="button primary" type="submit">Submit ${icon("arrow-right", 15)}</button>
     </form>
   </main>
 </body>
@@ -8135,59 +8178,38 @@ function publicDashboardShareHtml(share, workspace, summary, reports, options = 
     ["Open tasks", summary.dueTasks || 0],
     ["Open pipeline", formatCents(summary.openPipelineCents || 0)],
   ];
-  const table = (headers, rows) => rows.length ? `<table><thead><tr>${headers.map((header) => `<th>${escapeHtmlText(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtmlText(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>` : '<div class="empty">No data yet.</div>';
+  const table = (headers, rows) => rows.length ? `<div class="table-scroll"><table><thead><tr>${headers.map((header) => `<th>${escapeHtmlText(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtmlText(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">${icon("chart", 18)}<span>No data yet.</span></div>`;
   const panels = [];
   if (widgets.includes("metrics")) {
     panels.push(`<section class="metrics">${metricCards.map(([label, value]) => `<div class="card"><span>${escapeHtmlText(label)}</span><strong>${escapeHtmlText(value)}</strong></div>`).join("")}</section>`);
   }
   if (widgets.includes("pipeline")) {
-    panels.push(`<section><h2>Pipeline health</h2>${table(["Stage", "Deals", "Value"], (reports.pipeline || []).map((row) => [row.stage_label || row.stage, row.opportunities, formatCents(row.value_cents || 0)]))}</section>`);
+    panels.push(`<section><h2>${icon("chart")}Pipeline health</h2>${table(["Stage", "Deals", "Value"], (reports.pipeline || []).map((row) => [row.stage_label || row.stage, row.opportunities, formatCents(row.value_cents || 0)]))}</section>`);
   }
   if (widgets.includes("sequence_performance")) {
-    panels.push(`<section><h2>Sequence performance</h2>${table(["Sequence", "Sent", "Opened", "Clicked"], (reports.sequencePerformance || []).map((row) => [row.name, row.sent || 0, row.opened || 0, row.clicked || 0]))}</section>`);
+    panels.push(`<section><h2>${icon("mail")}Sequence performance</h2>${table(["Sequence", "Sent", "Opened", "Clicked"], (reports.sequencePerformance || []).map((row) => [row.name, row.sent || 0, row.opened || 0, row.clicked || 0]))}</section>`);
   }
   if (widgets.includes("stalled_opportunities")) {
-    panels.push(`<section><h2>Stalled opportunities</h2>${table(["Opportunity", "Stage", "Last activity"], (reports.stalledOpportunities || []).slice(0, 10).map((row) => [row.name, row.stage, row.last_activity_at || "No activity"]))}</section>`);
+    panels.push(`<section><h2>${icon("clock")}Stalled opportunities</h2>${table(["Opportunity", "Stage", "Last activity"], (reports.stalledOpportunities || []).slice(0, 10).map((row) => [row.name, row.stage, row.last_activity_at || "No activity"]))}</section>`);
   }
   return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtmlText(share.name)} - UserOrbit CRM</title>
-  <style>
-    body { margin:0; background:${embedded ? "#fff" : "#f7f7f5"}; color:#1f2328; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    main { max-width:${embedded ? "100%" : "1120px"}; margin:0 auto; padding:${embedded ? "16px" : "32px 20px 48px"}; box-sizing:border-box; }
-    header { margin-bottom:${embedded ? "14px" : "22px"}; }
-    h1 { margin:0; font-size:${embedded ? "20px" : "30px"}; line-height:${embedded ? "28px" : "38px"}; letter-spacing:0; }
-    h2 { margin:0 0 14px; font-size:16px; line-height:24px; }
-    .subtitle { color:#667085; margin-top:6px; font-size:14px; }
-    .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
-    .card, section { background:#fff; border:1px solid #deded8; border-radius:8px; padding:${embedded ? "12px" : "16px"}; box-shadow:${embedded ? "none" : "0 1px 1px rgba(16,24,40,.03)"}; }
-    .card span { display:block; color:#667085; font-size:12px; font-weight:700; }
-    .card strong { display:block; margin-top:8px; font-size:24px; }
-    section { margin-top:16px; overflow:auto; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th, td { padding:9px 8px; border-bottom:1px solid #ecece7; text-align:left; vertical-align:top; }
-    th { color:#667085; font-size:12px; }
-    .empty { color:#667085; font-size:14px; }
-  </style>
-</head>
+<html lang="en">
+<head>${publicPageHead(`${share.name} - UserOrbit CRM`)}</head>
 <body>
-  <main>
-    <header>
+  ${embedded ? "" : publicSiteHeader()}
+  <main class="public-dashboard-main${embedded ? " embedded" : ""}">
+    <header class="public-dashboard-heading">
       <h1>${escapeHtmlText(share.name)}</h1>
-      <div class="subtitle">${escapeHtmlText(workspace.team_name)} / ${escapeHtmlText(workspace.name)} · ${embedded ? "Embedded dashboard" : "Shared dashboard"} · ${escapeHtmlText(new Date().toISOString().slice(0, 10))}</div>
+      <div class="public-dashboard-subtitle"><span>${escapeHtmlText(workspace.team_name)} / ${escapeHtmlText(workspace.name)}</span><span class="pill">${embedded ? "Embedded dashboard" : "Shared dashboard"}</span><span>${escapeHtmlText(new Date().toISOString().slice(0, 10))}</span></div>
     </header>
-    ${panels.join("") || '<section><div class="empty">No widgets selected.</div></section>'}
+    ${panels.join("") || `<section><div class="empty">${icon("chart", 18)}<span>No widgets selected.</span></div></section>`}
   </main>
 </body>
 </html>`;
 }
 
 function leadFormSuccessHtml(form) {
-  const title = escapeHtmlText(form.name);
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>body{font-family:Inter,ui-sans-serif,system-ui;margin:0;background:#f6f4ef;color:#1f2933}main{max-width:560px;margin:10vh auto;padding:24px}section{background:#fff;border:1px solid #d9d5ca;border-radius:8px;padding:24px}h1{margin-top:0}</style></head><body><main><section><h1>Thanks</h1><p>Your details were sent.</p></section></main></body></html>`;
+  return `<!doctype html><html lang="en"><head>${publicPageHead(form.name)}</head><body>${publicSiteHeader()}<main class="public-form-main"><section class="public-state"><span class="public-state-symbol success">${icon("check", 24)}</span><h1>Thanks</h1><p>Your details were sent.</p></section></main></body></html>`;
 }
 
 function safeTrackingRedirect(value) {
