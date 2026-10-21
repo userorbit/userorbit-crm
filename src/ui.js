@@ -1,3 +1,4 @@
+import { faviconHead } from "./brand-assets.js";
 import { designSystemCss, icon } from "./design-system.js";
 import { uiControlsCss, uiControlsScript } from "./ui-controls.js";
 import { crmUiCss } from "./crm-ui-styles.js";
@@ -11,7 +12,7 @@ export const landingHtml = String.raw`<!doctype html>
     <style>${designSystemCss}
 .hero{min-height:100dvh;padding:32px;background:var(--bg-main)}.wrap{max-width:1120px;margin:0 auto}nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:100px}.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:500}.mark{display:none}h1{font-size:clamp(38px,6vw,72px);line-height:1.08;font-weight:500;letter-spacing:-2px;max-width:780px}p{max-width:690px;color:var(--text-tertiary);font-size:18px;line-height:1.6}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:32px}.actions .button{min-height:40px;padding:8px 16px}.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:80px}.item{border:1px solid var(--border-primary);border-radius:10px;padding:20px;background:var(--bg-primary)}.item strong{display:block;font-size:14px;font-weight:500;margin-bottom:10px}.item span{font-size:12px;line-height:20px;color:var(--text-tertiary)}@media(max-width:720px){.hero{padding:24px}.strip{grid-template-columns:1fr 1fr;margin-top:48px}nav{margin-bottom:64px}h1{letter-spacing:-1px}.item{padding:16px}}
     </style>
-  </head>
+  ${faviconHead}</head>
   <body>
     <section class="hero">
       <div class="wrap">
@@ -47,7 +48,7 @@ export const appHtml = String.raw`<!doctype html>
     <style>${designSystemCss}
 ${uiControlsCss}
 ${crmUiCss}</style>
-  </head>
+  ${faviconHead}</head>
   <body>
     <div id="auth" class="auth" hidden>
       <form id="loginForm" class="auth-card">

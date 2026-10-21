@@ -1,3 +1,4 @@
+import { brandAssetResponse, faviconHead } from "./brand-assets.js";
 import { connect } from "cloudflare:sockets";
 import { appHtml, landingHtml } from "./ui.js";
 import { interFontBase64 } from "./inter-font.js";
@@ -73,6 +74,10 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (request.method === "GET" || request.method === "HEAD") {
+        const asset = brandAssetResponse(url.pathname);
+        if (asset) return request.method === "HEAD" ? new Response(null, { headers: asset.headers }) : asset;
+      }
       if (request.method === "GET" && url.pathname === "/assets/inter-variable-693b77d4.woff2") {
         interFontBytes ||= Uint8Array.from(atob(interFontBase64), (character) => character.charCodeAt(0));
         return new Response(interFontBytes, {
@@ -8078,11 +8083,11 @@ function htmlResponse(body, status = 200) {
 
 function oauthSuccessHtml(token) {
   const escaped = escapeHtmlText(token);
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Signed in</title></head><body><script>localStorage.setItem("crmApiToken", "${escaped}"); location.replace("/app");</script><p>Signed in. Redirecting...</p></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Signed in</title>${faviconHead}</head><body><script>localStorage.setItem("crmApiToken", "${escaped}"); location.replace("/app");</script><p>Signed in. Redirecting...</p></body></html>`;
 }
 
 function publicPageHead(title) {
-  return `<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtmlText(title)}</title>
+  return `<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtmlText(title)}</title>${faviconHead}
   <style>${designSystemCss}
     .public-site-header { display:flex; align-items:center; height:56px; padding:0 24px; border-bottom:1px solid var(--border-primary); }
     .public-brand { display:inline-flex; align-items:center; gap:9px; font-size:14px; font-weight:500; color:var(--text-primary); }
