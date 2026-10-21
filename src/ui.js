@@ -63,7 +63,7 @@ ${crmUiCss}</style>
       </form>
     </div>
     <div id="appShell" class="shell" hidden>
-      <aside class="sidebar"><div class="brand">${icon("orbit",24)}<span>Userorbit</span><button id="collapseSidebar" class="icon-button collapse-sidebar" aria-label="Collapse sidebar">${icon("menu")}</button></div><nav class="nav" aria-label="Main navigation"><button data-view="dashboard">${icon("home")}<span>Home</span></button><a href="/assistant">${icon("bot")}<span>AI Assistant</span></a><div class="nav-group-label">${icon("search")}<span>Prospect</span>${icon("chevron-down")}</div><button data-view="accounts">${icon("building")}<span>Companies</span></button><div class="nav-group-label">${icon("mail")}<span>Engage</span>${icon("chevron-down")}</div><button data-view="sequences">${icon("mail")}<span>Sequences</span></button><button data-view="communications">${icon("phone")}<span>Conversations</span></button><button data-view="tasks">${icon("check")}<span>Tasks</span></button><button data-view="warmup">${icon("shield")}<span>Email health</span></button><div class="nav-group-label">${icon("chart")}<span>Win deals</span>${icon("chevron-down")}</div><button data-view="pipeline">${icon("chart")}<span>Deals</span></button><button data-view="calendar">${icon("calendar")}<span>Meetings</span></button><div class="nav-group-label">${icon("list")}<span>Tools</span>${icon("chevron-down")}</div><button data-view="reports">${icon("chart")}<span>Analytics</span></button><button data-view="forms">${icon("list")}<span>Forms</span></button><button data-view="api">${icon("network")}<span>Developer API</span></button><a href="/migration-history">${icon("clock")}<span>Migrated history</span></a><div class="nav-footer"><button data-view="settings">${icon("settings")}<span>Settings</span></button><a href="https://gtm.userorb.com" target="_blank" rel="noopener noreferrer">${icon("external")}<span>Original CRM</span></a></div></nav></aside><div class="workspace-main"><header class="app-topbar"><button id="mobileMenu" class="icon-button mobile-menu" aria-label="Open navigation">${icon("menu")}</button><div class="workspace-switcher"><label><span class="visually-hidden">Workspace</span><select id="workspaceSelect"></select></label></div><form class="global-search" id="globalSearchForm" role="search">${icon("search")}<input id="globalSearchInput" aria-label="Search companies" placeholder="Search companies" autocomplete="off"><kbd>⌘ K</kbd></form><a class="button topbar-assistant" href="/assistant">${icon("bot")}<span>AI Assistant</span></a><button id="themeButton" class="icon-button" aria-label="Switch appearance"></button><button id="profileButton" class="icon-button" aria-label="Your profile"><span id="profileAvatar" class="avatar">U</span></button></header><main><div id="message" class="message" role="status" aria-live="polite"></div><section id="view"></section></main></div></div>
+      <aside class="sidebar"><div class="brand">${icon("orbit",24)}<span>Userorbit</span><button id="collapseSidebar" class="icon-button collapse-sidebar" aria-label="Collapse sidebar">${icon("menu")}</button></div><nav class="nav" aria-label="Main navigation"><button data-view="dashboard">${icon("home")}<span>Home</span></button><a href="/assistant">${icon("bot")}<span>AI Assistant</span></a><div class="nav-group-label">${icon("search")}<span>Prospect</span>${icon("chevron-down")}</div><button data-view="accounts">${icon("building")}<span>Companies</span></button><div class="nav-group-label">${icon("mail")}<span>Engage</span>${icon("chevron-down")}</div><button data-view="sequences">${icon("mail")}<span>Sequences</span></button><a href="/assistant#inbox">${icon("mail")}<span>Inbox</span></a><button data-view="communications">${icon("phone")}<span>Conversations</span></button><button data-view="tasks">${icon("check")}<span>Tasks</span></button><button data-view="warmup">${icon("shield")}<span>Email health</span></button><div class="nav-group-label">${icon("chart")}<span>Win deals</span>${icon("chevron-down")}</div><button data-view="pipeline">${icon("chart")}<span>Deals</span></button><button data-view="calendar">${icon("calendar")}<span>Meetings</span></button><div class="nav-group-label">${icon("list")}<span>Tools</span>${icon("chevron-down")}</div><button data-view="reports">${icon("chart")}<span>Analytics</span></button><button data-view="forms">${icon("list")}<span>Forms</span></button><button data-view="api">${icon("network")}<span>Developer API</span></button><a href="/migration-history">${icon("clock")}<span>Migrated history</span></a><div class="nav-footer"><button data-view="settings">${icon("settings")}<span>Settings</span></button><a href="https://gtm.userorb.com" target="_blank" rel="noopener noreferrer">${icon("external")}<span>Original CRM</span></a></div></nav></aside><div class="workspace-main"><header class="app-topbar"><button id="mobileMenu" class="icon-button mobile-menu" aria-label="Open navigation">${icon("menu")}</button><div class="workspace-switcher"><label><span class="visually-hidden">Workspace</span><select id="workspaceSelect"></select></label></div><form class="global-search" id="globalSearchForm" role="search">${icon("search")}<input id="globalSearchInput" aria-label="Search companies" placeholder="Search companies" autocomplete="off"><kbd>⌘ K</kbd></form><a class="button topbar-assistant" href="/assistant">${icon("bot")}<span>AI Assistant</span></a><button id="themeButton" class="icon-button" aria-label="Switch appearance"></button><button id="profileButton" class="icon-button" aria-label="Your profile"><span id="profileAvatar" class="avatar">U</span></button></header><main><div id="message" class="message" role="status" aria-live="polite"></div><section id="view"></section></main></div></div>
     <script>${uiControlsScript}</script>
     <script>
       const uiIcons = ${JSON.stringify(Object.fromEntries(["home","search","building","users","list","mail","phone","check","calendar","chart","settings","chevron-down","chevron-right","plus","arrow-left","arrow-right","external","bot","book","network","clock","shield","upload","filter","close","menu","more","sun","moon","bell","help","logout","orbit"].map(name => [name,icon(name)])))};
@@ -120,7 +120,7 @@ ${crmUiCss}</style>
         reportAlerts: { alerts: [], deliveries: [] },
         dashboardShares: [],
         webhooks: { endpoints: [], deliveries: [] },
-        auditLogs: [],
+        auditLogs: [], outreachSuppressions: [], workspaceMembers: [],
         generatedToken: "",
         generatedInviteToken: "",
       };
@@ -215,7 +215,7 @@ ${crmUiCss}</style>
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
         const migratedContributor = tenant.workspaces.find((item) => item.id === state.workspaceId)?.migration_role === "ic";
-        const [summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
+        const [summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs, outreachSuppressions, workspaceMembers] = await Promise.all([
           api("summary"),
           api("next-best-actions"),
           api("accounts" + accountQuery),
@@ -252,13 +252,14 @@ ${crmUiCss}</style>
           canManage ? api("dashboard/shares") : Promise.resolve([]),
           canManage ? api("webhooks") : Promise.resolve({ endpoints: [], deliveries: [] }),
           canManage ? api("audit-logs") : Promise.resolve([]),
+          api("outreach-suppressions"), api("workspace-members"),
         ]);
         if (state.selectedReportViewId && !reportViews.some((view) => view.id === state.selectedReportViewId)) {
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
         state.noMoreTasks = false;
-        Object.assign(state, { tenant, summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
+        Object.assign(state, { tenant, summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs, outreachSuppressions, workspaceMembers });
         state.accountHasNext = accounts.length === 100 && (await api("accounts" + accountListQuery(state.accountOffset + 100, 1))).length > 0;
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
@@ -531,6 +532,14 @@ ${crmUiCss}</style>
               <div class="panel-header"><div class="panel-title">Timeline</div></div>
               \${timelineList(account.timeline)}
             </div>
+            <div class="panel"><div class="panel-header"><div class="panel-title">Qualification & next action</div></div>
+              <form id="accountExecutionForm" class="stack">
+                <label>Parent company<select name="parentAccountId"><option value="">No parent company</option>\${account.parent_account_id && !state.accounts.some(a=>a.id===account.parent_account_id) ? '<option value="'+escapeHtml(account.parent_account_id)+'" selected>Current parent company</option>' : ''}\${state.accounts.filter(a=>a.id!==account.id).map(a=>'<option value="'+escapeHtml(a.id)+'"'+(a.id===account.parent_account_id?' selected':'')+'>'+escapeHtml(a.name)+'</option>').join('')}</select></label>
+                <label>Qualification<textarea name="qualification">\${escapeHtml(account.qualification || '')}</textarea></label>
+                <label>Evidence<textarea name="evidence">\${escapeHtml(account.evidence || '')}</textarea></label>
+                <label>Next action<textarea name="nextAction">\${escapeHtml(account.next_action || '')}</textarea></label>
+                \${canWriteCurrentWorkspace() ? '<button class="button primary">Save qualification</button>' : ''}
+              </form></div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">AI insight</div><div class="toolbar"><button id="enrichAccount" class="button">Enrich</button><button id="researchAccount" class="button">Research site</button><button id="generateAccountInsight" class="button">Generate</button></div></div>
               \${aiInsightsPanel(account.aiInsights)}
@@ -613,6 +622,15 @@ ${crmUiCss}</style>
               <div class="panel-header"><div class="panel-title">Timeline</div></div>
               \${timelineList(contact.timeline)}
             </div>
+            <div class="panel"><div class="panel-header"><div class="panel-title">Relationship & next action</div></div>
+              <form id="contactExecutionForm" class="stack">
+                <label>Buyer role<input name="buyerRole" value="\${escapeHtml(contact.buyer_role || '')}" placeholder="Decision maker, champion, evaluator…" /></label>
+                <label>Relationship status<input name="relationshipStatus" value="\${escapeHtml(contact.relationship_status || '')}" placeholder="New connection, engaged, trusted…" /></label>
+                <label>Source<input name="source" value="\${escapeHtml(contact.source || '')}" /></label>
+                <label>Evidence<textarea name="evidence">\${escapeHtml(contact.evidence || '')}</textarea></label>
+                <label>Next action<textarea name="nextAction">\${escapeHtml(contact.next_action || '')}</textarea></label>
+                \${canWriteCurrentWorkspace() ? '<button class="button primary">Save relationship</button>' : ''}
+              </form></div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">AI insight</div><div class="toolbar"><button id="generateContactInsight" class="button">Generate</button><button id="generateEmailDraft" class="button">Draft email</button></div></div>
               \${aiInsightsPanel(contact.aiInsights)}
@@ -664,6 +682,7 @@ ${crmUiCss}</style>
             <strong style="display:block; margin-top:6px">\${escapeHtml(item.title)}</strong>
             <div class="subtitle">\${escapeHtml(item.detail || "")}</div>
             <div class="subtitle">\${escapeHtml(formatDateTime(item.happenedAt))}</div>
+            \${item.historyId ? '<button type="button" class="button" data-history-record="' + escapeHtml(item.historyId) + '">View original record</button>' : ""}
           </div>\`).join("") + '</div>';
       }
 
@@ -848,7 +867,7 @@ ${crmUiCss}</style>
         const filter = state.taskFilter || 'all';
         const tasks = state.tasks.filter(task => filter === 'all' || (filter === 'overdue' ? task.status !== 'done' && task.due_at && new Date(task.due_at) < new Date() : task.status === filter));
         return header("Tasks", "Stay on top of your follow-ups and daily work.") + \`
-          <div class="section-tabs" role="tablist" aria-label="Task status">\${[['all','All tasks'],['open','Open'],['done','Completed'],['overdue','Overdue']].map(([key,label]) => '<button role="tab" type="button" data-task-filter="' + key + '" aria-selected="' + (filter === key) + '">' + label + '</button>').join('')}</div>
+          <div class="section-tabs" role="tablist" aria-label="Task status">\${[['all','All tasks'],['open','Open'],['in_progress','In progress'],['blocked','Blocked'],['done','Completed'],['overdue','Overdue']].map(([key,label]) => '<button role="tab" type="button" data-task-filter="' + key + '" aria-selected="' + (filter === key) + '">' + label + '</button>').join('')}</div>
           <div class="columns">
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Your tasks <span class="pill">\${tasks.length}</span></div></div>
@@ -857,8 +876,14 @@ ${crmUiCss}</style>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">New task</div></div>
               <form id="taskForm" class="stack">
+                <input name="id" type="hidden" />
                 <label>Title<input name="title" required placeholder="Record Loom audit for Acme" /></label>
                 <label>Kind<select name="kind"><option>research</option><option>loom</option><option>follow-up</option><option>demo</option></select></label>
+                <label>Owner<select name="ownerUserId"><option value="">Unassigned</option>\${state.workspaceMembers.map(member => '<option value="'+escapeHtml(member.id)+'">'+escapeHtml(member.name || member.email)+'</option>').join('')}</select></label>
+                <label>Priority<select name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+                <label>Status<select name="status"><option value="open">Open</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="done">Completed</option></select></label>
+                <label>Blocked reason<textarea name="blockedReason" placeholder="What needs to happen before this can continue?"></textarea></label>
+                <label>Definition of done<textarea name="definitionOfDone" placeholder="Describe the expected result"></textarea></label>
                 <label>Due at<input name="dueAt" type="datetime-local" /></label>
                 <label>Account ID<input name="accountId" /></label>
                 <label>Notes<textarea name="notes"></textarea></label>
@@ -1127,12 +1152,13 @@ ${crmUiCss}</style>
 
       function taskList(tasks) {
         if (!tasks.length) return '<div class="empty">No tasks yet.</div>';
-        return \`<table><thead><tr><th>Task</th><th>Status</th><th>Due date</th><th>Complete</th></tr></thead><tbody>\${tasks.map((t) => \`
+        return \`<table><thead><tr><th>Task</th><th>Owner / priority</th><th>Status</th><th>Due date</th><th>Actions</th></tr></thead><tbody>\${tasks.map((t) => \`
           <tr>
             <td><strong>\${escapeHtml(t.title)}</strong><div class="subtitle">\${escapeHtml(t.account_name || t.kind || "")}</div></td>
-            <td><span class="pill">\${escapeHtml(t.status)}</span></td>
+            <td>\${escapeHtml(t.owner_name || "Unassigned")}<div class="subtitle">\${escapeHtml(t.priority || "normal")}</div></td>
+            <td><span class="pill">\${escapeHtml(({open:"Open",in_progress:"In progress",blocked:"Blocked",done:"Completed"})[t.status] || t.status)}</span>\${t.blocked_reason ? '<div class="subtitle">'+escapeHtml(t.blocked_reason)+'</div>' : ''}</td>
             <td>\${escapeHtml(t.due_at ? formatDateTime(t.due_at) : "No due date")}</td>
-            <td>\${canWriteCurrentWorkspace() ? '<input type="checkbox" aria-label="Complete ' + escapeHtml(t.title) + '" data-complete-task="' + escapeHtml(t.id) + '"' + (t.status === 'done' ? ' checked' : '') + '>' : ''}</td>
+            <td>\${canWriteCurrentWorkspace() ? '<input type="checkbox" aria-label="Complete ' + escapeHtml(t.title) + '" data-complete-task="' + escapeHtml(t.id) + '"' + (t.status === 'done' ? ' checked' : '') + '> <button type="button" class="button" data-edit-task="' + escapeHtml(t.id) + '">Edit</button>' : ''}</td>
         </tr>\`).join("")}</tbody></table>\`;
       }
 
@@ -1262,6 +1288,12 @@ Content-Type: application/json
                   <thead><tr><th>Workspace</th><th>Team</th><th>Role</th></tr></thead>
                   <tbody>\${tenant.workspaces.map((workspace) => '<tr><td>' + escapeHtml(workspace.name) + '</td><td>' + escapeHtml(workspace.team_name) + '</td><td><span class="pill">' + escapeHtml(workspace.workspace_role || "") + '</span></td></tr>').join("")}</tbody>
                 </table>
+                <div class="panel-header"><div class="panel-title">Google Workspace</div></div>
+                <div class="stack"><div>Connect your Gmail and calendar for private conversation history, meeting briefs and AI suggestions.</div><div class="toolbar"><a class="button primary" href="/assistant#mail">Connect Google Workspace</a><a class="button" href="/assistant#inbox">Open inbox</a></div></div>
+                <div class="panel-header"><div class="panel-title">Do-not-contact rules</div></div>
+                <div>Rules block manual email, sequences, calling and messaging. Email/domain rules also protect warmup delivery.</div>
+                <div>\${state.outreachSuppressions.length ? '<table><thead><tr><th>Type</th><th>Value</th><th>Reason</th><th></th></tr></thead><tbody>'+state.outreachSuppressions.map(rule=>'<tr><td>'+escapeHtml(rule.kind)+'</td><td>'+escapeHtml(rule.value)+'</td><td>'+escapeHtml(rule.reason || '')+'</td><td>'+(canManage ? '<button type="button" class="button" data-delete-suppression="'+escapeHtml(rule.id)+'">Remove</button>' : '')+'</td></tr>').join('')+'</tbody></table>' : '<div class="empty">No workspace rules. Contact opt-outs are always respected.</div>'}</div>
+                \${canManage ? '<form id="suppressionForm" class="stack"><label>Type<select name="kind"><option value="email">Email address</option><option value="domain">Company domain</option><option value="linkedin">LinkedIn profile</option></select></label><label>Value<input name="value" required placeholder="person@company.com" /></label><label>Reason<input name="reason" placeholder="Requested no outreach" /></label><button class="button primary">Add rule</button></form>' : ''}
                 <div class="panel-header"><div class="panel-title">My notifications</div></div>
                 <form id="notificationPreferencesForm" class="form-grid" style="padding:0">
                   <label><input name="reportAlertTriggerEnabled" type="checkbox" \${state.notificationPreferences.report_alert_trigger_enabled ? "checked" : ""} /> Report alert triggers</label>
@@ -2036,11 +2068,19 @@ Content-Type: application/json
           await refresh();
         });
 
+        for (const [selector,resource,id] of [["#accountExecutionForm","accounts",state.selectedAccountId],["#contactExecutionForm","contacts",state.selectedContactId]]) {
+          $(selector)?.addEventListener("submit",async event=>{event.preventDefault(); await api(resource+"/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))}); notice("Details saved."); await refresh();});
+        }
+        $("#suppressionForm")?.addEventListener("submit",async event=>{event.preventDefault(); await api("outreach-suppressions",{method:"POST",body:JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))}); notice("Do-not-contact rule added."); await refresh();});
+        document.querySelectorAll("[data-delete-suppression]").forEach(button=>button.addEventListener("click",async()=>{await api("outreach-suppressions/"+encodeURIComponent(button.dataset.deleteSuppression),{method:"DELETE"}); notice("Rule removed. Contact opt-outs still apply."); await refresh();}));
+        document.querySelectorAll("[data-history-record]").forEach(button=>button.addEventListener("click",async()=>{const record=await api("migration-history/"+encodeURIComponent(button.dataset.historyRecord)); showOriginalHistory(record);}));
         $("#taskForm")?.addEventListener("submit", async (event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
-          await api("tasks", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
-          notice("Task created.");
+          const payload=Object.fromEntries(form.entries());
+          const id=payload.id; delete payload.id;
+          await api(id ? "tasks/"+encodeURIComponent(id) : "tasks", { method: id ? "PATCH" : "POST", body: JSON.stringify(payload) });
+          notice(id ? "Task updated." : "Task created.");
           await refresh();
         });
 

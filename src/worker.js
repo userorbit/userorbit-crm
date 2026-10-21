@@ -1,3 +1,4 @@
+import { assertContactOutreachAllowed, normalizeSuppression, validateTaskExecution, linkedLegacyTimeline } from "./crm-execution.js";
 import { brandAssetResponse, faviconHead } from "./brand-assets.js";
 import { connect } from "cloudflare:sockets";
 import { appHtml, landingHtml } from "./ui.js";
@@ -6,7 +7,7 @@ import { designSystemCss, icon } from "./design-system.js";
 import { assistantHtml } from "./assistant/ui.js";
 import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
-import { readBody } from "./assistant/shared.js";
+import { readBody, DEFAULT_AI_MODEL } from "./assistant/shared.js";
 import { forwardLegacyApi } from "./legacy-api-bridge.js";
 import { isLegacyPasswordHash, verifyLegacyPassword } from "./legacy-password.js";
 import { enforceMigrationPolicy } from "./migration-policy.js";
@@ -15,7 +16,7 @@ import { handleMigrationHistory } from "./migration-history.js";
 const assistantHelpers = configureAssistantHelpers({
   json, readJson: readBody, httpError, requireAuth, resolveWorkspaceId, requireWorkspaceRole,
   requireWorkspaceWrite, requireWorkspaceAdmin, recordAuditLog, getContact, getAccount,
-  createContactEmailDraft, getNextBestActions, createAiInsight, getReports, parseJsonObject, sha256Hex,
+  assertContactOutreachAllowed, createContactEmailDraft, getNextBestActions, createAiInsight, getReports, parseJsonObject, sha256Hex,
 });
 
 let interFontBytes;
@@ -613,7 +614,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path.startsWith("contacts/")) {
-    return json(await getContact(env, path.split("/")[1], workspaceId));
+    return json(await getContact(env, path.split("/")[1], workspaceId, auth));
   }
 
   if (request.method === "POST" && path.startsWith("contacts/") && path.endsWith("/ai-insights")) {
@@ -647,6 +648,34 @@ async function routeApi(request, env, url, auth) {
   if (request.method === "POST" && path === "opportunity-stages") {
     await requireWorkspaceAdmin(env, auth, workspaceId);
     return json(await createOpportunityStage(env, { ...(await readJson(request)), workspaceId }, auth), 201);
+  }
+
+  if (path === "workspace-members" && request.method === "GET") {
+    return json((await env.DB.prepare("SELECT DISTINCT u.id,u.name,u.email FROM users u JOIN workspaces w ON w.id=? LEFT JOIN workspace_members m ON m.workspace_id=w.id AND m.user_id=u.id LEFT JOIN team_members t ON t.team_id=w.team_id AND t.user_id=u.id WHERE u.status='active' AND (m.user_id IS NOT NULL OR t.role IN ('owner','admin')) ORDER BY u.name").bind(workspaceId).all()).results);
+  }
+  if (path === "outreach-suppressions" && request.method === "GET") {
+    return json((await env.DB.prepare("SELECT * FROM outreach_suppressions WHERE workspace_id=? ORDER BY created_at DESC").bind(workspaceId).all()).results);
+  }
+  if (path === "outreach-suppressions" && request.method === "POST") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    const input = await readJson(request);
+    const value = normalizeSuppression(input.kind, input.value);
+    const id = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO outreach_suppressions(id,workspace_id,kind,value,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(workspace_id,kind,value) DO UPDATE SET reason=excluded.reason").bind(id, workspaceId, input.kind, value, cleanNullable(input.reason), auth.user.id, new Date().toISOString()).run();
+    await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "suppression.create", resource: "outreach_suppression", resourceId: id, metadata: { kind: input.kind, value } });
+    return json(await env.DB.prepare("SELECT * FROM outreach_suppressions WHERE workspace_id=? AND kind=? AND value=?").bind(workspaceId,input.kind,value).first(),201);
+  }
+  if (/^outreach-suppressions\/[^/]+$/.test(path) && request.method === "DELETE") {
+    await requireWorkspaceAdmin(env, auth, workspaceId);
+    const id = path.split("/")[1];
+    await getRequired(env,"SELECT id FROM outreach_suppressions WHERE id=? AND workspace_id=?",id,workspaceId);
+    await env.DB.prepare("DELETE FROM outreach_suppressions WHERE id=? AND workspace_id=?").bind(id,workspaceId).run();
+    await recordAuditLog(env,{workspaceId,userId:auth.user.id,action:"suppression.delete",resource:"outreach_suppression",resourceId:id});
+    return json({ok:true});
+  }
+  if (request.method === "PATCH" && /^contacts\/[^/]+$/.test(path)) {
+    await requireWorkspaceWrite(env, auth, workspaceId);
+    return json(await updateContact(env,path.split("/")[1],{...(await readJson(request)),workspaceId,auditUserId:auth.user.id}));
   }
 
   if (request.method === "GET" && path === "tasks") {
@@ -834,7 +863,7 @@ async function getSummary(env, workspaceId) {
     scalar(env, "SELECT COUNT(*) FROM accounts WHERE workspace_id = ?", workspaceId),
     scalar(env, "SELECT COUNT(*) FROM contacts c JOIN accounts a ON a.id = c.account_id WHERE a.workspace_id = ?", workspaceId),
     scalar(env, "SELECT COUNT(*) FROM sequence_enrollments se JOIN contacts c ON c.id = se.contact_id JOIN accounts a ON a.id = c.account_id WHERE se.status = 'active' AND a.workspace_id = ?", workspaceId),
-    scalar(env, "SELECT COUNT(*) FROM tasks WHERE status = 'open' AND workspace_id = ?", workspaceId),
+    scalar(env, "SELECT COUNT(*) FROM tasks WHERE status IN ('open','in_progress','blocked') AND workspace_id = ?", workspaceId),
     scalar(env, `SELECT COALESCE(SUM(value_cents), 0) FROM opportunities WHERE ${stageNotInClause(closedStages)} AND workspace_id = ?`, ...closedStages, workspaceId),
   ]);
 
@@ -1071,7 +1100,7 @@ async function getNextBestActions(env, workspaceId, auth) {
       LEFT JOIN accounts a ON a.id = t.account_id
       LEFT JOIN contacts c ON c.id = t.contact_id
       WHERE t.workspace_id = ?
-        AND t.status = 'open'
+        AND t.status IN ('open','in_progress','blocked')
         AND (t.due_at IS NULL OR t.due_at <= datetime('now'))
       ORDER BY CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END, t.due_at ASC, t.created_at ASC
       LIMIT 12
@@ -1116,7 +1145,7 @@ async function getNextBestActions(env, workspaceId, auth) {
           SELECT 1 FROM tasks t
           WHERE t.workspace_id = ?
             AND t.contact_id = c.id
-            AND t.status = 'open'
+            AND t.status IN ('open','in_progress','blocked')
         )
       GROUP BY c.id
       ORDER BY clicks DESC, opens DESC, last_engagement_at DESC
@@ -1138,7 +1167,7 @@ async function getNextBestActions(env, workspaceId, auth) {
       WHERE a.workspace_id = ?
         AND a.status IN ('target', 'researching')
         AND NOT EXISTS (SELECT 1 FROM email_events ee WHERE ee.account_id = a.id)
-        AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.account_id = a.id AND t.workspace_id = ? AND t.status = 'open')
+        AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.account_id = a.id AND t.workspace_id = ? AND t.status IN ('open','in_progress','blocked'))
       GROUP BY a.id
       ORDER BY a.updated_at DESC
       LIMIT 12
@@ -2950,6 +2979,7 @@ async function createAccount(env, input) {
     await assertWritableCustomFieldValues(env, workspaceId, "account", input.customFields, input.auth);
   }
 
+  await validateAccountExecution(env, workspaceId, id, input);
   await env.DB.prepare(`
     INSERT INTO accounts (id, workspace_id, name, domain, segment, source, observation, status, owner, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2968,6 +2998,8 @@ async function createAccount(env, input) {
       now,
     )
     .run();
+
+  await saveExecutionFields(env, "accounts", id, input, {parentAccountId:"parent_account_id",qualification:"qualification",evidence:"evidence",nextAction:"next_action"});
 
   if (Array.isArray(input.contacts)) {
     for (const contact of input.contacts) {
@@ -3054,6 +3086,7 @@ async function submitLeadForm(env, form, input, request) {
 }
 
 async function updateAccount(env, id, input) {
+  await validateAccountExecution(env,input.workspaceId,id,input);
   const existing = await getRequired(env, "SELECT * FROM accounts WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
   if (input.customFields && typeof input.customFields === "object") {
     await assertWritableCustomFieldValues(env, existing.workspace_id, "account", input.customFields, input.auth);
@@ -3080,6 +3113,7 @@ async function updateAccount(env, id, input) {
     await upsertCustomFieldValues(env, existing.workspace_id, "account", id, input.customFields, input.auth);
   }
 
+  await saveExecutionFields(env,"accounts",id,input,{parentAccountId:"parent_account_id",qualification:"qualification",evidence:"evidence",nextAction:"next_action"});
   const account = await getAccount(env, id, existing.workspace_id, input.auth);
   if (input.auditUserId) {
     await recordAuditLog(env, { workspaceId: existing.workspace_id, userId: input.auditUserId, action: "account.update", resource: "account", resourceId: id, metadata: { name: account.name, changedFields: changedInputFields(input, ["name", "domain", "segment", "source", "observation", "status", "owner", "customFields"]) } });
@@ -3119,6 +3153,12 @@ async function mergeAccount(env, targetAccountId, input, auth) {
       )
   `).bind(target.id, source.id, target.id).run();
   await env.DB.prepare("DELETE FROM custom_field_values WHERE entity = 'account' AND entity_id = ?").bind(source.id).run();
+  await env.DB.prepare("INSERT OR IGNORE INTO crm_legacy_entity_links(entity,entity_id,legacy_entity_id) SELECT entity,?,legacy_entity_id FROM crm_legacy_entity_links WHERE entity='account' AND entity_id=?").bind(target.id,source.id).run();
+  await env.DB.prepare("DELETE FROM crm_legacy_entity_links WHERE entity='account' AND entity_id=?").bind(source.id).run();
+  await env.DB.prepare("UPDATE accounts SET qualification=COALESCE(NULLIF(qualification,''),?),evidence=COALESCE(NULLIF(evidence,''),?),next_action=COALESCE(NULLIF(next_action,''),?) WHERE id=? AND workspace_id=?").bind(source.qualification,source.evidence,source.next_action,target.id,input.workspaceId).run();
+  const targetAncestor = await env.DB.prepare("WITH RECURSIVE ancestors(id,parent_account_id) AS (SELECT id,parent_account_id FROM accounts WHERE id=? UNION SELECT a.id,a.parent_account_id FROM accounts a JOIN ancestors p ON a.id=p.parent_account_id) SELECT id FROM ancestors WHERE id=?").bind(target.id,source.id).first();
+  if (targetAncestor) await env.DB.prepare("UPDATE accounts SET parent_account_id=NULL WHERE id=? AND workspace_id=?").bind(target.id,input.workspaceId).run();
+  await env.DB.prepare("UPDATE accounts SET parent_account_id=? WHERE parent_account_id=? AND id<>? AND workspace_id=?").bind(target.id,source.id,target.id,input.workspaceId).run();
   await env.DB.prepare("DELETE FROM accounts WHERE id = ? AND workspace_id = ?").bind(source.id, input.workspaceId).run();
 
   await touchAccount(env, target.id);
@@ -3154,6 +3194,7 @@ async function createContact(env, input) {
     )
     .run();
 
+  await saveExecutionFields(env,"contacts",id,input,{buyerRole:"buyer_role",relationshipStatus:"relationship_status",source:"source",evidence:"evidence",nextAction:"next_action"});
   await touchAccount(env, input.accountId);
   const contact = await getRequired(env, "SELECT * FROM contacts WHERE id = ?", id);
   if (input.auditUserId) {
@@ -3309,8 +3350,9 @@ async function listTasks(env, url, workspaceId) {
   const limit = Number.isFinite(pageLimit) ? Math.max(1, Math.min(100, Math.floor(pageLimit))) : 100;
   const offset = Number.isFinite(pageOffset) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(pageOffset))) : 0;
   const rows = await env.DB.prepare(`
-    SELECT t.*, a.name AS account_name, c.name AS contact_name
+    SELECT t.*, a.name AS account_name, c.name AS contact_name, u.name AS owner_name
     FROM tasks t
+    LEFT JOIN users u ON u.id=t.owner_user_id
     LEFT JOIN accounts a ON a.id = t.account_id
     LEFT JOIN contacts c ON c.id = t.contact_id
     WHERE t.workspace_id = ?
@@ -3329,6 +3371,7 @@ async function createTask(env, input) {
   if (input.contactId) {
     await getRequired(env, "SELECT c.id FROM contacts c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.workspace_id = ?", input.contactId, workspaceId);
   }
+  const execution = await validateTaskExecution(env,workspaceId,input);
   const now = new Date().toISOString();
   const id = input.id || crypto.randomUUID();
 
@@ -3351,6 +3394,7 @@ async function createTask(env, input) {
     )
     .run();
 
+  await saveTaskExecution(env,id,execution);
   const task = await getRequired(env, "SELECT * FROM tasks WHERE id = ?", id);
   if (input.auditUserId) {
     await recordAuditLog(env, { workspaceId, userId: input.auditUserId, action: "task.create", resource: "task", resourceId: task.id, metadata: { accountId: task.account_id, contactId: task.contact_id, status: task.status } });
@@ -3702,7 +3746,7 @@ async function sendProviderMessage(env, input, auth) {
   if (channel.type === "call") throw httpError(400, "Use /api/calls/start for call channels");
   const type = normalizeEnum(input.type || channel.type, MESSAGE_CHANNEL_TYPES, "type");
   if (type !== channel.type) throw httpError(400, "Message type must match the selected channel");
-  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  await assertContactOutreachAllowed(env,input.workspaceId,contact);
   const to = cleanNullable(input.to || input.phone || contact.phone);
   if (!to) throw httpError(400, "Contact phone is required");
   const body = String(input.body || "").trim();
@@ -3768,7 +3812,7 @@ async function startProviderCall(env, input, auth) {
     JOIN accounts a ON a.id = c.account_id
     WHERE c.id = ? AND a.workspace_id = ?
   `, input.contactId, input.workspaceId);
-  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  await assertContactOutreachAllowed(env,input.workspaceId,contact);
   const to = cleanNullable(input.to || input.phone || contact.phone);
   if (!to) throw httpError(400, "Contact phone is required");
   const id = input.id || crypto.randomUUID();
@@ -4385,6 +4429,7 @@ async function completeCalendarOAuth(_request, env, url) {
 
 async function updateTask(env, id, input) {
   const task = await getRequired(env, "SELECT * FROM tasks WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
+  const execution = await validateTaskExecution(env,input.workspaceId,input,task);
   if (input.accountId) {
     await getRequired(env, "SELECT id FROM accounts WHERE id = ? AND workspace_id = ?", input.accountId, input.workspaceId);
   }
@@ -4393,7 +4438,7 @@ async function updateTask(env, id, input) {
   }
   await env.DB.prepare(`
     UPDATE tasks
-    SET title = ?, kind = ?, due_at = ?, status = ?, notes = ?, updated_at = ?
+    SET title = ?, kind = ?, due_at = ?, status = ?, notes = ?, account_id = ?, contact_id = ?, updated_at = ?
     WHERE id = ? AND workspace_id = ?
   `)
     .bind(
@@ -4402,11 +4447,14 @@ async function updateTask(env, id, input) {
       input.dueAt !== undefined ? cleanNullable(input.dueAt) : task.due_at,
       input.status || task.status,
       input.notes !== undefined ? cleanNullable(input.notes) : task.notes,
+      input.accountId !== undefined ? cleanNullable(input.accountId) : task.account_id,
+      input.contactId !== undefined ? cleanNullable(input.contactId) : task.contact_id,
       new Date().toISOString(),
       id,
       input.workspaceId,
     )
     .run();
+  await saveTaskExecution(env,id,execution);
   const updated = await getRequired(env, "SELECT * FROM tasks WHERE id = ? AND workspace_id = ?", id, input.workspaceId);
   if (input.auditUserId) {
     await recordAuditLog(env, { workspaceId: input.workspaceId, userId: input.auditUserId, action: "task.update", resource: "task", resourceId: id, metadata: { accountId: updated.account_id, contactId: updated.contact_id, status: updated.status, changedFields: changedInputFields(input, ["title", "kind", "dueAt", "status", "notes"]) } });
@@ -4469,7 +4517,7 @@ async function enrollContact(env, input) {
     JOIN accounts a ON a.id = c.account_id
     WHERE c.id = ? AND a.workspace_id = ?
   `, input.contactId, input.workspaceId);
-  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  await assertContactOutreachAllowed(env,input.workspaceId,contact);
   const now = new Date().toISOString();
   const nextSendAt = input.nextSendAt || now;
   const id = input.id || crypto.randomUUID();
@@ -4493,7 +4541,7 @@ async function sendManualEmail(env, input) {
   if (input.templateId || input.template_id) await assertEmailTemplateApproved(env, input.templateId || input.template_id, input.workspaceId);
   const contact = await getContactWithAccount(env, input.contactId);
   if (contact.workspace_id !== input.workspaceId) throw httpError(404, "Not found");
-  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
+  await assertContactOutreachAllowed(env,input.workspaceId,contact);
   const emailSettings = await getEmailSettings(env, input.workspaceId);
   const sender = await chooseEmailSender(env, input.workspaceId);
   const rendered = renderTemplate(
@@ -4608,6 +4656,7 @@ async function processDueSequenceEmails(env, options = {}) {
 
     const tracking = buildEmailTracking(env.CRM_PUBLIC_URL, emailTrackingEnabled(emailSettings) ? crypto.randomUUID() : null, emailSettings);
     const result = await sendEmailWithWorkspaceLimit(env, item.workspace_id, emailSettings, {
+      contactId: item.contact_id,
       fromEmail: sender?.email,
       fromName: sender?.name,
       to: item.email,
@@ -4691,9 +4740,8 @@ async function markContactReplied(env, id, workspaceId, auth) {
     id,
     workspaceId,
   );
-  if (contact.status === "unsubscribed") throw httpError(400, "Contact is unsubscribed");
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE contacts SET status = 'replied', updated_at = ? WHERE id = ?").bind(now, id).run();
+  await env.DB.prepare("UPDATE contacts SET status = CASE WHEN status='unsubscribed' THEN status ELSE 'replied' END, updated_at = ? WHERE id = ?").bind(now, id).run();
   await env.DB.prepare("UPDATE sequence_enrollments SET status = 'replied', updated_at = ? WHERE contact_id = ? AND status = 'active'").bind(now, id).run();
   await recordAuditLog(env, { workspaceId, userId: auth.user.id, action: "contact.reply", resource: "contact", resourceId: id, metadata: { email: contact.email } });
   const updated = await getContact(env, id, workspaceId);
@@ -5035,7 +5083,13 @@ async function processDueWarmupEmails(env, options = {}) {
   const items = [];
   for (const item of due.results) {
     ensureConfiguredWarmupSender(env, item.mailbox_email);
-    const result = await sendEmail(env, {
+    let blocked = null;
+    const workspaces = await env.DB.prepare("SELECT id FROM workspaces").all();
+    for (const workspace of workspaces.results) {
+      try { await assertContactOutreachAllowed(env,workspace.id,item.recipient_email); }
+      catch (error) { if (error.status !== 409) throw error; blocked = error.message; break; }
+    }
+    const result = blocked ? {status:"failed",providerMessageId:null,error:blocked} : await sendEmail(env, {
       to: item.recipient_email,
       toName: item.recipient_name,
       subject: item.subject,
@@ -5096,6 +5150,7 @@ async function createAiInsight(env, input, auth) {
 
 async function createContactEmailDraft(env, contactId, input, auth) {
   if (!contactId) throw httpError(400, "contactId is required");
+  await assertContactOutreachAllowed(env,input.workspaceId,{id:contactId});
   const context = await buildContactEmailDraftContext(env, contactId, input.workspaceId, input);
   const draft = await generateEmailDraft(env, context);
   await recordAuditLog(env, { workspaceId: input.workspaceId, userId: auth.user.id, action: "email_draft.generate", resource: "contact", resourceId: contactId, metadata: { provider: draft.provider, model: draft.model || null, intent: context.intent } });
@@ -5207,10 +5262,11 @@ async function buildAccountInsightContext(env, accountId, workspaceId, auth) {
       status: account.status,
       source: account.source,
       observation: account.observation,
+      qualification: account.qualification, evidence: account.evidence, nextAction: account.next_action, parentAccountId: account.parent_account_id,
       owner: account.owner,
       customFields: account.customFields,
     },
-    contacts: account.contacts.slice(0, 8).map((contact) => ({ name: contact.name, title: contact.title, status: contact.status, email: contact.email })),
+    contacts: account.contacts.slice(0, 8).map((contact) => ({ name: contact.name, title: contact.title, status: contact.status, email: contact.email, buyerRole:contact.buyer_role,relationshipStatus:contact.relationship_status,nextAction:contact.next_action })),
     opportunities: account.opportunities.slice(0, 8).map((opportunity) => ({ name: opportunity.name, stage: opportunity.stage, valueCents: opportunity.value_cents, confidence: opportunity.confidence, closeDate: opportunity.close_date })),
     tasks: account.tasks.slice(0, 8).map((task) => ({ title: task.title, kind: task.kind, status: task.status, dueAt: task.due_at })),
     recentTimeline: account.timeline.slice(0, 12).map((item) => ({ type: item.type, title: item.title, detail: item.detail, happenedAt: item.happenedAt })),
@@ -5255,6 +5311,7 @@ async function buildContactEmailDraftContext(env, contactId, workspaceId, input 
       id: contact.id,
       name: contact.name,
       firstName: firstName(contact.name),
+      buyerRole:contact.buyer_role,relationshipStatus:contact.relationship_status,evidence:contact.evidence,nextAction:contact.next_action,
       title: contact.title,
       email: contact.email,
       status: contact.status,
@@ -5371,7 +5428,7 @@ async function generateEmailDraft(env, context) {
 }
 
 async function generateOpenAiInsight(env, entity, context) {
-  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const model = cleanNullable(env.OPENAI_MODEL) || DEFAULT_AI_MODEL;
   const prompt = [
     "You are helping a CRM user decide the next best sales action.",
     "Return compact JSON only with keys: summary, nextSteps, risks, score.",
@@ -5382,12 +5439,16 @@ async function generateOpenAiInsight(env, entity, context) {
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(30000),
       headers: {
         authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
         model,
+        store: false,
+        max_output_tokens: 4000,
+        ...(model.startsWith("gpt-6") ? { reasoning: { effort: "low" } } : {}),
         input: prompt,
         text: { format: { type: "json_object" } },
       }),
@@ -5404,7 +5465,7 @@ async function generateOpenAiInsight(env, entity, context) {
 }
 
 async function generateOpenAiCommunicationNotes(env, context) {
-  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const model = cleanNullable(env.OPENAI_MODEL) || DEFAULT_AI_MODEL;
   const prompt = [
     "You are turning raw CRM call or meeting notes into a concise sales follow-up brief.",
     "Return compact JSON only with keys: summary, nextSteps, risks, score.",
@@ -5415,12 +5476,16 @@ async function generateOpenAiCommunicationNotes(env, context) {
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(30000),
       headers: {
         authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
         model,
+        store: false,
+        max_output_tokens: 4000,
+        ...(model.startsWith("gpt-6") ? { reasoning: { effort: "low" } } : {}),
         input: prompt,
         text: { format: { type: "json_object" } },
       }),
@@ -5436,7 +5501,7 @@ async function generateOpenAiCommunicationNotes(env, context) {
 }
 
 async function generateOpenAiAccountResearch(env, context) {
-  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const model = cleanNullable(env.OPENAI_MODEL) || DEFAULT_AI_MODEL;
   const prompt = [
     "You are researching a company for a sales CRM from its public website text and existing CRM context.",
     "Return compact JSON only with keys: summary, nextSteps, risks, score.",
@@ -5447,12 +5512,16 @@ async function generateOpenAiAccountResearch(env, context) {
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(30000),
       headers: {
         authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
         model,
+        store: false,
+        max_output_tokens: 4000,
+        ...(model.startsWith("gpt-6") ? { reasoning: { effort: "low" } } : {}),
         input: prompt,
         text: { format: { type: "json_object" } },
       }),
@@ -5467,7 +5536,7 @@ async function generateOpenAiAccountResearch(env, context) {
 }
 
 async function generateOpenAiEmailDraft(env, context) {
-  const model = cleanNullable(env.OPENAI_MODEL) || "gpt-5-mini";
+  const model = cleanNullable(env.OPENAI_MODEL) || DEFAULT_AI_MODEL;
   const prompt = [
     "You are drafting a concise, human sales email from CRM context.",
     "Return compact JSON only with keys: subject, body, rationale.",
@@ -5478,12 +5547,16 @@ async function generateOpenAiEmailDraft(env, context) {
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(30000),
       headers: {
         authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
         model,
+        store: false,
+        max_output_tokens: 4000,
+        ...(model.startsWith("gpt-6") ? { reasoning: { effort: "low" } } : {}),
         input: prompt,
         text: { format: { type: "json_object" } },
       }),
@@ -6864,6 +6937,8 @@ async function sendEmail(env, message) {
 }
 
 async function sendEmailWithWorkspaceLimit(env, workspaceId, settings, message) {
+  try { await assertContactOutreachAllowed(env,workspaceId,{ email: message.to, id: message.contactId }); }
+  catch (error) { if (error.status === 409) return {status:"failed",providerMessageId:null,error:error.message}; throw error; }
   const limit = Number(settings?.workspace_daily_send_limit || 0);
   if (limit > 0) {
     const sentToday = await workspaceSentToday(env, workspaceId);
@@ -7246,6 +7321,7 @@ async function getAccount(env, id, workspaceId, auth = null) {
     listAiInsights(env, workspaceId, "account", id),
   ]);
 
+  const legacyTimeline = await linkedLegacyTimeline(env,"account",id,auth);
   return {
     ...account,
     contacts: contacts.results,
@@ -7256,11 +7332,11 @@ async function getAccount(env, id, workspaceId, auth = null) {
     calendarEvents: calendarEvents.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) })),
     customFields,
     aiInsights,
-    timeline: buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }),
+    timeline: [...buildAccountTimeline({ account, contacts: contacts.results, opportunities: opportunities.results, tasks: tasks.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }), ...legacyTimeline].sort((a,b)=>String(b.happenedAt).localeCompare(String(a.happenedAt))),
   };
 }
 
-async function getContact(env, id, workspaceId) {
+async function getContact(env, id, workspaceId, auth = null) {
   const contact = await getRequired(
     env,
     `SELECT c.*, a.name AS account_name, a.domain AS account_domain, a.status AS account_status, a.segment AS account_segment
@@ -7314,6 +7390,7 @@ async function getContact(env, id, workspaceId) {
     `).bind(id, workspaceId).all(),
     listAiInsights(env, workspaceId, "contact", id),
   ]);
+  const legacyTimeline = await linkedLegacyTimeline(env,"contact",id,auth);
   return {
     ...contact,
     tasks: tasks.results,
@@ -7323,7 +7400,7 @@ async function getContact(env, id, workspaceId) {
     communications: communications.results,
     calendarEvents: calendarEvents.results.map((row) => ({ ...row, attendee_emails: parseJsonArray(row.attendee_emails_json) })),
     aiInsights,
-    timeline: buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }),
+    timeline: [...buildContactTimeline({ contact, tasks: tasks.results, opportunities: opportunities.results, enrollments: enrollments.results, emails: emails.results, communications: communications.results, calendarEvents: calendarEvents.results }), ...legacyTimeline].sort((a,b)=>String(b.happenedAt).localeCompare(String(a.happenedAt))),
   };
 }
 
@@ -9011,4 +9088,31 @@ function escapeHtml(value) {
 
 function escapeSmtpBody(value) {
   return String(value).replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
+}
+
+async function saveExecutionFields(env,table,id,input,fields) {
+  const entries=Object.entries(fields).filter(([key])=>input[key]!==undefined);
+  if (!entries.length) return;
+  await env.DB.prepare(`UPDATE ${table} SET ${entries.map(([,column])=>column+"=?").join(",")} WHERE id=?`).bind(...entries.map(([key])=>cleanNullable(input[key])),id).run();
+}
+async function validateAccountExecution(env,workspaceId,id,input) {
+  if (input.parentAccountId) {
+    if (input.parentAccountId===id) throw httpError(400,"A company cannot be its own parent");
+    await getRequired(env,"SELECT id FROM accounts WHERE id=? AND workspace_id=?",input.parentAccountId,workspaceId);
+    const cycle = await env.DB.prepare("WITH RECURSIVE ancestors(id,parent_account_id) AS (SELECT id,parent_account_id FROM accounts WHERE id=? UNION SELECT a.id,a.parent_account_id FROM accounts a JOIN ancestors p ON a.id=p.parent_account_id) SELECT id FROM ancestors WHERE id=?").bind(input.parentAccountId,id).first();
+    if (cycle) throw httpError(400,"Company hierarchy cannot contain a cycle");
+  }
+}
+async function saveTaskExecution(env,id,execution) {
+  await env.DB.prepare("UPDATE tasks SET owner_user_id=?,priority=?,blocked_reason=?,definition_of_done=? WHERE id=?").bind(execution.owner,execution.priority,execution.blockedReason,execution.definitionOfDone,id).run();
+}
+async function updateContact(env,id,input) {
+  await getContact(env,id,input.workspaceId);
+  if (input.email!==undefined && !cleanEmail(input.email)) throw httpError(400,"A valid contact email is required");
+  if (input.name!==undefined && !String(input.name).trim()) throw httpError(400,"Contact name is required");
+  if (input.email!==undefined) input.email=cleanEmail(input.email);
+  await saveExecutionFields(env,"contacts",id,input,{name:"name",email:"email",title:"title",phone:"phone",linkedinUrl:"linkedin_url",notes:"notes",buyerRole:"buyer_role",relationshipStatus:"relationship_status",source:"source",evidence:"evidence",nextAction:"next_action"});
+  await env.DB.prepare("UPDATE contacts SET updated_at=? WHERE id=?").bind(new Date().toISOString(),id).run();
+  await recordAuditLog(env,{workspaceId:input.workspaceId,userId:input.auditUserId,action:"contact.update",resource:"contact",resourceId:id});
+  return getContact(env,id,input.workspaceId);
 }

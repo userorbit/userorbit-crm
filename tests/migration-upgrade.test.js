@@ -15,7 +15,10 @@ test("assistant migrations preserve populated CRM records and foreign keys", () 
       INSERT INTO tasks(id,account_id,contact_id,title,status,workspace_id,created_at,updated_at) VALUES ('preserve-task','preserve','preserve-person','Existing follow-up','open','workspace_default','2026','2026');`);
     const before = Object.fromEntries(["accounts", "contacts", "email_events", "tasks", "email_templates", "sequence_steps"].map((table) => [table, db.sqlite.query(`SELECT * FROM ${table} ORDER BY id`).all()]));
     for (const name of migrations.filter((name) => name >= "0048")) db.sqlite.exec(readFileSync(resolve(dir, name), "utf8"));
-    for (const [table, rows] of Object.entries(before)) expect(db.sqlite.query(`SELECT * FROM ${table} ORDER BY id`).all()).toEqual(rows);
+    for (const [table, rows] of Object.entries(before)) {
+      const columns=Object.keys(rows[0] || {});
+      if (columns.length) expect(db.sqlite.query(`SELECT ${columns.join(",")} FROM ${table} ORDER BY id`).all()).toEqual(rows);
+    }
     expect(db.sqlite.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(db.sqlite.query("SELECT count(*) AS n FROM assistant_mail_messages").get().n).toBe(0);
     expect(db.sqlite.query("SELECT count(*) AS n FROM assistant_jobs").get().n).toBe(0);

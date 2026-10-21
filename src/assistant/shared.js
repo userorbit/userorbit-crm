@@ -1,3 +1,5 @@
+export const DEFAULT_AI_MODEL = 'gpt-6-luna';
+
 export function json(data, status = 200) {
   return Response.json(data, { status });
 }

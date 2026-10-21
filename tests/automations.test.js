@@ -51,7 +51,7 @@ describe('schedules', () => {
 
 test('CRUD validates fields, supports templates, protects viewer/admin routes', async () => {
   const s = setup();
-  expect((await (await s.request('GET', 'automations/templates')).json()).templates).toHaveLength(5);
+  expect((await (await s.request('GET', 'automations/templates')).json()).templates).toHaveLength(6);
   await expect(s.create({ enabled: 'true' })).rejects.toMatchObject({ status: 400 });
   await expect(s.create({ maxAttempts: 4 })).rejects.toMatchObject({ status: 400 });
   await expect(s.create({ instructions: '' })).rejects.toMatchObject({ status: 400 });

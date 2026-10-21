@@ -89,6 +89,7 @@ label.check input{width:16px;min-height:16px}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
 .answer{white-space:pre-wrap;line-height:1.8}
 pre{white-space:pre-wrap;font-size:12px;background:var(--bg-main);border:1px solid var(--border-primary);border-radius:8px;padding:14px;overflow-wrap:anywhere;color:var(--text-secondary)}
+.setup-list{display:grid;gap:8px;margin:16px 0;padding:0;list-style:none}.setup-list li{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--border-primary)}.setup-list code{overflow-wrap:anywhere;font-size:12px}.mail-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:16px}.mail-toolbar label{flex:1;min-width:140px}.mail-toolbar button{min-height:34px}.mail-layout{display:grid;grid-template-columns:minmax(240px,.8fr) minmax(0,1.6fr);gap:16px;align-items:start}.mail-list .item{padding:14px 0}.mail-open{display:block;text-align:left;width:100%;height:auto;padding:4px 0;border:0;background:transparent;color:var(--text-primary);font-weight:500}.mail-open:hover{color:var(--brand-text)}.message-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;margin:12px 0}.mail-preview{grid-column:1/-1;border:1px solid var(--border-primary);border-radius:8px;padding:16px;background:var(--bg-main)}.review-values{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}.review-values>div{padding:12px;border:1px solid var(--border-primary);border-radius:8px;min-width:0;overflow-wrap:anywhere}.review-values span{display:block;font-size:11px;color:var(--text-tertiary);margin-bottom:6px}.evidence-quote{margin:12px 0;padding:12px 16px;border-left:3px solid var(--accent);background:var(--bg-main);white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.mail-compose textarea{min-height:180px}@media(max-width:850px){.mail-layout{grid-template-columns:1fr}.review-values{grid-template-columns:1fr}.mail-toolbar label{min-width:100%}}
 [hidden]{display:none!important}
 #content[data-section=drafts],#content[data-section=connections]{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
 #content[data-section=drafts]>.panel,#content[data-section=connections]>.panel{margin-bottom:0}
@@ -151,7 +152,9 @@ function assistantClient(icons) {
     drafts: ["Draft a note", "Prepare a personal follow-up. You decide when to send it."],
     knowledge: ["Ask your CRM", "Find answers in your history, with sources you can check."],
     network: ["Your network", "Bring in connections, trace introductions, and follow changes."],
-    mail: ["Mailboxes", "Connect your history to build relationship context."],
+    mail: ["Google Workspace", "Connect your email and calendar to build relationship context."],
+    inbox: ["Inbox", "Read your Google Workspace conversations and review every email before sending."],
+    updates: ["CRM updates", "Review evidence-backed suggestions before changing customer records."],
     jobs: ["Recurring jobs", "Choose what your assistant should keep an eye on."],
     connections: ["AI connections", "Use your CRM from the AI tools you already work in."],
   };
@@ -164,7 +167,7 @@ function assistantClient(icons) {
     return el;
   }
   function symbol(name) { const el = node("span"); el.innerHTML = icons[name] || icons.bot; el.setAttribute("aria-hidden", "true"); return el; }
-  const sectionIcons = { today: "home", commitments: "check", meetings: "calendar", drafts: "mail", knowledge: "book", network: "network", mail: "mail", jobs: "clock", connections: "bot" };
+  const sectionIcons = { today: "home", commitments: "check", meetings: "calendar", drafts: "mail", knowledge: "book", network: "network", mail: "mail", inbox: "mail", updates: "check", jobs: "clock", connections: "bot" };
   function emptyState(message, name = sectionIcons[state.section]) { const el = node("div", null, "empty"); const mark = symbol(name); mark.className = "empty-symbol"; el.append(mark, node("span", message)); return el; }
   function announce(message, error = false) { const el = $("#status"); el.hidden = false; el.className = "status" + (error ? " error" : ""); el.textContent = message; }
   async function api(path, options = {}) {
@@ -270,8 +273,8 @@ function assistantClient(icons) {
       }, "No promises found yet. Connect your mail, then review recent conversations.");
     },
     async meetings(page) {
-      const data = await api("calendar/events"); const box = panel("Upcoming conversations", "Briefs use your saved meeting and CRM history."); page.append(box);
-      const meetings = array(data, ["events"]).filter((event) => new Date(event.starts_at || event.startsAt) > new Date()).slice(0, 15);
+      const [data, personal] = await Promise.all([api("calendar/events"), api("assistant/mail/calendar")]); const box = panel("Upcoming conversations", "Briefs use your saved meetings, private Google calendar and CRM history."); page.append(box);
+      const meetings = [...array(data, ["events"]), ...array(personal, ["events"])].sort((a, b) => new Date(a.starts_at || a.startsAt) - new Date(b.starts_at || b.startsAt)).filter((event) => new Date(event.starts_at || event.startsAt) > new Date()).slice(0, 15);
       list(box, meetings, (meeting) => {
         const el = card(meeting.title, new Date(meeting.starts_at || meeting.startsAt).toLocaleString());
         const result = node("div"); el.append(button("Prepare brief", async () => { output(result, await api("assistant/intelligence/briefs/" + encodeURIComponent(meeting.id))); }), result); return el;
@@ -340,20 +343,153 @@ function assistantClient(icons) {
       list(updates, array(changes, ["changes", "items", "observations"]), (change) => card(change.title || change.kind || "Network update", change.summary || [change.before_value, change.after_value].filter(Boolean).join(" → "), [{ url: change.source_url, title: "Evidence" }]));
     },
     async mail(page) {
-      const box = panel("Connect your mailbox", "History is private to your account. Disconnect whenever you like."); page.append(box);
+      const [setup, data] = await Promise.all([api("assistant/mail/setup"), api("assistant/mail/connections")]);
+      const box = panel("Google Workspace", "Connect Gmail and your primary calendar once. Your correspondence and personal meetings stay private to you."); page.append(box);
+      box.append(node("p", setup.ready ? "Ready to connect" : "Administrator setup required", "pill"));
+      if (!setup.ready) {
+        box.append(node("p", "Add the following settings to the userorbit-crm Worker. Google connection credentials are separate from your OpenAI API key.", "muted"));
+        const missing = node("ul", null, "setup-list"); for (const name of setup.missing || []) { const row = node("li"); row.append(node("code", name), node("span", "Required", "muted")); missing.append(row); } box.append(missing);
+      }
+      if (setup.redirectUri) { box.append(node("p", "Register this authorized redirect URI in your Google OAuth web application:", "muted"), node("pre", setup.redirectUri)); }
+      const connect = async (provider, intent) => { const result = await post("mail/connect", { provider, intent }); const url = new URL(result.url || result.authorizationUrl); if (url.protocol !== "https:") throw new Error("Invalid connection URL"); location.assign(url.href); };
       const actions = node("div", null, "actions");
-      for (const [provider, label] of [["gmail", "Connect Gmail"], ["microsoft", "Connect Microsoft 365"]]) actions.append(button(label, async () => { const result = await post("mail/connect", { provider }); const url = new URL(result.url || result.authorizationUrl); if (url.protocol !== "https:") throw new Error("Invalid connection URL"); location.assign(url.href); }, true)); box.append(actions);
+      const google = button("Connect Google Workspace", () => connect("gmail", "workspace"), true); google.disabled = !setup.ready;
+      const send = button("Enable Gmail sending", () => connect("gmail", "send")); send.disabled = !setup.ready;
+      actions.append(google, send); box.append(actions, node("p", "Connecting gives read access to Gmail and calendar context. Sending permission is optional; each email still requires your explicit review and Send action.", "muted"));
+      const accounts = panel("Your connected accounts"); page.append(accounts);
+      list(accounts, array(data, ["connections", "items"]), (connection) => {
+        const el = card(connection.account_email || connection.provider, connection.status + (connection.last_error ? " · " + connection.last_error : "") + (connection.last_sync_at ? " · Last sync " + new Date(connection.last_sync_at).toLocaleString() : ""));
+        if (connection.provider === "gmail") el.append(node("p", (connection.canSend ? "Gmail sending enabled" : "Read-only mail") + (connection.calendarEnabled ? " · Calendar connected" : ""), "pill"));
+        const controls = node("div", null, "actions");
+        controls.append(button("Sync mail", async () => { const result = await post("mail/connections/" + encodeURIComponent(connection.id) + "/sync"); announce(result.hasMore ? "Imported this batch. More history will continue in the background." : "Mailbox synchronized."); await show(); }));
+        if (connection.calendarEnabled) controls.append(button("Sync calendar", async () => { await post("mail/connections/" + encodeURIComponent(connection.id) + "/calendar-sync"); announce("Your personal calendar was synchronized."); await show(); }));
+        if (connection.provider === "gmail") controls.append(button("Open inbox", async () => { state.inboxConnection = connection.id; state.section = "inbox"; location.hash = "inbox"; await show(); }));
+        controls.append(button("Disconnect", async () => { await api("assistant/mail/connections/" + encodeURIComponent(connection.id), { method: "DELETE" }); announce("Connection removed."); await show(); })); el.append(controls); return el;
+      }, "No mailbox connected yet. Connect Google Workspace to use your conversations in the assistant.");
+      const other = panel("Other email accounts"); other.append(button("Connect Microsoft 365", () => connect("microsoft"))); page.append(other);
+    },
+    async inbox(page) {
       const data = await api("assistant/mail/connections");
-      list(box, array(data, ["connections", "items"]), (connection) => {
-        const el = card(connection.account_email || connection.provider, connection.status + (connection.last_error ? " · " + connection.last_error : "")); const controls = node("div", null, "actions");
-        controls.append(button("Sync now", async () => { const result = await post("mail/connections/" + encodeURIComponent(connection.id) + "/sync"); announce(result.hasMore ? "Imported this batch. More history will continue in the background." : "Mailbox synchronized."); await show(); }), button("Disconnect", async () => { await api("assistant/mail/connections/" + encodeURIComponent(connection.id), { method: "DELETE" }); await show(); })); el.append(controls); return el;
-      }, "No mailbox connected yet. Your administrator must configure the provider credentials before first use.");
+      const connections = (data.connections || []).filter((item) => item.provider === "gmail" && item.status === "active");
+      if (!connections.length) { const empty = panel("Connect Google Workspace", "Your inbox uses your own Google connection. Read access is enough to browse; sending needs an additional permission."); empty.append(button("Set up Google Workspace", async () => { state.section = "mail"; location.hash = "mail"; await show(); }, true)); page.append(empty); return; }
+      if (!connections.some((item) => item.id === state.inboxConnection)) state.inboxConnection = connections[0].id;
+      const toolbar = node("form", null, "mail-toolbar");
+      const selected = field(toolbar, "Account", "connectionId", "select", connections.map((item) => [item.id, item.account_email])); selected.value = state.inboxConnection;
+      const folder = field(toolbar, "Folder", "folder", "select", [["INBOX", "Inbox"], ["SENT", "Sent"], ["DRAFT", "Saved drafts"]]); folder.value = state.inboxFolder || "INBOX";
+      const query = field(toolbar, "Search email", "query"); query.value = state.inboxQuery || ""; query.placeholder = "Search your Gmail";
+      const search = node("button", "Search"); search.type = "submit"; toolbar.append(search, button("Compose", () => compose({ mode: "compose" }), true));
+      toolbar.addEventListener("submit", async (event) => { event.preventDefault(); state.inboxConnection = selected.value; state.inboxFolder = folder.value; state.inboxQuery = query.value; await show(); });
+      selected.addEventListener("change", async () => { state.inboxConnection = selected.value; await show(); }); folder.addEventListener("change", async () => { state.inboxFolder = folder.value; await show(); }); page.append(toolbar);
+      const layout = node("div", null, "mail-layout"); const messages = panel(folder.value === "DRAFT" ? "Saved drafts" : folder.value === "SENT" ? "Sent mail" : "Inbox"); messages.classList.add("mail-list"); const detail = panel("Conversation", "Select a message to read your conversation."); layout.append(messages, detail); page.append(layout);
+      const account = connections.find((item) => item.id === state.inboxConnection);
+      const connectionQuery = "connectionId=" + encodeURIComponent(account.id);
+      async function downloadAttachment(message, file) {
+        const response = await fetch("/api/assistant/mail/attachments/" + encodeURIComponent(message.id) + "/" + encodeURIComponent(file.id) + "?" + connectionQuery, { headers: { authorization: "Bearer " + state.token, "x-workspace-id": state.workspaceId } });
+        if (!response.ok) { const error = await response.json(); throw new Error(error.error || "Could not download attachment."); }
+        const url = URL.createObjectURL(await response.blob()); const link = node("a"); link.href = url; link.download = file.filename || "attachment"; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+      }
+      function compose(content = {}, draftId) {
+        detail.replaceChildren(node("h2", content.mode === "reply" ? "Reply" : content.mode === "replyAll" ? "Reply all" : content.mode === "forward" ? "Forward" : "New email"));
+        const form = node("form", null, "mail-compose");
+        const to = field(form, "To", "to"); to.value = Array.isArray(content.to) ? content.to.join(", ") : content.to || "";
+        const cc = field(form, "Cc", "cc"); cc.value = Array.isArray(content.cc) ? content.cc.join(", ") : content.cc || "";
+        const bcc = field(form, "Bcc", "bcc"); bcc.value = Array.isArray(content.bcc) ? content.bcc.join(", ") : content.bcc || "";
+        const subject = field(form, "Subject", "subject"); subject.value = content.subject || "";
+        const body = field(form, "Message", "body", "textarea"); body.value = content.body || "";
+        const preview = node("div", null, "mail-preview"); preview.hidden = true;
+        let attachments = content.attachments || [];
+        const files = field(form, "Attachments (up to 5 MB total)", "attachments", "file"); files.multiple = true;
+        const attachmentList = node("div", null, "actions"); form.append(attachmentList);
+        const drawAttachments = () => { attachmentList.replaceChildren(); for (const attachment of attachments) attachmentList.append(button("Remove " + attachment.filename, () => { attachments = attachments.filter((item) => item !== attachment); preview.hidden = true; drawAttachments(); })); };
+        drawAttachments();
+        files.addEventListener("change", async () => {
+          try {
+            const chosen = Array.from(files.files || []);
+            if (chosen.length + attachments.length > 10 || chosen.reduce((sum, file) => sum + file.size, attachments.reduce((sum, item) => sum + Math.ceil(item.data.length * .75), 0)) > 5 * 1024 * 1024) throw new Error("Use at most 10 attachments and 5 MB total.");
+            for (const file of chosen) { const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192)); attachments.push({ filename: file.name, mimeType: file.type || "application/octet-stream", data: btoa(binary) }); }
+            files.value = ""; preview.hidden = true; drawAttachments();
+          } catch (error) { files.value = ""; announce(error.message, true); }
+        });
+        const payload = () => ({ to: to.value, cc: cc.value, bcc: bcc.value, subject: subject.value, body: body.value, attachments, connectionId: account.id, mode: content.mode || "compose", messageId: content.messageId || null });
+        const actions = node("div", null, "actions");
+        actions.append(button("Save draft", async () => { const saved = await post("mail/drafts", { ...payload(), ...(draftId ? { id: draftId } : {}) }); draftId = saved.id; announce("Draft saved privately in CRM."); }));
+        const review = node("button", "Review email", "primary"); review.type = "submit"; review.disabled = !account.canSend; actions.append(review);
+        if (!account.canSend) form.append(node("p", "Enable Gmail sending in Google Workspace settings to send from this account. You can still save drafts.", "muted"));
+        form.addEventListener("input", () => { preview.hidden = true; preview.replaceChildren(); });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault(); review.disabled = true;
+          try {
+            const original = payload(); const result = await post("mail/send-preview", original); const reviewed = result.preview || result; const key = crypto.randomUUID();
+            preview.replaceChildren(node("h3", "Review before sending"), node("p", "To: " + (reviewed.to || []).join(", ")));
+            if (reviewed.cc?.length) preview.append(node("p", "Cc: " + reviewed.cc.join(", ")));
+            if (reviewed.bcc?.length) preview.append(node("p", "Bcc: " + reviewed.bcc.join(", ")));
+            preview.append(node("strong", reviewed.subject), node("div", reviewed.body, "message-body"));
+            for (const file of reviewed.attachments || []) preview.append(node("p", "Attachment: " + file.filename, "pill"));
+            preview.append(button("Send email", async () => {
+              await post("mail/send", { ...original, confirmed: true, idempotencyKey: key, previewHash: result.previewHash || reviewed.previewHash });
+              if (draftId) await api("assistant/mail/drafts/" + encodeURIComponent(draftId), { method: "DELETE" });
+              detail.replaceChildren(node("h2", "Email sent"), node("p", "Your message was sent through Gmail.")); announce("Email sent.");
+            }, true)); preview.hidden = false;
+          } catch (error) { announce(error.message, true); } finally { review.disabled = !account.canSend; }
+        });
+        form.append(actions, preview); detail.append(form);
+      }
+      async function openThread(message) {
+        const thread = await api("assistant/mail/threads/" + encodeURIComponent(message.thread || message.id) + "?" + connectionQuery);
+        detail.replaceChildren(node("h2", message.subject || "Conversation"));
+        for (const item of thread.messages || []) {
+          const el = card(item.subject || "No subject", item.from + " · " + new Date(item.sentAt).toLocaleString()); el.append(node("div", item.body, "message-body"));
+          const controls = node("div", null, "actions");
+          for (const [mode, label] of [["reply", "Reply"], ["replyAll", "Reply all"], ["forward", "Forward"]]) controls.append(button(label, () => compose({ mode, messageId: item.id, to: mode === "forward" ? [] : [item.from], subject: item.subject || "", body: "" })));
+          for (const file of item.attachments || []) controls.append(button(file.filename || "Download attachment", () => downloadAttachment(item, file)));
+          el.append(controls); detail.append(el);
+        }
+      }
+      if (folder.value === "DRAFT") {
+        const drafts = await api("assistant/mail/drafts");
+        list(messages, (drafts.drafts || []).filter((item) => item.connection_id === account.id), (draft) => { const el = card(draft.content.subject || "Untitled draft", new Date(draft.updated_at).toLocaleString()); el.append(button("Open draft", () => compose(draft.content, draft.id)), button("Delete draft", async () => { await api("assistant/mail/drafts/" + encodeURIComponent(draft.id), { method: "DELETE" }); await show(); })); return el; }, "No saved drafts.");
+      } else {
+        async function loadMessages(pageToken) {
+          const params = new URLSearchParams({ connectionId: account.id, folder: folder.value, query: query.value, ...(pageToken ? { pageToken } : {}) });
+          const result = await api("assistant/mail/inbox?" + params);
+          if (!pageToken && !result.messages?.length) messages.append(emptyState("No messages in this view.", "mail"));
+          for (const message of result.messages || []) { const el = node("article", null, "item"); const open = button(message.subject || "No subject", () => openThread(message)); open.className = "mail-open"; el.append(open, node("p", message.from + " · " + new Date(message.sentAt).toLocaleString(), "muted"), node("p", String(message.body || "").slice(0, 140), "muted")); messages.append(el); }
+          if (result.nextPageToken) { const more = button("Load more", async () => { more.remove(); await loadMessages(result.nextPageToken); }); messages.append(more); }
+        }
+        await loadMessages();
+      }
+    },
+    async updates(page) {
+      const data = await api("assistant/updates");
+      const status = data.status || await api("assistant/updates/status");
+      const intro = panel("Review suggested changes", "Your assistant proposes changes from your conversations. Existing records change only after you accept a suggestion.");
+      intro.append(node("p", (status.configured ? "AI ready" : "AI setup required") + " · " + status.model, "pill"));
+      if (!status.configured) intro.append(node("p", "Add OPENAI_API_KEY as a secret on the userorbit-crm Worker to enable conversation review. Your existing CRM continues to work.", "muted"));
+      const scan = button("Review recent conversations", async () => { const result = await post("updates/extract"); announce(result.created + " new suggestion(s) from " + result.sourceCount + " source(s)."); await show(); }, true);
+      scan.disabled = !status.configured; intro.append(scan); page.append(intro);
+      const pending = panel("Pending review"); page.append(pending);
+      const valueText = (value) => value === null || value === undefined || value === "" ? "Not set" : typeof value === "object" ? JSON.stringify(value) : String(value);
+      const renderUpdate = (item, actionable) => {
+        const el = card(item.entity_name || item.entity_id, item.entity_type + " · " + item.field.replaceAll("_", " "));
+        const values = node("div", null, "review-values");
+        for (const [label, value] of [["Current value", item.before_value], ["Suggested value", item.after_value]]) { const cell = node("div"); cell.append(node("span", label), node("strong", valueText(value))); values.append(cell); }
+        el.append(values);
+        if (item.quote) el.append(node("blockquote", item.quote, "evidence-quote"));
+        sources(el, [{ title: item.source_title || "Conversation evidence", url: item.source_url }]);
+        if (actionable) { const actions = node("div", null, "actions"); actions.append(button("Accept change", async () => { await post("updates/" + encodeURIComponent(item.id) + "/review", { action: "accept" }); announce("Change applied to the CRM record."); await show(); }, true), button("Reject", async () => { await post("updates/" + encodeURIComponent(item.id) + "/review", { action: "reject" }); await show(); })); el.append(actions); }
+        else el.append(node("p", item.status, "pill"));
+        return el;
+      };
+      const items = data.updates || [];
+      list(pending, items.filter((item) => item.status === "proposed" || item.status === "pending"), (item) => renderUpdate(item, true), "No changes waiting for review. Connect Google Workspace and review your recent conversations to find suggestions.");
+      const reviewed = items.filter((item) => !["proposed", "pending"].includes(item.status));
+      if (reviewed.length) { const history = panel("Review history"); list(history, reviewed, (item) => renderUpdate(item, false)); page.append(history); }
     },
     async jobs(page) {
       const data = await api("assistant/automations/jobs");
       const create = formBox("Give your assistant a recurring job", "Results appear here when something useful changes.", "Create job", async (data) => { if (!data.instructions.trim()) delete data.instructions; await post("automations/jobs", { ...data, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, schedule: { type: data.frequency, time: String(data.hour).padStart(2, "0") + ":00", ...(data.frequency === "weekly" ? { days: [1] } : {}) } }); announce("Recurring job created."); await show(); });
       field(create.form, "Name", "name").required = true;
-      field(create.form, "Job", "template", "select", [["attention", "Review relationships"], ["commitments", "Review open promises"], ["meeting_brief", "Prepare upcoming meetings"], ["network_changes", "Review network changes"], ["cited_research", "Research a saved question"]]);
+      field(create.form, "Job", "template", "select", [["attention", "Review relationships"], ["crm_review", "Suggest CRM record updates"], ["commitments", "Review open promises"], ["meeting_brief", "Prepare upcoming meetings"], ["network_changes", "Review network changes"], ["cited_research", "Research a saved question"]]);
       field(create.form, "Instructions", "instructions", "textarea"); field(create.form, "Frequency", "frequency", "select", [["daily", "Daily"], ["weekly", "Weekly"]]); const hour = field(create.form, "Hour (your time zone)", "hour", "number"); hour.min = "0"; hour.max = "23"; hour.value = "9"; create.form.finish(); page.append(create.box);
       const jobs = panel("Your jobs"); page.append(jobs);
       list(jobs, array(data, ["jobs", "items"]), (job) => { const el = card(job.name, job.instructions || job.template); const controls = node("div", null, "actions"); controls.append(button("Run now", async () => { await post("automations/jobs/" + encodeURIComponent(job.id) + "/run"); announce("Job queued. Its result will appear in history after the next scheduled run."); await show(); }), button("View history", async () => { const data = await api("assistant/automations/jobs/" + encodeURIComponent(job.id) + "/runs"); history.replaceChildren(); list(history, array(data, ["runs", "items"]), (run) => { const entry = card(run.status, run.summary || run.error_code || "Waiting for execution"); if (Array.isArray(run.result)) for (const item of run.result.slice(0, 10)) entry.append(card(item.title || item.event?.title || item.name || "Review item", item.reason || item.summary || item.evidence || item.quote || item.status, item.sources || (item.source_url ? [{ url: item.source_url, title: "Evidence" }] : []))); else if (run.result?.answer) output(entry, run.result); return entry; }); }), button(job.enabled ? "Pause" : "Resume", async () => { await api("assistant/automations/jobs/" + encodeURIComponent(job.id), { method: "PATCH", body: JSON.stringify({ enabled: !job.enabled }) }); await show(); })); const history = node("div");
@@ -363,6 +499,8 @@ function assistantClient(icons) {
       list(inbox, notifications.notifications || [], (notice) => { const el = card(notice.title || "Job update", notice.summary || notice.message); if (!notice.read_at) el.append(button("Mark read", async () => { await post("automations/notifications/" + encodeURIComponent(notice.id) + "/read"); await show(); })); return el; });
     },
     async connections(page) {
+      const readiness = await api("assistant/updates/status");
+      const ai = panel("AI workflows", "Your API key stays in Worker secrets. No key is stored in the browser."); ai.append(node("p", readiness.model + " · " + (readiness.configured ? "API key configured" : "Add OPENAI_API_KEY to enable AI generation"), "pill")); page.append(ai);
       const approval = formBox("Approve an AI draft request", "Review the exact request before granting a one-use approval. Approval expires after five minutes.", "Review request", async (data) => {
         preview.replaceChildren(node("h3", "Draft request"), node("p", "Contact: " + (state.contacts.find((contact) => contact.id === data.contactId)?.name || data.contactId)), node("p", data.instructions));
         preview.append(button("Approve this exact request", async () => { const result = await post("mcp/approvals", { tool: "assistant_prepare_draft", arguments: data }); preview.replaceChildren(node("p", "Share this one-use approval ID with your connected AI client:"), node("pre", result.approval_id), button("Copy approval ID", async () => { await navigator.clipboard.writeText(result.approval_id); announce("Approval ID copied."); })); }, true));
@@ -371,7 +509,7 @@ function assistantClient(icons) {
       const box = panel("Connect your AI client", "Use OAuth to let a compatible AI client access your CRM with your permissions."); box.append(node("p", "Add a remote MCP connection using this address:")); const code = node("pre", location.origin + "/mcp"); box.append(code, button("Copy connection address", async () => { await navigator.clipboard.writeText(location.origin + "/mcp"); announce("Connection address copied."); })); box.append(node("p", "You will sign in and review access before a connection is granted. Assistant tools cannot send outreach.", "muted")); page.append(box);
     },
   };
-  const navigationLabels = { today: "Today", commitments: "Promises", meetings: "Meeting briefs", drafts: "Drafts", knowledge: "Knowledge", network: "Network", mail: "Mailboxes", jobs: "Jobs", connections: "Connections" };
+  const navigationLabels = { today: "Today", commitments: "Promises", meetings: "Meeting briefs", drafts: "Drafts", knowledge: "Knowledge", network: "Network", mail: "Google Workspace", inbox: "Inbox", updates: "CRM updates", jobs: "Jobs", connections: "Connections" };
   for (const [id, [label]] of Object.entries(sections)) { const el = button(navigationLabels[id] || label, async () => { state.section = id; location.hash = id; await show(); }); el.dataset.section = id; el.prepend(symbol(sectionIcons[id])); $("#navigation").append(el); }
   $("#assistant-search").addEventListener("click", async () => { state.section = "knowledge"; location.hash = "knowledge"; await show(); document.querySelector('input[name="query"]')?.focus(); });
   document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "k") { event.preventDefault(); $("#assistant-search").click(); } });
