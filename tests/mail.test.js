@@ -330,9 +330,7 @@ test("scheduled sync blocks disabled users even with write membership", async ()
   f.setRespond(() => {
     throw Error("disabled user must not contact provider");
   });
-  expect(await runScheduled(f.env, f.context.helpers)).toEqual([
-    { id: c.id, error: "Sync deferred" },
-  ]);
+  expect(await runScheduled(f.env, f.context.helpers)).toEqual([]);
   expect(f.calls).toHaveLength(0);
   expect(
     f.sqlite.query("SELECT lease_until FROM assistant_mail_connections").get()
@@ -521,4 +519,48 @@ test("Expired OAuth state and wrong workspace cannot exchange codes", async () =
     400,
   );
   expect(f.calls).toHaveLength(0);
+});
+
+test("revoked and inactive connections cannot starve a later valid mailbox", async () => {
+  const f = setup();
+  const valid = await f.connect();
+  f.sqlite.exec("UPDATE assistant_mail_connections SET next_sync_at=1");
+  f.sqlite.exec(
+    "INSERT INTO users(id,email,name,status,created_at,updated_at) VALUES ('disabled','disabled@test.com','Disabled','disabled','now','now')",
+  );
+  const insert = f.sqlite.query(`INSERT INTO assistant_mail_connections
+    (id,workspace_id,user_id,provider,account_email,credentials,next_sync_at,created_at)
+    VALUES (?, 'workspace_default', ?, 'gmail', ?, ?, 0, 'now')`);
+  insert.run("revoked-1", "other", "revoked1@test.com", valid.credentials);
+  insert.run("revoked-2", "other", "revoked2@test.com", valid.credentials);
+  insert.run("inactive", "disabled", "disabled@test.com", valid.credentials);
+  const checked = [];
+  const helpers = {
+    requireWorkspaceWrite: async (_env, auth) => {
+      checked.push(auth.user.id);
+      if (auth.user.id !== "u")
+        throw Object.assign(new Error("Forbidden"), { status: 403 });
+    },
+  };
+  f.calls.length = 0;
+  f.setRespond((url) =>
+    url.endsWith("/profile") ? { historyId: "100" } : { messages: [] },
+  );
+  const before = Date.now();
+  expect(await runScheduled(f.env, helpers)).toEqual([
+    { id: "revoked-1", error: "Sync deferred" },
+    { id: "revoked-2", error: "Sync deferred" },
+  ]);
+  expect(f.calls).toHaveLength(0);
+  const deferred = f.sqlite
+    .query(
+      "SELECT next_sync_at FROM assistant_mail_connections WHERE user_id='other'",
+    )
+    .all();
+  expect(deferred.every((c) => c.next_sync_at >= before + 300000)).toBe(true);
+  expect(await runScheduled(f.env, helpers)).toEqual([
+    { id: valid.id, imported: 0, hasMore: false },
+  ]);
+  expect(f.calls).toHaveLength(2);
+  expect(checked).toEqual(["other", "other", "u"]);
 });

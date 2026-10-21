@@ -585,7 +585,7 @@ export async function syncConnection(env, id, workspaceId, userId) {
 export async function runScheduled(env, helpers) {
   const rows = await stmt(
     env,
-    "SELECT id,workspace_id,user_id FROM assistant_mail_connections WHERE status='active' AND next_sync_at<=? AND lease_until<? ORDER BY next_sync_at LIMIT 2",
+    "SELECT c.id,c.workspace_id,c.user_id FROM assistant_mail_connections c JOIN users u ON u.id=c.user_id AND u.status='active' WHERE c.status='active' AND c.next_sync_at<=? AND c.lease_until<? ORDER BY c.next_sync_at,c.id LIMIT 2",
     now(),
     now(),
   ).all();
@@ -605,6 +605,22 @@ export async function runScheduled(env, helpers) {
         { user: { id: c.user_id } },
         c.workspace_id,
       );
+    } catch {
+      // Authorization failures must leave room for other users on the next run.
+      await stmt(
+        env,
+        "UPDATE assistant_mail_connections SET next_sync_at=?,last_error=? WHERE id=? AND workspace_id=? AND user_id=? AND status='active' AND lease_until<?",
+        now() + 300000,
+        "Sync deferred; workspace access required",
+        c.id,
+        c.workspace_id,
+        c.user_id,
+        now(),
+      ).run();
+      results.push({ id: c.id, error: "Sync deferred" });
+      continue;
+    }
+    try {
       results.push({
         id: c.id,
         ...(await syncConnection(env, c.id, c.workspace_id, c.user_id)),
