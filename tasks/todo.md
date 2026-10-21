@@ -236,8 +236,10 @@ Implemented all twelve additions across six isolated feature chats and integrate
 
 - [x] Capture consistent read-only source backup and inventory through existing Hyperdrive.
 - [x] Map actual populated data, preserve unsupported records, credentials, ownership and suppressions.
-- [ ] Implement and review migration/auth compatibility; reconcile staging import and access tests.
+- [x] Implement and review migration/auth compatibility; reconcile staging import and access tests.
 - [ ] Deploy support, migrate records, reconcile final delta before hostname cutover.
 - [ ] Keep old app available at gtm.userorb.com; verify new hostname and rollback route.
 
 User explicitly selected migration of existing records before domain switch. No domain change until reconciliation and authentication/access checks pass.
+
+Migration validation: full PostgreSQL backup restored locally (57 tables, 8,307 rows, every value, 27 triggers; zero mismatches). Staging native counts 594/1,068/119/393; 8,251 business history records and 14 attachments reconcile exactly. All seven users and all 28 private-mailbox combinations pass API access checks. Browser confirms IC dashboard, manager account pages 1–100 and 101–171, and authorized history. 135 Bun tests/772 assertions plus four importer regressions pass. Original workflows retained separately; this is not full source-feature parity or ongoing synchronization.
