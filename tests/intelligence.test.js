@@ -370,3 +370,35 @@ test("sent sample lookup and relationship reciprocity survive busy inboxes", asy
   );
   expect(reply.priority).toBe(85);
 });
+test("later same-thread completion is cited without resolving and dates stay suggestions", async () => {
+  message(
+    "promise",
+    "I will send the proposal by 2026-12-01T12:00:00Z.",
+    "outbound",
+  );
+  message("completion", "I sent the proposal.", "outbound");
+  message("denial", "I have not sent the proposal.", "outbound");
+  message("unrelated", "I sent the invoice.", "outbound");
+  message("private-completion", "I sent the proposal.", "outbound", "other");
+  db.sqlite.exec(
+    "UPDATE assistant_mail_messages SET sent_at='2026-02-01T12:00:00Z' WHERE id!='promise'",
+  );
+  const {
+    commitments: [item],
+  } = await api("commitments/extract", "POST", {});
+  expect(item.resolutionEvidence.map((e) => e.messageId)).toEqual([
+    "completion",
+  ]);
+  expect(item.suggestedDueAt).toBe("2026-12-01T12:00:00.000Z");
+  expect(item.due_at).toBeNull();
+  await api("commitments/" + item.id, "PATCH", { status: "accepted" });
+  const { commitment } = await api("commitments/" + item.id);
+  expect(commitment.status).toBe("accepted");
+  expect(commitment.resolutionEvidence[0].quote).toBe("I sent the proposal.");
+  db.sqlite.exec(
+    "UPDATE assistant_mail_messages SET thread_id='different-thread' WHERE id='completion'",
+  );
+  expect(
+    (await api("commitments")).commitments[0].resolutionEvidence,
+  ).toHaveLength(0);
+});

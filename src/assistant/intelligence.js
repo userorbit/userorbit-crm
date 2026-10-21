@@ -161,6 +161,107 @@ export function detectCommitments(messages) {
       })),
   );
 }
+export function commitmentDateSuggestion(quote) {
+  const deadlineText =
+    quote.match(
+      /\b(?:by|before|on|until)\s+([^.!?\n]+?)(?=[.!?](?:\s|$)|$)/i,
+    )?.[0] || null;
+  const explicit = quote.match(
+    /\b(\d{4}-\d{2}-\d{2})(?:T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2}))?/,
+  );
+  const validDate =
+    explicit &&
+    Number.isFinite(Date.parse(explicit[1])) &&
+    new Date(explicit[1]).toISOString().slice(0, 10) === explicit[1];
+  return {
+    deadlineText,
+    suggestedDueDate: validDate ? explicit[1] : null,
+    suggestedDueAt:
+      validDate &&
+      explicit[0].includes("T") &&
+      Number.isFinite(Date.parse(explicit[0]))
+        ? new Date(explicit[0]).toISOString()
+        : null,
+  };
+}
+export function completionQuotes(quote, body) {
+  const actions = [
+    [
+      /\b(?:send|share|provide|deliver)\b/i,
+      /\b(?:sent|shared|provided|delivered|received|attached)\b/i,
+    ],
+    [
+      /\breview\b/i,
+      /\b(?:reviewed|finished reviewing|completed the review)\b/i,
+    ],
+    [/\b(?:schedule|confirm)\b/i, /\b(?:scheduled|confirmed|booked)\b/i],
+    [/\bprepare\b/i, /\b(?:prepared|completed|finished)\b/i],
+    [/\bupdate\b/i, /\bupdated\b/i],
+    [/\bintroduce\b/i, /\bintroduced\b/i],
+  ];
+  const action = actions.find(([promise]) => promise.test(quote));
+  if (!action) return [];
+  const stop = new Set(
+    "will promise send share provide deliver review schedule confirm prepare update introduce tomorrow today before after next monday tuesday wednesday thursday friday saturday sunday this that with have your ours their them then".split(
+      " ",
+    ),
+  );
+  const objects = [
+    ...new Set(quote.toLowerCase().match(/[a-z]{4,}/g) || []),
+  ].filter((word) => !stop.has(word));
+  if (!objects.length) return [];
+  return currentBody(body)
+    .split(/\n|(?<=[.!?])\s+/)
+    .filter(
+      (line) =>
+        action[1].test(line) &&
+        !/\b(?:not|never|haven['’]t|hasn['’]t|didn['’]t|isn['’]t|wasn['’]t|cannot|can['’]t|if|unless|would|could|might)\b|\?/i.test(
+          line,
+        ) &&
+        objects.some((word) =>
+          (line.toLowerCase().match(/[a-z]{4,}/g) || []).includes(word),
+        ),
+    )
+    .slice(0, 3);
+}
+async function enrichCommitments(env, context, commitments) {
+  const result = [];
+  for (const item of commitments) {
+    let later = [];
+    try {
+      later = await rows(
+        env,
+        `SELECT m.id,m.provider_message_id,m.subject,m.body,m.sent_at,m.source_url FROM assistant_mail_messages m
+        JOIN assistant_mail_messages original ON original.id=? AND original.workspace_id=m.workspace_id AND original.user_id=m.user_id
+          AND original.connection_id=m.connection_id AND original.thread_id=m.thread_id
+        WHERE m.workspace_id=? AND m.user_id=? AND original.thread_id IS NOT NULL AND original.thread_id!='' AND m.sent_at>original.sent_at
+        ORDER BY m.sent_at DESC LIMIT 30`,
+        item.message_id,
+        ...scope(context),
+      );
+    } catch (error) {
+      if (
+        !/no such table: (?:main\.)?assistant_mail_messages/i.test(
+          error.message,
+        )
+      )
+        throw error;
+    }
+    result.push({
+      ...item,
+      ...commitmentDateSuggestion(item.quote),
+      resolutionEvidence: later
+        .flatMap((message) =>
+          completionQuotes(item.quote, message.body).map((quote) => ({
+            ...source(message),
+            quote,
+          })),
+        )
+        .slice(0, 5),
+    });
+  }
+  return result;
+}
 export async function extractCommitments(env, context, input = {}) {
   if (input.contactId) await contact(env, context, input.contactId);
   const { messages, mailAvailable } = await mail(env, context, input.contactId);
@@ -227,10 +328,14 @@ export async function extractCommitments(env, context, input = {}) {
   for (let start = 0; start < statements.length; start += 50)
     await env.DB.batch(statements.slice(start, start + 50));
   return {
-    commitments: await rows(
+    commitments: await enrichCommitments(
       env,
-      "SELECT * FROM assistant_commitments WHERE workspace_id=? AND user_id=? ORDER BY created_at DESC LIMIT 100",
-      ...scope(context),
+      context,
+      await rows(
+        env,
+        "SELECT * FROM assistant_commitments WHERE workspace_id=? AND user_id=? ORDER BY created_at DESC LIMIT 100",
+        ...scope(context),
+      ),
     ),
     provider,
     mailAvailable,
@@ -369,13 +474,11 @@ export async function buildMeetingBrief(env, context, eventId) {
     : null;
   const { messages, mailAvailable } = await mail(env, context, person?.id);
   const recentMessages = person
-    ? messages
-        .slice(0, 10)
-        .map((m) => ({
-          ...source(m),
-          direction: m.direction,
-          excerpt: String(m.body || "").slice(0, 1200),
-        }))
+    ? messages.slice(0, 10).map((m) => ({
+        ...source(m),
+        direction: m.direction,
+        excerpt: String(m.body || "").slice(0, 1200),
+      }))
     : [];
   const commitments = person
     ? await rows(
@@ -535,14 +638,26 @@ export async function handleRequest(request, env, context) {
       )
         fail(400, "Invalid commitment status");
       return json({
-        commitments: await rows(
+        commitments: await enrichCommitments(
           env,
-          `SELECT * FROM assistant_commitments WHERE workspace_id=? AND user_id=? ${status ? "AND status=?" : ""} ORDER BY created_at DESC LIMIT 100`,
-          ...scope(context),
-          ...(status ? [status] : []),
+          context,
+          await rows(
+            env,
+            `SELECT * FROM assistant_commitments WHERE workspace_id=? AND user_id=? ${status ? "AND status=?" : ""} ORDER BY created_at DESC LIMIT 100`,
+            ...scope(context),
+            ...(status ? [status] : []),
+          ),
         ),
       });
     }
+    if (method === "GET" && id && !action)
+      return json({
+        commitment: (
+          await enrichCommitments(env, context, [
+            await owned(env, context, "assistant_commitments", id),
+          ])
+        )[0],
+      });
     if (method === "POST" && id === "extract")
       return json(await extractCommitments(env, context, await read()));
     if (id && method === "PATCH" && !action) {

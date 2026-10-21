@@ -20,9 +20,15 @@ Migration 0049 owns `assistant_commitments`, `assistant_suggestions`, `assistant
 
 ## Verification and integration notes
 
-- `bun test tests/intelligence.test.js`: 12 tests / 47 assertions pass both with only baseline + 0049 and with the real mail-track 0048 applied. Provider responses are mocked; no live provider calls were made.
+- `bun test tests/intelligence.test.js`: 13 tests / 53 assertions pass both with only baseline + 0049 and with the real mail-track 0048 applied. Provider responses are mocked; no live provider calls were made.
 - Browser-target Bun build passes. Tests cover real SQLite migrations, cross-workspace/user isolation, viewer mutation denial, idempotent extraction/task conversion, dismiss/snooze, evidence rejection, AI failure/empty output, personal sent sample selection, and missing-mail compatibility.
 - Coordinator wires authenticated requests and user-facing controls. These exported service functions assume the same authenticated context; direct automated dispatch must supply the intended user context. No `runScheduled` export.
 - Extraction scans at most 100 recent messages per request (optionally one contact). Attention considers at most 100 distinct contacts plus existing core actions. AI extraction is English-oriented in deterministic mode, leaves deadlines unset for human confirmation, and rejects common quoted/forwarded/conditional promises. It is a review aid, not a guarantee that every promise is detected.
 - Fallback drafts deliberately include editable placeholders and do not pretend to reproduce a sender's style. Configured AI uses selected samples for style; generated text always requires human review. AI unavailability returns fallback; the module never retries or sends mail.
 - Commitments retain their review state and evidence after mail sync. Resolving a commitment does not automatically complete its converted task; the task remains independently managed in the existing CRM.
+
+## Completion and deadline suggestions
+
+`GET /commitments`, `GET /commitments/:id`, and `POST /commitments/extract` include `resolutionEvidence: [{messageId,url,subject,sentAt,quote}]`, `deadlineText`, `suggestedDueDate`, and `suggestedDueAt` on each commitment. Completion evidence is recomputed from at most 30 later messages in the exact original mail connection/thread, scoped to the same workspace/user. It requires explicit completion wording matching the promised action and a shared object term, excludes negation/conditional/questions and quoted mail, and never changes status. The UI can display the quoted evidence and offer its existing explicit Resolve control. Matching is conservative English heuristics and can miss or overmatch nuanced language; it is always a suggestion.
+
+Exact ISO dates become `suggestedDueDate` (YYYY-MM-DD). Only an explicit timezone-bearing ISO timestamp becomes `suggestedDueAt`; relative/ambiguous dates remain quoted `deadlineText`. No suggestion sets `due_at` automatically. Submit the reviewed exact timestamp via the existing PATCH `{status,dueAt}` route. No migration extension is required; these fields derive from original evidence and current mail.
