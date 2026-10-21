@@ -4,6 +4,7 @@ import { assistantHtml } from "./assistant/ui.js";
 import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
 import { readBody } from "./assistant/shared.js";
+import { forwardLegacyApi } from "./legacy-api-bridge.js";
 import { isLegacyPasswordHash, verifyLegacyPassword } from "./legacy-password.js";
 import { enforceMigrationPolicy } from "./migration-policy.js";
 import { handleMigrationHistory } from "./migration-history.js";
@@ -68,6 +69,11 @@ export default {
     const url = new URL(request.url);
 
     try {
+      const legacyResponse = await forwardLegacyApi(request, env);
+      if (legacyResponse) return legacyResponse;
+      if (env.CRM_APP_HOME === "true" && request.method === "GET" && ["/", "/index.html", "/login"].includes(url.pathname)) {
+        return Response.redirect(new URL("/app", url), 302);
+      }
       if (url.pathname === "/migration-history" || url.pathname === "/api/migration-history" || url.pathname.startsWith("/api/migration-history/")) {
         return await handleMigrationHistory(request, env, { requireAuth });
       }
