@@ -763,6 +763,7 @@ export const appHtml = String.raw`<!doctype html>
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
+        const migratedContributor = tenant.workspaces.find((item) => item.id === state.workspaceId)?.migration_role === "ic";
         const [summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("next-best-actions"),
@@ -776,8 +777,8 @@ export const appHtml = String.raw`<!doctype html>
           api("opportunities"),
           api("opportunity-stages"),
           api("duplicates/accounts"),
-          api("sequences"),
-          api("warmup"),
+          migratedContributor ? Promise.resolve([]) : api("sequences"),
+          migratedContributor ? Promise.resolve({ summary: {}, plans: [], mailboxes: [], recentMessages: [] }) : api("warmup"),
           api("tasks"),
           api("communications"),
           api("dialer/sessions"),
