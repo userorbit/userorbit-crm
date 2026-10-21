@@ -5829,6 +5829,7 @@ async function getTenantContext(env, workspaceId, auth) {
   `).bind(auth.user.id).all();
   const workspaces = await env.DB.prepare(`
     SELECT w.*, t.name AS team_name, COALESCE(wm.role, tm.role) AS workspace_role,
+      (SELECT count(*) FROM accounts a WHERE a.workspace_id = w.id) AS account_count,
       (SELECT lm.role FROM legacy_memberships lm WHERE lm.team_id = w.team_id AND lm.user_id = tm.user_id LIMIT 1) AS migration_role
     FROM workspaces w
     JOIN teams t ON t.id = w.team_id
