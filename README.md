@@ -40,6 +40,12 @@ An open source founder-led outreach CRM that runs on Cloudflare Workers and D1.
 - A landing page at `/` and the CRM app at `/app`.
 - A lightweight Linear/Coss-inspired UI served by the Worker.
 
+## Relationship assistant
+
+The optional relationship assistant at `/assistant` adds personal mailbox history, evidence-backed promises and completion suggestions, meeting briefs, voice-aware drafts, cited knowledge search, LinkedIn review imports, referral paths, change observations, recurring jobs, and OAuth MCP access. It builds on the existing CRM and does not change sequence sending behavior. New assistant suggestions and drafts do not send outreach automatically.
+
+See [setup, optional provider configuration, and feature limits](docs/relationship-assistant.md). Apply migrations 0048–0053 with the normal migration workflow before enabling the assistant. Run `bun test` to verify feature and existing-workflow regressions using disposable local data.
+
 ## Self-host in one click
 
 After this directory is published to GitHub, the deploy button above can create a Cloudflare Worker from the repository. Set these Cloudflare values after deploy:

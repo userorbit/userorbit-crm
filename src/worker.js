@@ -1,5 +1,15 @@
 import { connect } from "cloudflare:sockets";
 import { appHtml, landingHtml } from "./ui.js";
+import { assistantHtml } from "./assistant/ui.js";
+import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
+import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
+import { readBody } from "./assistant/shared.js";
+
+const assistantHelpers = configureAssistantHelpers({
+  json, readJson: readBody, httpError, requireAuth, resolveWorkspaceId, requireWorkspaceRole,
+  requireWorkspaceWrite, requireWorkspaceAdmin, recordAuditLog, getContact, getAccount,
+  createContactEmailDraft, getNextBestActions, createAiInsight, getReports, parseJsonObject, sha256Hex,
+});
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -54,11 +64,16 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: JSON_HEADERS });
-    }
-
     try {
+      const assistantPublic = await handleAssistantPublicRequest(request, env, assistantHelpers);
+      if (assistantPublic) return assistantPublic;
+      if (request.method === "OPTIONS") return new Response(null, { headers: JSON_HEADERS });
+      if (request.method === "GET" && url.pathname === "/api/assistant/mail/oauth/callback") {
+        return new Response(mailboxCallbackHtml, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+      }
+      if (request.method === "GET" && url.pathname === "/assistant") {
+        return new Response(assistantHtml, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+      }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         return new Response(landingHtml, { headers: { "content-type": "text/html; charset=utf-8" } });
       }
@@ -129,12 +144,18 @@ export default {
 
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(processScheduledJobs(env));
+    ctx.waitUntil(runAssistantScheduled(env, assistantHelpers));
   },
 };
 
 async function routeApi(request, env, url, auth) {
   const path = url.pathname.replace(/^\/api\/?/, "");
   const workspaceId = await resolveWorkspaceId(env, request, auth);
+
+  if (path.startsWith("assistant/")) {
+    const response = await handleAssistantRequest(request, env, { path: path.slice(10), workspaceId, auth, helpers: assistantHelpers });
+    return response || json({ error: "Not found" }, 404);
+  }
 
   if (request.method === "GET" && path === "health") {
     return json({ ok: true, provider: "cloudflare-workers-d1", smtp: smtpConfigured(env) });

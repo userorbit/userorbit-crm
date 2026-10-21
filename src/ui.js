@@ -606,6 +606,7 @@ export const appHtml = String.raw`<!doctype html>
           <button data-view="forms">Forms</button>
           <button data-view="api">Agent API</button>
           <button data-view="settings">Settings</button>
+          <a class="button" style="margin-top:8px" href="/assistant">Relationship assistant</a>
         </nav>
       </aside>
       <main>

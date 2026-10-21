@@ -218,16 +218,16 @@ Ran a broad product sanity pass after tracker reconciliation: local migrations h
 
 - [x] Confirm repository is userorbit/userorbit-crm and protect dirty primary checkout.
 - [x] Establish isolated branches, shared contracts, and baseline regression suite.
-- [ ] Mail OAuth, full history, and recurring synchronization.
-- [ ] Commitment detection, attention, meeting briefs, and writing voice.
-- [ ] Cited conversational retrieval and document ingestion.
-- [ ] LinkedIn imports, capture, referral graph, and change signals.
-- [ ] Recurring jobs with bounded execution, run history, and notifications.
-- [ ] OAuth MCP connection and permissioned tools.
-- [ ] Integrate usable assistant interface without replacing existing screens.
-- [ ] Verify additive migrations, workspace isolation, viewer denial, old workflows, and Worker build.
-- [ ] Review final diff, commit, and push verified integration branch.
+- [x] Mail OAuth, full history, and recurring synchronization.
+- [x] Commitment detection, attention, meeting briefs, and writing voice.
+- [x] Cited conversational retrieval and document ingestion.
+- [x] LinkedIn imports, capture, referral graph, and change signals.
+- [x] Recurring jobs with bounded execution, run history, and notifications.
+- [x] OAuth MCP connection and permissioned tools.
+- [x] Integrate usable assistant interface without replacing existing screens.
+- [x] Verify additive migrations, workspace isolation, viewer denial, old workflows, and Worker build.
+- [x] Review final diff, commit, and push verified integration branch.
 
 ### Review
 
-In progress. No production deployment or remote database changes are part of this task.
+Implemented all twelve additions across six isolated feature chats and integrated their committed changes. Verification: 120 Bun tests, 668 assertions, populated-database upgrade preservation, Worker dry-run build, scoped MCP dispatch, and browser smoke checks for existing sign-in/dashboard plus knowledge citations, meeting briefs, drafts, and jobs. Security review fixes cover disabled-user access and mailbox scheduling starvation. Live providers were mocked; their deployment credentials and consent remain setup requirements. No production deployment or remote database changes ran. Original dirty checkout remains untouched.
