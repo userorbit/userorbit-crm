@@ -231,3 +231,13 @@ Ran a broad product sanity pass after tracker reconciliation: local migrations h
 ### Review
 
 Implemented all twelve additions across six isolated feature chats and integrated their committed changes. Verification: 120 Bun tests, 668 assertions, populated-database upgrade preservation, Worker dry-run build, scoped MCP dispatch, and browser smoke checks for existing sign-in/dashboard plus knowledge citations, meeting briefs, drafts, and jobs. Security review fixes cover disabled-user access and mailbox scheduling starvation. Live providers were mocked; their deployment credentials and consent remain setup requirements. No production deployment or remote database changes ran. Original dirty checkout remains untouched.
+
+## Production CRM migration and cutover
+
+- [x] Capture consistent read-only source backup and inventory through existing Hyperdrive.
+- [x] Map actual populated data, preserve unsupported records, credentials, ownership and suppressions.
+- [ ] Implement and review migration/auth compatibility; reconcile staging import and access tests.
+- [ ] Deploy support, migrate records, reconcile final delta before hostname cutover.
+- [ ] Keep old app available at gtm.userorb.com; verify new hostname and rollback route.
+
+User explicitly selected migration of existing records before domain switch. No domain change until reconciliation and authentication/access checks pass.

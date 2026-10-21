@@ -607,6 +607,8 @@ export const appHtml = String.raw`<!doctype html>
           <button data-view="api">Agent API</button>
           <button data-view="settings">Settings</button>
           <a class="button" style="margin-top:8px" href="/assistant">Relationship assistant</a>
+          <a class="button" style="margin-top:8px" href="/migration-history">Migrated history</a>
+          <a class="button" style="margin-top:8px" href="https://gtm.userorb.com" target="_blank" rel="noopener noreferrer">Original CRM workflows</a>
         </nav>
       </aside>
       <main>
