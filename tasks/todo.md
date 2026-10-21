@@ -258,3 +258,10 @@ Visual bar: compact Apollo layout and controls; no exposed native select/date/ch
 Apollo review: all 14 core views, 9 assistant sections, 9 settings categories, sign-in, migrated history and public surfaces checked against live Apollo. Desktop1512 and phone390 layouts verified; all main pages have zero horizontal page overflow and no visible native select/date inputs. Custom menus, keyboard Escape priority, calendar/time, sidebar collapse, local company/task submissions and founder/manager/IC/viewer access checked. Existing 141 Bun tests (826 assertions) and 4 importer tests pass. Migrated encoded account/contact/task paths fixed without changing workspace checks.
 
 Live verification: PR5 deployed 6d5d574; PR6 disambiguates duplicate workspace names. Every core view and populated company/contact navigation loads in authenticated Chrome; all 9 assistant sections load with no console errors. Production counts exactly unchanged at 594 accounts / 1,068 contacts / 119 tasks / 8,251 history records. Final assistant review caught and corrected hidden native select min-width causing 6px overflow.
+
+## Userorbit brand refresh
+
+- [x] Replace app wordmarks with the supplied vector symbol, preserving geometry.
+- [x] Replace yellow accents with indigo and accessible white action text.
+- [x] Generate and serve SVG/ICO/PNG favicons, touch icons and web manifest.
+- [ ] Verify light/dark UI, assets, existing tests, then merge and deploy.
