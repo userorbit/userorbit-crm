@@ -5,6 +5,8 @@ import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
 import { readBody } from "./assistant/shared.js";
 import { isLegacyPasswordHash, verifyLegacyPassword } from "./legacy-password.js";
+import { enforceMigrationPolicy } from "./migration-policy.js";
+import { handleMigrationHistory } from "./migration-history.js";
 
 const assistantHelpers = configureAssistantHelpers({
   json, readJson: readBody, httpError, requireAuth, resolveWorkspaceId, requireWorkspaceRole,
@@ -66,6 +68,9 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (url.pathname === "/migration-history" || url.pathname === "/api/migration-history" || url.pathname.startsWith("/api/migration-history/")) {
+        return await handleMigrationHistory(request, env, { requireAuth });
+      }
       const assistantPublic = await handleAssistantPublicRequest(request, env, assistantHelpers);
       if (assistantPublic) return assistantPublic;
       if (request.method === "OPTIONS") return new Response(null, { headers: JSON_HEADERS });
@@ -152,6 +157,7 @@ export default {
 async function routeApi(request, env, url, auth) {
   const path = url.pathname.replace(/^\/api\/?/, "");
   const workspaceId = await resolveWorkspaceId(env, request, auth);
+  request = await enforceMigrationPolicy(request, env, path, workspaceId, auth);
 
   if (path.startsWith("assistant/")) {
     const response = await handleAssistantRequest(request, env, { path: path.slice(10), workspaceId, auth, helpers: assistantHelpers });
