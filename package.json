@@ -21,7 +21,9 @@
     "db:create": "wrangler d1 create userorbit-crm",
     "db:migrate:local": "wrangler d1 migrations apply userorbit-crm --local",
     "db:migrate": "wrangler d1 migrations apply userorbit-crm --remote",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "test": "bun test",
+    "check": "bun test"
   },
   "devDependencies": {
     "wrangler": "^4.81.0"

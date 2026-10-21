@@ -5,10 +5,9 @@ import { resolve } from "node:path";
 export function createD1({ migrations = true } = {}) {
   const sqlite = new Database(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  function prepare(sql) {
-    let values = [];
+  function prepare(sql, values = []) {
     return {
-      bind(...input) { values = input; return this; },
+      bind(...input) { return prepare(sql, input); },
       async all() { return { results: sqlite.prepare(sql).all(...values), success: true }; },
       async first(column) { const row = sqlite.prepare(sql).get(...values); return column ? row?.[column] ?? null : row; },
       async run() { const result = sqlite.prepare(sql).run(...values); return { success: true, meta: { changes: result.changes, last_row_id: Number(result.lastInsertRowid) } }; },
