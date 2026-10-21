@@ -36,7 +36,7 @@ nav button[aria-current=page] svg{color:var(--accent)}
 .back:hover{background:var(--bg-tertiary);border-radius:8px}
 .sidebar-note{padding:10px;color:var(--text-tertiary);font-size:11px;line-height:1.6}
 .workspace-shell{min-width:0}
-.topbar{height:48px;border-bottom:1px solid var(--border-primary);padding:0 24px;display:flex;align-items:center;gap:12px}
+.topbar{position:sticky;top:0;z-index:20;background:var(--bg-main);height:48px;border-bottom:1px solid var(--border-primary);padding:0 24px;display:flex;align-items:center;gap:12px}
 .topbar-label{color:var(--text-secondary);display:flex;align-items:center;gap:8px}
 .topbar-spacer{flex:1}
 .icon-button{width:30px;padding:0;border:0;background:transparent;color:var(--text-secondary)}
@@ -65,7 +65,7 @@ p{line-height:1.6;margin:6px 0}
 .file-picker:hover{background:var(--bg-tertiary)}
 .file-picker:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 .file-picker input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;padding:0}
-.panel form>label:has(input[name=query]),.panel form>label:has(select[name=contactId]),.panel form>label:has(textarea),.panel form>label:has(input[type=file]){grid-column:1/-1}
+.panel form>label:has(input[name=title]),.panel form>label:has(input[name=query]),.panel form>label:has(select[name=contactId]),.panel form>label:has(textarea),.panel form>label:has(input[type=file]){grid-column:1/-1}
 label{display:grid;gap:7px;font-size:12px;font-weight:500;margin:0;color:var(--text-secondary)}
 input,select,textarea{min-height:34px;border:1px solid var(--border-primary);border-radius:8px;padding:7px 10px;background:var(--bg-main);width:100%;color:var(--text-primary);min-width:0}
 input[type=number]{appearance:textfield}
@@ -98,6 +98,10 @@ pre{white-space:pre-wrap;font-size:12px;background:var(--bg-main);border:1px sol
 #content[data-section=network]>.panel,#content[data-section=jobs]>.panel{margin-bottom:0}
 #content[data-section=network]>.panel:nth-child(5),#content[data-section=network]>.panel:last-child,#content[data-section=jobs]>.panel:last-child{grid-column:1/-1}
 #content[data-section=network] .panel form{grid-template-columns:1fr}
+#content[data-section=today] .item{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;row-gap:3px;padding:16px 0;margin-top:0}
+#content[data-section=today] .item h3,#content[data-section=today] .item p,#content[data-section=today] .item .sources{grid-column:1;margin:0}
+#content[data-section=today] .item .actions{grid-column:2;grid-row:1/4;margin:0;align-self:center}
+#content[data-section=today] .item .sources{margin-top:4px}
 .panel .item:last-child{padding-bottom:0}
 .panel .empty+.actions{justify-content:center}
 .loading{height:150px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--text-secondary)}
@@ -126,7 +130,7 @@ nav button{white-space:nowrap}
 .content-wrap{padding:16px}
 .panel{padding:16px}
 .panel form{grid-template-columns:1fr}
-.workspace-picker{width:100%}
+#content[data-section=today] .item{display:block}#content[data-section=today] .item .actions{margin-top:10px}.workspace-picker{width:100%}
 .workspace{max-width:none;flex:1}
 .global-search{max-width:none;flex:1;width:auto}.global-search kbd{display:none}
 .grid{grid-template-columns:1fr}
@@ -198,14 +202,14 @@ function assistantClient(icons) {
     const links = node("div", null, "sources");
     for (const source of array(data)) {
       const raw = source.url || source.sourceUrl || source.source_url || source.href;
-      if (raw) { const url = new URL(raw, location.origin); if (!["https:", "http:"].includes(url.protocol)) continue; const link = node("a", source.title || source.subject || source.label || "View source"); link.href = url.href;
+      if (raw && !/\/api\/accounts\/(null|undefined)$/.test(new URL(raw, location.origin).pathname)) { const url = new URL(raw, location.origin); if (!["https:", "http:"].includes(url.protocol)) continue; const link = node("a", source.title || source.subject || source.label || "View source"); link.href = url.href;
         if (url.origin === location.origin && url.pathname.startsWith("/api/")) link.addEventListener("click", async (event) => { event.preventDefault(); try { const data = await api(url.pathname.slice(5) + url.search); const source = data.source || data.message || data; const viewer = panel(source.title || source.subject || "Source"); viewer.append(node("p", source.body || source.text || source.excerpt || source.content || source.description || source.observation || source.notes || [source.name, source.email, source.domain].filter(Boolean).join(" · ") || "No readable text is available for this source."), button("Close source", () => viewer.remove())); container.append(viewer); } catch (error) { announce(error.message, true); } });
         link.target = "_blank"; link.rel = "noopener noreferrer"; links.append(link); }
       else links.append(node("span", source.title || source.label || source.id || "CRM history", "pill"));
     }
     container.append(links);
   }
-  function card(title, detail, evidence) { const el = node("article", null, "item"); el.append(node("h3", title), node("p", detail || "")); if (evidence) sources(el, evidence); return el; }
+  function card(title, detail, evidence) { const el = node("article", null, "item"); const readable = String(detail || "").replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }); }); el.append(node("h3", title), node("p", readable)); if (evidence) sources(el, evidence); return el; }
   function output(container, data) {
     container.replaceChildren();
     let text = data.answer || data.body || data.summary || data.text;
@@ -225,13 +229,14 @@ function assistantClient(icons) {
   }
   async function show() {
     const generation = ++state.generation;
+    const sectionChanged = state.renderedSection !== state.section;
     $("#heading").textContent = sections[state.section][0]; $("#subtitle").textContent = sections[state.section][1];
     for (const el of $("#navigation").children) el.setAttribute("aria-current", el.dataset.section === state.section ? "page" : "false");
     const content = $("#content"); content.dataset.section = state.section; content.replaceChildren(node("div", "Loading your workspace…", "loading")); content.setAttribute("aria-busy", "true");
     const page = node("div");
     try {
       await views[state.section](page);
-      if (generation === state.generation) content.replaceChildren(...page.childNodes);
+      if (generation === state.generation) { content.replaceChildren(...page.childNodes); if (sectionChanged) window.scrollTo({ top: 0, behavior: "instant" }); state.renderedSection = state.section; }
     } catch (error) { if (generation === state.generation) { content.replaceChildren(emptyState(error.message)); announce(error.message, true); } }
     finally { if (generation === state.generation) content.setAttribute("aria-busy", "false"); }
   }
