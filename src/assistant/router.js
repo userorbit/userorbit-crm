@@ -1,3 +1,4 @@
+import * as updates from "./crm-updates.js";
 import * as mail from "./mail.js";
 import * as intelligence from "./intelligence.js";
 import * as knowledge from "./knowledge.js";
@@ -7,7 +8,7 @@ import { handleMcpRequest } from "./mcp.js";
 import { json, fail, rows } from "./shared.js";
 import { applyJobInstructions } from "./job-instructions.js";
 
-const modules = { mail, intelligence, knowledge, network, automations };
+const modules = { updates, mail, intelligence, knowledge, network, automations };
 
 export async function handleAssistantRequest(request, env, context) {
   const { path, workspaceId, auth, helpers } = context;
@@ -19,7 +20,8 @@ export async function handleAssistantRequest(request, env, context) {
     return json({ contacts: await rows(env, "SELECT c.id,c.name,c.email,c.title,a.name AS account_name FROM contacts c JOIN accounts a ON a.id=c.account_id WHERE a.workspace_id=? ORDER BY c.name LIMIT 500", workspaceId) });
   }
   if (path.startsWith("calendar/events/") && request.method === "GET") {
-    const event = await env.DB.prepare("SELECT title,description,starts_at,ends_at,location FROM calendar_events WHERE id=? AND workspace_id=?").bind(decodeURIComponent(path.slice(16)), workspaceId).first();
+    const id = decodeURIComponent(path.slice(16));
+    const event = await env.DB.prepare("SELECT title,description,starts_at,ends_at,location FROM calendar_events WHERE id=? AND workspace_id=?").bind(id, workspaceId).first() || await env.DB.prepare("SELECT e.title,e.description,e.starts_at,e.ends_at,e.location FROM assistant_calendar_events e JOIN assistant_mail_connections c ON c.id=e.connection_id AND c.workspace_id=e.workspace_id AND c.user_id=e.user_id WHERE e.id=? AND e.workspace_id=? AND e.user_id=? AND c.status='active'").bind(id,workspaceId,auth.user.id).first();
     if (!event) throw fail(404, "Meeting not found");
     return json({ source: { title: event.title, body: [event.description,event.starts_at,event.ends_at,event.location].filter(Boolean).join("\n") } });
   }
@@ -80,6 +82,12 @@ export async function dispatchAssistantJob(env, job) {
   let data;
   let summary;
   switch (job.template) {
+    case "crm_review": {
+      const result = await updates.extractCrmUpdates(env, context);
+      data = await rows(env, "SELECT id,entity_type,entity_name,field,status FROM assistant_crm_updates WHERE workspace_id=? AND user_id=? AND status='proposed' ORDER BY created_at DESC LIMIT 100", job.workspaceId, job.userId);
+      summary = `${result.created} new CRM updates proposed; ${data.length} await your review. No CRM fields were changed.`;
+      break;
+    }
     case "attention": {
       const result = await intelligence.getAttention(env, context);
       data = result.suggestions;
@@ -93,7 +101,7 @@ export async function dispatchAssistantJob(env, job) {
       break;
     }
     case "meeting_brief": {
-      const events = await rows(env, "SELECT id FROM calendar_events WHERE workspace_id=? AND starts_at>=? AND starts_at<? ORDER BY starts_at LIMIT 10", job.workspaceId, new Date().toISOString(), new Date(Date.now() + 86400000).toISOString());
+      const events = await rows(env, "SELECT id,starts_at FROM calendar_events WHERE workspace_id=? AND starts_at>=? AND starts_at<? UNION ALL SELECT e.id,e.starts_at FROM assistant_calendar_events e JOIN assistant_mail_connections c ON c.id=e.connection_id AND c.workspace_id=e.workspace_id AND c.user_id=e.user_id WHERE e.workspace_id=? AND e.user_id=? AND c.status='active' AND e.starts_at>=? AND e.starts_at<? ORDER BY starts_at LIMIT 10", job.workspaceId, new Date().toISOString(), new Date(Date.now() + 86400000).toISOString(), job.workspaceId,job.userId,new Date().toISOString(),new Date(Date.now()+86400000).toISOString());
       data = [];
       for (const event of events) { if (job.signal?.aborted) throw fail(408, "Job cancelled"); data.push(await intelligence.buildMeetingBrief(env, context, event.id)); }
       summary = data.length ? `${data.length} upcoming meeting briefs are ready.` : "No meetings in the next 24 hours.";

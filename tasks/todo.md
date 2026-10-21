@@ -265,3 +265,16 @@ Live verification: PR5 deployed 6d5d574; PR6 disambiguates duplicate workspace n
 - [x] Replace yellow accents with indigo and accessible white action text.
 - [x] Generate and serve SVG/ICO/PNG favicons, touch icons and web manifest.
 - [ ] Verify light/dark UI, assets, existing tests, then merge and deploy.
+
+## Actual CRM gaps and Google Workspace / GPT-6 Luna
+
+- [x] Extend existing records/tasks and enforce workspace do-not-contact rules without rebuilding existing features.
+- [x] Connect Google Workspace with encrypted OAuth, private Gmail/calendar context, explicit inbox actions and clear setup status.
+- [x] Add evidence-backed CRM update suggestions with explicit review/apply and GPT-6 Luna across AI workflows.
+- [x] Integrate assistant connection/inbox/update screens with existing custom controls and brand.
+- [x] Verify upgrade preservation, permissions/private data, outbound boundaries, regression tests and browser flows.
+- [ ] Merge verified changes, back up production, apply additive migrations, deploy and verify live.
+
+Scope excludes Content Studio, campaign planning, content approvals and other unused GTM wishlist features. Reuse existing CRM records, duplicates, roles, sequences, briefs, promises, drafts and jobs. Live Google consent and OpenAI execution require user-supplied provider credentials; never infer successful external connectivity from mocked tests.
+
+Verification: 186 Bun tests / 1,082 assertions, four importer regressions and Worker dry-run pass. Local browser verifies private inbox/thread reading, canonical reply-all preview, mocked explicit send, accepted CRM update, blocked task creation/editing, structured qualification and original history. Production snapshot upgrade verified 84 existing tables / 36,420 rows with zero unexpected changes; 55 untouched tasks recover original in-progress/blocked status. No live Google consent, OpenAI request or real email was performed.

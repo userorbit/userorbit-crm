@@ -1,4 +1,9 @@
-// Read-only mailbox ingestion. This module never sends email or creates contacts.
+import {
+  handleGoogleWorkspace,
+  googleScopes,
+  syncGoogleCalendar,
+} from "./google-workspace.js";
+// Mailbox ingestion remains private; sending requires a separate explicit grant.
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const GRAPH = "https://graph.microsoft.com/v1.0/me";
 const now = () => Date.now();
@@ -29,7 +34,7 @@ async function key(env) {
     ["encrypt", "decrypt"],
   );
 }
-async function seal(env, value) {
+export async function seal(env, value) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   return (
     b64(iv) +
@@ -45,7 +50,7 @@ async function seal(env, value) {
     )
   );
 }
-async function unseal(env, value) {
+export async function unseal(env, value) {
   const [iv, data] = value.split(".");
   return JSON.parse(
     new TextDecoder().decode(
@@ -57,14 +62,22 @@ async function unseal(env, value) {
     ),
   );
 }
-function config(env, provider) {
+export function config(env, provider) {
   if (!["gmail", "microsoft"].includes(provider))
     throw fail(400, "Unsupported mail provider");
   const prefix =
     provider === "gmail" ? "ASSISTANT_GOOGLE" : "ASSISTANT_MICROSOFT";
-  const client = env[prefix + "_CLIENT_ID"],
-    secret = env[prefix + "_CLIENT_SECRET"];
-  const redirect = env[prefix + "_REDIRECT_URI"];
+  const client =
+      env[prefix + "_CLIENT_ID"] ||
+      (provider === "gmail" && env.GOOGLE_CLIENT_ID),
+    secret =
+      env[prefix + "_CLIENT_SECRET"] ||
+      (provider === "gmail" && env.GOOGLE_CLIENT_SECRET);
+  const redirect =
+    env[prefix + "_REDIRECT_URI"] ||
+    (provider === "gmail" && env.CRM_PUBLIC_URL
+      ? `${env.CRM_PUBLIC_URL.replace(/\/$/, "")}/api/assistant/mail/oauth/callback`
+      : null);
   if (!client || !secret || !redirect)
     throw fail(503, "Mail provider is not configured");
   return {
@@ -85,7 +98,7 @@ function config(env, provider) {
         : "offline_access User.Read Mail.Read",
   };
 }
-async function http(env, url, options = {}) {
+export async function http(env, url, options = {}) {
   const response = await (env.MAIL_FETCH || fetch)(url, {
     ...options,
     redirect: "error",
@@ -100,7 +113,7 @@ async function http(env, url, options = {}) {
     );
   return response.json();
 }
-async function token(env, provider, fields) {
+export async function token(env, provider, fields) {
   const c = config(env, provider);
   return http(env, c.token, {
     method: "POST",
@@ -112,8 +125,11 @@ async function token(env, provider, fields) {
     }),
   });
 }
-export async function startOAuth(env, context, provider) {
+export async function startOAuth(env, context, provider, intent = "readonly") {
   const c = config(env, provider);
+  if (!["readonly", "workspace", "send"].includes(intent))
+    throw fail(400, "Invalid connection intent");
+  const requested = provider === "gmail" ? googleScopes(intent) : c.scope;
   await key(env);
   const state = random(),
     verifier = random();
@@ -124,7 +140,7 @@ export async function startOAuth(env, context, provider) {
   ).run();
   await stmt(
     env,
-    "INSERT INTO assistant_mail_oauth_states VALUES (?,?,?,?,?,?,?)",
+    "INSERT INTO assistant_mail_oauth_states (state,workspace_id,user_id,provider,verifier,redirect_uri,expires_at,requested_scopes) VALUES (?,?,?,?,?,?,?,?)",
     state,
     context.workspaceId,
     context.auth.user.id,
@@ -132,13 +148,14 @@ export async function startOAuth(env, context, provider) {
     await seal(env, verifier),
     c.redirect,
     now() + 600000,
+    requested,
   ).run();
   const url = new URL(c.authorize);
   url.search = new URLSearchParams({
     client_id: c.client,
     redirect_uri: c.redirect,
     response_type: "code",
-    scope: c.scope,
+    scope: requested,
     state,
     code_challenge: b64(
       new Uint8Array(
@@ -210,17 +227,22 @@ export async function handleOAuthCallback(request, env, context) {
       profile.userPrincipalName ||
       ""
     ).toLowerCase();
-    if (!email.includes("@"))
+    if (!/^[^\s<>@,\r\n]+@[^\s<>@,\r\n]+\.[^\s<>@,\r\n]+$/.test(email))
       throw fail(400, "Provider did not return a mailbox address");
+    const grantedScopes =
+      tokens.scope ||
+      state.requested_scopes ||
+      config(env, state.provider).scope;
     const credentials = await seal(env, {
       ...tokens,
+      scope: grantedScopes,
       expires_at: now() + Number(tokens.expires_in || 3600) * 1000,
     });
     const id = crypto.randomUUID();
     await stmt(
       env,
-      `INSERT INTO assistant_mail_connections (id,workspace_id,user_id,provider,account_email,credentials,created_at) VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT(workspace_id,user_id,provider,account_email) DO UPDATE SET credentials=excluded.credentials,status='active',last_error=NULL,next_sync_at=0`,
+      `INSERT INTO assistant_mail_connections (id,workspace_id,user_id,provider,account_email,credentials,created_at,granted_scopes) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(workspace_id,user_id,provider,account_email) DO UPDATE SET credentials=excluded.credentials,status='active',last_error=NULL,next_sync_at=0,granted_scopes=excluded.granted_scopes`,
       id,
       state.workspace_id,
       state.user_id,
@@ -228,6 +250,7 @@ export async function handleOAuthCallback(request, env, context) {
       email,
       credentials,
       iso(),
+      grantedScopes,
     ).run();
     return Response.json({
       connected: true,
@@ -260,7 +283,13 @@ function plain(html) {
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
 }
-async function gmailBody(env, api, messageId, part) {
+async function gmailBody(env, api, messageId, part, depth = 0) {
+  if (depth > 10) return "";
+  if (
+    Number(part.body?.size || 0) > 500000 ||
+    (part.body?.data?.length || 0) > 700000
+  )
+    return "[Message body exceeds preview limit]";
   if (part.filename) return "";
   if (part.parts) {
     const preferred =
@@ -270,10 +299,12 @@ async function gmailBody(env, api, messageId, part) {
               part.parts.find((p) => p.mimeType === "text/html") ||
               part.parts[0],
           ]
-        : part.parts;
+        : part.parts.slice(0, 50);
     return (
       await Promise.all(
-        preferred.filter(Boolean).map((p) => gmailBody(env, api, messageId, p)),
+        preferred
+          .filter(Boolean)
+          .map((p) => gmailBody(env, api, messageId, p, depth + 1)),
       )
     )
       .filter(Boolean)
@@ -585,7 +616,7 @@ export async function syncConnection(env, id, workspaceId, userId) {
 export async function runScheduled(env, helpers) {
   const rows = await stmt(
     env,
-    "SELECT c.id,c.workspace_id,c.user_id FROM assistant_mail_connections c JOIN users u ON u.id=c.user_id AND u.status='active' WHERE c.status='active' AND c.next_sync_at<=? AND c.lease_until<? ORDER BY c.next_sync_at,c.id LIMIT 2",
+    "SELECT c.* FROM assistant_mail_connections c JOIN users u ON u.id=c.user_id AND u.status='active' WHERE c.status='active' AND c.next_sync_at<=? AND c.lease_until<? ORDER BY c.next_sync_at,c.id LIMIT 2",
     now(),
     now(),
   ).all();
@@ -624,6 +655,19 @@ export async function runScheduled(env, helpers) {
       results.push({
         id: c.id,
         ...(await syncConnection(env, c.id, c.workspace_id, c.user_id)),
+        ...(c.provider === "gmail" &&
+        c.granted_scopes.includes("calendar.events.readonly")
+          ? {
+              calendar: await syncGoogleCalendar(
+                env,
+                {
+                  workspaceId: c.workspace_id,
+                  auth: { user: { id: c.user_id } },
+                },
+                c,
+              ).catch(() => ({ error: "Calendar sync deferred" })),
+            }
+          : {}),
       });
     } catch {
       results.push({ id: c.id, error: "Sync deferred" });
@@ -638,6 +682,8 @@ export async function handleRequest(request, env, context) {
     return Response.json({ error: "Authentication required" }, { status: 401 });
   const userId = auth.user.id;
   try {
+    const googleResponse = await handleGoogleWorkspace(request, env, context);
+    if (googleResponse) return googleResponse;
     if (
       !["GET", "HEAD"].includes(request.method) &&
       context.helpers?.requireWorkspaceWrite
@@ -646,11 +692,21 @@ export async function handleRequest(request, env, context) {
     if (path === "mail/connections" && request.method === "GET") {
       const rows = await stmt(
         env,
-        "SELECT id,provider,account_email,status,last_sync_at,last_error,created_at FROM assistant_mail_connections WHERE workspace_id=? AND user_id=?",
+        "SELECT id,provider,account_email,status,last_sync_at,last_error,created_at,granted_scopes FROM assistant_mail_connections WHERE workspace_id=? AND user_id=?",
         workspaceId,
         userId,
       ).all();
-      return Response.json({ connections: rows.results });
+      return Response.json({
+        connections: rows.results.map((c) => ({
+          ...c,
+          canSend: c.granted_scopes
+            .split(" ")
+            .includes("https://www.googleapis.com/auth/gmail.send"),
+          calendarEnabled: c.granted_scopes.includes(
+            "calendar.events.readonly",
+          ),
+        })),
+      });
     }
     if (path === "mail/connect" && request.method === "POST") {
       let body;
@@ -659,7 +715,9 @@ export async function handleRequest(request, env, context) {
       } catch {
         throw fail(400, "Invalid JSON");
       }
-      return Response.json(await startOAuth(env, context, body?.provider));
+      return Response.json(
+        await startOAuth(env, context, body?.provider, body?.intent),
+      );
     }
     if (path === "mail/messages" && request.method === "GET") {
       const url = new URL(request.url),
@@ -702,6 +760,30 @@ export async function handleRequest(request, env, context) {
         await syncConnection(env, match[1], workspaceId, userId),
       );
     if (match && request.method === "DELETE" && !match[2]) {
+      const c = await stmt(
+        env,
+        "SELECT * FROM assistant_mail_connections WHERE id=? AND workspace_id=? AND user_id=?",
+        match[1],
+        workspaceId,
+        userId,
+      ).first();
+      if (c?.provider === "gmail") {
+        try {
+          const credentials = await unseal(env, c.credentials);
+          await (env.MAIL_FETCH || fetch)(
+            "https://oauth2.googleapis.com/revoke",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                token: credentials.refresh_token || credentials.access_token,
+              }),
+              redirect: "error",
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+        } catch {}
+      }
       await env.DB.batch([
         stmt(
           env,

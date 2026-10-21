@@ -34,6 +34,18 @@ export async function enforceMigrationPolicy(request, env, path, workspaceId, au
     return request;
   }
 
+  if (request.method === "PATCH" && /^contacts\/[^/]+$/.test(path)) {
+    const input = await readBody(request.clone());
+    if (["status", "owner", "ownerId", "owner_id", "accountId", "account_id", "workspaceId", "workspace_id"].some((key) => Object.hasOwn(input, key))) {
+      throw forbidden("Only a team lead can change contact ownership, account, or outreach status.");
+    }
+    return request;
+  }
+  // Personal Google connections do not grant shared CRM or outreach administration.
+  if (request.method === "POST" && ["assistant/mail/connect", "assistant/mail/oauth/callback"].includes(path)) return request;
+  if (request.method === "POST" && /^assistant\/mail\/connections\/[^/]+\/(sync|calendar-sync)$/.test(path)) return request;
+  if (request.method === "DELETE" && /^assistant\/mail\/connections\/[^/]+$/.test(path)) return request;
+
   if (request.method === "POST" && ["contacts", "tasks", "communications"].includes(path)) return request;
   if (request.method === "PATCH" && /^tasks\/[^/]+$/.test(path)) return request;
   if (request.method === "POST" && /^contacts\/[^/]+\/(reply|unsubscribe)$/.test(path)) return request;

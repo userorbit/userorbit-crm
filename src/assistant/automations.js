@@ -1,6 +1,7 @@
 import { fail, readBody, rows } from './shared.js';
 
 export const templates = [
+  { id: 'crm_review', name: 'CRM update review', instructions: 'Review recent conversations and propose evidenced CRM field changes for explicit approval. Never apply changes automatically.' },
   { id: 'attention', name: 'Relationship attention', instructions: 'Review relationships needing attention and suggest next actions with supporting sources.' },
   { id: 'commitments', name: 'Commitment review', instructions: 'Review outstanding commitments, deadlines, and supporting messages. Suggest follow-ups without sending.' },
   { id: 'meeting_brief', name: 'Meeting preparation', instructions: 'Prepare briefs for upcoming meetings with relationship context and source references.' },

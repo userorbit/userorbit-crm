@@ -76,3 +76,17 @@ test("invalid account payloads produce client errors before mutation", async () 
   await expect(guard("accounts", "POST", null)).rejects.toMatchObject({ status: 400 });
   await expect(guard("accounts", "POST", [])).rejects.toMatchObject({ status: 400 });
 });
+
+
+test("migrated ICs can maintain contact details and private Google connections without gaining outreach rights", async () => {
+  expect((await guard("contacts/contact", "PATCH", { title: "Head of Sales" })).method).toBe("PATCH");
+  for (const key of ["status", "owner", "ownerId", "accountId", "workspaceId"]) {
+    await expect(guard("contacts/contact", "PATCH", { [key]: "changed" })).rejects.toMatchObject({ status: 403 });
+  }
+  for (const path of ["assistant/mail/connect", "assistant/mail/oauth/callback", "assistant/mail/connections/mine/sync", "assistant/mail/connections/mine/calendar-sync"]) {
+    expect((await guard(path)).method).toBe("POST");
+  }
+  expect((await guard("assistant/mail/connections/mine", "DELETE")).method).toBe("DELETE");
+  await expect(guard("assistant/mail/send")).rejects.toMatchObject({ status: 403 });
+  await expect(guard("assistant/updates/guessed/review", "POST", { action: "accept" })).rejects.toMatchObject({ status: 403 });
+});

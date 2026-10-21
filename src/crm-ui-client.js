@@ -46,7 +46,23 @@ const formLabels = {
   emailSyncSourceForm: "Mailbox sync",
   customFieldForm: "Custom field",
   stageForm: "Pipeline stage",
+  suppressionForm: "Do-not-contact rule",
 };
+function showOriginalHistory(record) {
+  const previous=document.activeElement;
+  const backdrop=document.createElement('div'); backdrop.className='crm-prompt-backdrop';
+  const dialog=document.createElement('section'); dialog.className='crm-prompt'; dialog.setAttribute('role','dialog'); dialog.setAttribute('aria-modal','true'); dialog.setAttribute('aria-labelledby','history-record-title');
+  dialog.style.width='min(720px,calc(100vw - 32px))';
+  const heading=document.createElement('h2'); heading.id='history-record-title'; heading.textContent=record.title;
+  const metadata=document.createElement('p'); metadata.textContent='Original CRM · '+record.source_table.replaceAll('_',' ');
+  const content=document.createElement('pre'); content.textContent=JSON.stringify(record.payload,null,2); content.style.cssText='max-height:60vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7';
+  const close=document.createElement('button'); close.className='button'; close.type='button'; close.textContent='Close';
+  dialog.append(heading,metadata,content,close); backdrop.append(dialog); document.body.append(backdrop);
+  const siblings=[...document.body.children].filter(node=>node!==backdrop && !node.inert); siblings.forEach(node=>node.inert=true);
+  const dismiss=()=>{backdrop.remove(); siblings.forEach(node=>node.inert=false); previous?.focus();};
+  close.addEventListener('click',dismiss); backdrop.addEventListener('click',event=>{if(event.target===backdrop)dismiss();});
+  dialog.addEventListener('keydown',event=>{if(event.key==='Escape'){event.stopPropagation();dismiss();} if(event.key==='Tab'){event.preventDefault();close.focus();}}); close.focus();
+}
 let editorReturnFocus = null;
 function currentMigrationRole() {
   return state.tenant?.workspaces?.find((item) => item.id === state.workspaceId)
@@ -242,6 +258,7 @@ function mountSettings() {
     team: ["teamForm", "workspaceForm", "inviteForm"],
     access: ["tokenForm"],
     email: [
+      "suppressionForm",
       "emailSettingsForm",
       "emailTemplateForm",
       "emailTemplatePreviewForm",
@@ -274,6 +291,8 @@ function mountSettings() {
     Organization: "team",
     "Workspace tokens": "access",
     "Team invitations": "team",
+    "Do-not-contact rules": "email",
+    "Google Workspace": "email",
     "Email templates": "email",
     "Email senders": "email",
     "Email inbound sources": "email",
@@ -715,7 +734,14 @@ function installShellActions() {
       state.taskFilter = taskFilter.dataset.taskFilter;
       render();
     }
-    if (event.target.closest("[data-open-editor]")) openEditor();
+    if (event.target.closest("[data-open-editor]")) {
+      if (state.view === 'tasks') {
+        const form=document.querySelector('#taskForm'); form?.reset();
+        const title=document.querySelector('#editor-heading'); if (title) title.textContent='Create task';
+        const submit=form?.querySelector('button[type="submit"],button:not([type])'); if (submit) submit.textContent='Create task';
+      }
+      openEditor();
+    }
     if (event.target.closest(".nav button,.nav>a"))
       document.documentElement.classList.remove("mobile-nav-open");
     if (
@@ -833,6 +859,20 @@ function installShellActions() {
     }
   });
   document.addEventListener("click", async (event) => {
+    const editTask=event.target.closest("[data-edit-task]");
+    if (editTask) {
+      const task=state.tasks.find(item=>item.id===editTask.dataset.editTask);
+      const form=document.querySelector("#taskForm");
+      if (!task || !form) return;
+      const due = task.due_at ? new Date(task.due_at) : null;
+      const localDueAt = due && !Number.isNaN(due.getTime()) ? new Date(due.getTime() - due.getTimezoneOffset() * 60000).toISOString().slice(0,16) : '';
+      const fields={id:task.id,title:task.title,kind:task.kind,dueAt:localDueAt,accountId:task.account_id,notes:task.notes,ownerUserId:task.owner_user_id,priority:task.priority,status:task.status,blockedReason:task.blocked_reason,definitionOfDone:task.definition_of_done};
+      for (const [key,value] of Object.entries(fields)) { const input=form.elements.namedItem(key); if (input) {input.value=value || ''; input.dispatchEvent(new Event('change',{bubbles:true}));} }
+      const heading=document.querySelector('#editor-heading'); if (heading) heading.textContent='Edit task';
+      form.querySelector('button[type="submit"],button:not([type])').textContent='Save task';
+      openEditor();
+      return;
+    }
     if (event.target.closest("#loadMoreTasks")) {
       const rows = await api("tasks?offset=" + state.tasks.length);
       state.tasks.push(...rows);

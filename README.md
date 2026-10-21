@@ -46,6 +46,14 @@ The optional relationship assistant at `/assistant` adds personal mailbox histor
 
 See [setup, optional provider configuration, and feature limits](docs/relationship-assistant.md). Apply migrations 0048–0053 with the normal migration workflow before enabling the assistant. Run `bun test` to verify feature and existing-workflow regressions using disposable local data.
 
+## Google Workspace and AI workflows
+
+Connect your Google account from **AI Assistant → Google Workspace**. The connection reads Gmail and primary-calendar context privately. Gmail sending is an optional additional consent and always requires a signed-in user's explicit review and send action. Existing SMTP sequences remain separate.
+
+Configure a Google OAuth web application with the redirect URI `https://YOUR-CRM/api/assistant/mail/oauth/callback`, enable Gmail and Calendar APIs, and add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a stable random `ASSISTANT_MAIL_TOKEN_KEY` of at least 32 characters to the Worker. `CRM_PUBLIC_URL` must be your public HTTPS origin. Existing `ASSISTANT_GOOGLE_*` configuration remains supported. The connection screen reports missing configuration without exposing secrets. See [Google Workspace setup](docs/google-workspace.md).
+
+Add `OPENAI_API_KEY` as a Worker secret to enable AI generation. All workflow defaults use **GPT-6 Luna** (`gpt-6-luna`); `OPENAI_MODEL` remains an optional override. The **CRM updates** queue proposes cited changes from authorized conversations and applies them only after explicit acceptance. Recurring **CRM update review** jobs prepare suggestions without changing records or sending messages. Existing briefs, promises, drafts and knowledge workflows retain their scope. See [AI workflows](docs/ai-workflows.md).
+
 ## Self-host in one click
 
 After this directory is published to GitHub, the deploy button above can create a Cloudflare Worker from the repository. Set these Cloudflare values after deploy:
@@ -56,7 +64,7 @@ After this directory is published to GitHub, the deploy button above can create 
 - Optional SMTP secrets: `CRM_FROM_EMAIL`, `CRM_FROM_NAME`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USERNAME`, `SMTP_PASSWORD`
 - Optional OAuth/OIDC secrets: `OAUTH_AUTHORIZATION_URL`, `OAUTH_TOKEN_URL`, `OAUTH_USERINFO_URL`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_ALLOWED_DOMAINS`
 - Optional calendar OAuth secrets: `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`, `MICROSOFT_CALENDAR_CLIENT_ID`, `MICROSOFT_CALENDAR_CLIENT_SECRET`, `MICROSOFT_CALENDAR_TENANT`
-- Optional AI secrets: `OPENAI_API_KEY`, `OPENAI_MODEL`
+- Optional AI secret: `OPENAI_API_KEY`; `OPENAI_MODEL` defaults to `gpt-6-luna`.
 
 The public repository is available at https://github.com/userorbit/userorbit-crm.
 
@@ -111,7 +119,7 @@ MICROSOFT_CALENDAR_CLIENT_ID="microsoft-client-id"
 MICROSOFT_CALENDAR_CLIENT_SECRET="microsoft-client-secret"
 MICROSOFT_CALENDAR_TENANT="common"
 OPENAI_API_KEY="sk-..."
-OPENAI_MODEL="gpt-5-mini"
+OPENAI_MODEL="gpt-6-luna"
 ```
 
 Zoho supports SMTP on `smtp.zoho.com` with SSL on port `465` and TLS/STARTTLS on port `587`. If the Zoho account has 2FA enabled, use an application-specific password.
