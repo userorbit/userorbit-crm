@@ -1,5 +1,6 @@
 import { connect } from "cloudflare:sockets";
 import { appHtml, landingHtml } from "./ui.js";
+import { interFontBase64 } from "./inter-font.js";
 import { assistantHtml } from "./assistant/ui.js";
 import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
@@ -14,6 +15,8 @@ const assistantHelpers = configureAssistantHelpers({
   requireWorkspaceWrite, requireWorkspaceAdmin, recordAuditLog, getContact, getAccount,
   createContactEmailDraft, getNextBestActions, createAiInsight, getReports, parseJsonObject, sha256Hex,
 });
+
+let interFontBytes;
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -69,6 +72,16 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (request.method === "GET" && url.pathname === "/assets/inter-variable-693b77d4.woff2") {
+        interFontBytes ||= Uint8Array.from(atob(interFontBase64), (character) => character.charCodeAt(0));
+        return new Response(interFontBytes, {
+          headers: {
+            "content-type": "font/woff2",
+            "cache-control": "public, max-age=31536000, immutable",
+            "x-content-type-options": "nosniff",
+          },
+        });
+      }
       const legacyResponse = await forwardLegacyApi(request, env);
       if (legacyResponse) return legacyResponse;
       if (env.CRM_APP_HOME === "true" && request.method === "GET" && ["/", "/index.html", "/login"].includes(url.pathname)) {
@@ -621,7 +634,7 @@ async function routeApi(request, env, url, auth) {
   }
 
   if (request.method === "GET" && path === "tasks") {
-    return json(await listTasks(env, workspaceId));
+    return json(await listTasks(env, url, workspaceId));
   }
 
   if (request.method === "POST" && path === "tasks") {
@@ -3274,16 +3287,20 @@ function stageNotInClause(stages, column = "stage") {
   return stages.length ? `${column} NOT IN (${stages.map(() => "?").join(", ")})` : "1 = 1";
 }
 
-async function listTasks(env, workspaceId) {
+async function listTasks(env, url, workspaceId) {
+  const pageLimit = Number(url.searchParams.get("limit") || 100);
+  const pageOffset = Number(url.searchParams.get("offset") || 0);
+  const limit = Number.isFinite(pageLimit) ? Math.max(1, Math.min(100, Math.floor(pageLimit))) : 100;
+  const offset = Number.isFinite(pageOffset) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(pageOffset))) : 0;
   const rows = await env.DB.prepare(`
     SELECT t.*, a.name AS account_name, c.name AS contact_name
     FROM tasks t
     LEFT JOIN accounts a ON a.id = t.account_id
     LEFT JOIN contacts c ON c.id = t.contact_id
     WHERE t.workspace_id = ?
-    ORDER BY COALESCE(t.due_at, t.created_at) ASC
-    LIMIT 100
-  `).bind(workspaceId).all();
+    ORDER BY COALESCE(t.due_at, t.created_at) ASC, t.id ASC
+    LIMIT ? OFFSET ?
+  `).bind(workspaceId, limit, offset).all();
   return rows.results;
 }
 
