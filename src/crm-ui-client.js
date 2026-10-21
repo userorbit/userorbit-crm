@@ -129,6 +129,7 @@ function installShellActions() {
   document.querySelector('#globalSearchForm').addEventListener('submit',async event=>{event.preventDefault();state.view='accounts';state.accountOffset=0;state.selectedSavedViewId='';state.accountFilters.q=document.querySelector('#globalSearchInput').value.trim();await refresh();});
   document.addEventListener('click',event=>{
     document.querySelectorAll('.dashboard-customize[open]').forEach(disclosure=>{if(!disclosure.contains(event.target)&&!window.CrmControls?.contains(event.target))disclosure.open=false;});
+    const taskFilter=event.target.closest('[data-task-filter]');if(taskFilter){state.taskFilter=taskFilter.dataset.taskFilter;render();}
     if(event.target.closest('[data-open-editor]')) openEditor();
     if(event.target.closest('.nav button,.nav>a')) document.documentElement.classList.remove('mobile-nav-open');
     if(document.documentElement.classList.contains('mobile-nav-open')&&!event.target.closest('.sidebar,#mobileMenu')) document.documentElement.classList.remove('mobile-nav-open');
