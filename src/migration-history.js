@@ -12,7 +12,7 @@ export async function handleMigrationHistory(request, env, helpers) {
   const url = new URL(request.url);
   if (request.method !== "GET") return json({ error: "Read-only history" }, 405);
   if (url.pathname === "/migration-history") {
-    return new Response(migrationHistoryHtml(), { headers: { ...PRIVATE_HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" } });
+    return new Response(migrationHistoryHtml(), { headers: { ...PRIVATE_HEADERS, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" } });
   }
   const auth = await helpers.requireAuth(request, env);
   if (auth.kind !== "session" || auth.user?.status !== "active") return json({ error: "Sign in with your user account to view migrated history" }, 403);
