@@ -10,7 +10,7 @@ beforeEach(() => {
     CREATE TABLE workspaces (id TEXT, team_id TEXT);
     CREATE TABLE legacy_memberships (source_workspace_id TEXT, user_id TEXT, team_id TEXT, role TEXT);
     INSERT INTO workspaces VALUES ('own', 'imported-team'), ('unrelated', 'other-team');
-    INSERT INTO legacy_memberships VALUES ('source', 'ic', 'imported-team', 'ic'), ('source', 'lead', 'imported-team', 'founder');
+    INSERT INTO legacy_memberships VALUES ('source', 'ic', 'imported-team', 'ic'), ('source', 'lead', 'imported-team', 'founder'), ('source', 'manager', 'imported-team', 'manager');
   `);
 });
 afterEach(() => db.close());
@@ -55,6 +55,21 @@ test("nonmigrated users and team leads keep their existing permissions", async (
     expect((await guard("sequences", "POST", {}, identity)).method).toBe("POST");
   }
   expect((await guard("sequences", "POST", {}, auth, "unrelated")).method).toBe("POST");
+});
+
+test("migrated managers cannot grant team access while keeping team data and reporting permissions", async () => {
+  const manager = { user: { id: "manager" } };
+  for (const method of ["POST", "PATCH", "DELETE"]) {
+    for (const path of ["team-invitations", "team-invitations/invitation"]) {
+      await expect(guard(path, method, { role: "owner" }, manager)).rejects.toMatchObject({ status: 403 });
+    }
+  }
+  for (const [path, method] of [["team-invitations", "GET"], ["accounts/company", "PATCH"], ["tasks", "POST"], ["reports", "GET"]]) {
+    expect((await guard(path, method, {}, manager)).method).toBe(method);
+  }
+  expect((await guard("team-invitations", "POST", {}, { user: { id: "lead" } })).method).toBe("POST");
+  expect((await guard("team-invitations", "POST", {}, { user: { id: "ordinary" } })).method).toBe("POST");
+  expect((await guard("team-invitations", "POST", {}, manager, "unrelated")).method).toBe("POST");
 });
 
 test("invalid account payloads produce client errors before mutation", async () => {

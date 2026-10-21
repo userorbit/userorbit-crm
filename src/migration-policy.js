@@ -10,6 +10,9 @@ export async function enforceMigrationPolicy(request, env, path, workspaceId, au
     JOIN workspaces w ON w.team_id = lm.team_id
     WHERE w.id = ? AND lm.user_id = ?
   `).bind(workspaceId, auth.user.id).first();
+  if (membership?.role === "manager" && request.method !== "GET" && (path === "team-invitations" || path.startsWith("team-invitations/"))) {
+    throw forbidden("Only a founder can invite members or change team access.");
+  }
   if (membership?.role !== "ic") return request;
 
   if (request.method === "GET" && !["sequences", "warmup"].includes(path) && !/^dialer\/sessions\/[^/]+\/next$/.test(path)) return request;
