@@ -1,10 +1,143 @@
+import { designSystemCss, icon } from "../design-system.js";
+import { uiControlsCss, uiControlsScript } from "../ui-controls.js";
+
+const assistantIcons = Object.fromEntries(["home", "check", "calendar", "mail", "book", "network", "clock", "bot", "shield", "search", "plus", "arrow-left", "external", "chevron-down", "help", "sun", "moon"].map((name) => [name, icon(name)]));
+
 // Serialized callbacks need the name helper that Wrangler adds when bundling.
 export const assistantHtml = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relationship assistant · Userorbit CRM</title><style>
-:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#24232b;background:#f7f7f9;font-synthesis:none;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button,a.button{min-height:40px;padding:9px 14px;border:1px solid #dedde5;border-radius:8px;background:white;color:inherit;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:background .15s,transform .15s}button:hover,a.button:hover{background:#efedf6}button:active{transform:scale(.96)}button:disabled{opacity:.5;cursor:wait}button.primary{background:#6150bd;color:white;border-color:#6150bd}a{color:#6150bd}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #b5a6f3;outline-offset:2px}.layout{display:grid;grid-template-columns:225px 1fr;min-height:100dvh}aside{background:#fff;border-right:1px solid #e9e8ee;padding:24px 16px;position:sticky;top:0;height:100dvh}.brand{font-size:15px;font-weight:700;padding:0 10px 24px}.brand span{display:block;font-size:12px;font-weight:400;color:#74707f;margin-top:4px}nav{display:grid;gap:4px}nav button{justify-content:flex-start;border-color:transparent;background:transparent}nav button[aria-current=page]{background:#eeebfa;color:#514096;font-weight:600}.back{display:block;margin:24px 12px;font-size:13px}main{max-width:1160px;width:100%;padding:40px 48px;margin:0 auto}header{display:flex;gap:20px;justify-content:space-between;align-items:center;margin-bottom:28px}h1{font-size:28px;letter-spacing:-.8px;margin:0 0 8px;text-wrap:balance}h2{font-size:17px;margin:0 0 12px}h3{font-size:15px;margin:0 0 8px}p{line-height:1.6;text-wrap:pretty;margin:8px 0}.muted{font-size:13px;color:#706b7d}.eyebrow{color:#70608e;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}.panel,.item{background:white;border-radius:14px;padding:22px;box-shadow:0 0 0 1px #24232b0b,0 3px 12px #24232b04;margin-bottom:18px}.item{padding:18px;border-radius:10px;margin-top:12px;margin-bottom:0}.item p{font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}label{display:grid;gap:7px;font-size:13px;font-weight:500;margin-bottom:14px}input,select,textarea{min-height:42px;border:1px solid #dedde5;border-radius:8px;padding:10px 12px;background:white;width:100%;color:inherit}textarea{min-height:110px;resize:vertical}label.check{display:flex;align-items:center;gap:10px}label.check input{width:18px;min-height:18px}.status{padding:12px 16px;border-radius:9px;margin-bottom:18px;background:#eeeaf9;font-size:14px}.status.error{background:#fcebed;color:#9a293d}.empty{padding:20px 0;color:#706b7d;font-size:14px}.pill{display:inline-block;font-size:11px;padding:4px 7px;background:#f1eff7;color:#625678;border-radius:5px;margin:4px 4px 0 0}.sources{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:12px}.workspace{min-width:160px;width:auto;max-width:260px}.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}.answer{white-space:pre-wrap}pre{white-space:pre-wrap;font-size:13px;background:#f5f4f8;border-radius:8px;padding:14px;overflow-wrap:anywhere}[hidden]{display:none!important}@media(max-width:760px){.layout{display:block}aside{position:static;height:auto;padding:16px;border-right:0;border-bottom:1px solid #e9e8ee}.brand{padding-bottom:12px}nav{display:flex;overflow:auto}nav button{white-space:nowrap}.back{margin:12px 8px 0}main{padding:24px 18px}header{align-items:flex-start;flex-direction:column}.workspace{width:100%;max-width:none}.grid{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){button,a.button{transition:none}button:active{transform:none}}
-</style></head><body><div class="layout"><aside><div class="brand">Userorbit CRM<span>Relationship assistant</span></div><nav aria-label="Assistant sections" id="navigation"></nav><a class="back" href="/app">← Back to CRM</a></aside><main><header><div><div class="eyebrow">Your relationships, remembered</div><h1 id="heading">Today</h1><p class="muted" id="subtitle">People and promises worth your attention.</p></div><label class="visually-hidden" for="workspace">Workspace</label><select class="workspace" id="workspace"></select></header><div id="status" role="status" aria-live="polite" hidden></div><section id="content" aria-busy="true"></section></main></div><script>function __name(fn) { return fn; } (${assistantClient.toString()})();</script></body></html>`;
+${designSystemCss}
+${uiControlsCss}
+*{box-sizing:border-box}
+body{margin:0;color:var(--text-primary);background:var(--bg-main);font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+button,input,select,textarea{font:inherit}
+button,a.button{height:32px;padding:0 12px;border:1px solid var(--border-primary);border-radius:8px;background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-weight:500;white-space:nowrap;transition:background .15s}
+button:hover,a.button:hover{background:var(--bg-tertiary)}
+button:disabled{opacity:.5;cursor:wait}
+button.primary{background:var(--accent);color:#171714;border-color:var(--accent)}
+button.primary:hover{filter:brightness(.94)}
+a{color:var(--text-primary)}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.layout{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100dvh}
+aside{background:var(--bg-main);border-right:1px solid var(--border-primary);padding:12px 12px 16px;position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;overflow:auto}
+.brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;height:32px;padding:0 8px;text-decoration:none}
+.brand-mark{display:grid;place-items:center;width:25px;height:25px;border-radius:7px;background:var(--accent);color:#171714}
+.brand-mark svg{width:16px;height:16px}
+.sidebar-search{margin:16px 0 20px;justify-content:flex-start;color:var(--text-secondary);height:32px;width:100%}
+.sidebar-search kbd{margin-left:auto;font-size:11px;font-family:inherit;color:var(--text-tertiary)}
+.nav-label{padding:0 10px;margin-bottom:8px;color:var(--text-tertiary);font-size:11px;font-weight:500}
+nav{display:grid;gap:3px}
+nav button{height:35px;padding:0 10px;justify-content:flex-start;border-color:transparent;background:transparent;color:var(--text-secondary);font-weight:400}
+nav button svg{flex-shrink:0;color:var(--text-secondary)}
+nav button[aria-current=page]{background:var(--bg-tertiary);color:var(--text-primary);font-weight:500}
+nav button[aria-current=page] svg{color:var(--accent)}
+.sidebar-bottom{margin-top:auto;padding-top:24px;display:grid;gap:6px}
+.back{height:34px;display:flex;align-items:center;gap:8px;padding:0 10px;text-decoration:none;color:var(--text-secondary)}
+.back:hover{background:var(--bg-tertiary);border-radius:8px}
+.sidebar-note{padding:10px;color:var(--text-tertiary);font-size:11px;line-height:1.6}
+.workspace-shell{min-width:0}
+.topbar{height:48px;border-bottom:1px solid var(--border-primary);padding:0 24px;display:flex;align-items:center;gap:12px}
+.topbar-label{color:var(--text-secondary);display:flex;align-items:center;gap:8px}
+.topbar-spacer{flex:1}
+.icon-button{width:30px;padding:0;border:0;background:transparent;color:var(--text-secondary)}
+.avatar{display:grid;place-items:center;width:27px;height:27px;background:var(--bg-tertiary);border:1px solid var(--border-primary);border-radius:50%;font-size:11px;font-weight:600}
+.page-header{display:flex;gap:20px;justify-content:space-between;align-items:center;padding:20px 24px 18px;border-bottom:1px solid var(--border-primary)}
+h1{font-size:20px;font-weight:500;letter-spacing:-.4px;margin:0 0 5px}
+h2{font-size:14px;font-weight:500;margin:0 0 7px;display:flex;align-items:center;gap:8px}
+h2 svg{color:var(--text-secondary);width:16px;height:16px;flex-shrink:0}
+h3{font-size:13px;font-weight:500;margin:0 0 6px}
+p{line-height:1.6;margin:6px 0}
+.muted{font-size:12px;color:var(--text-secondary)}
+.page-header .muted{font-size:13px;margin:0}
+.content-wrap{padding:20px 24px 32px;max-width:1600px;margin:auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.panel{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:10px;padding:20px;margin-bottom:16px;min-width:0}
+.panel>p.muted{margin:0 0 18px;color:var(--text-secondary)}
+.panel>h2+.muted{margin-top:0}
+.item{border-top:1px solid var(--border-primary);padding:16px 0;margin-top:16px;min-width:0}
+.item p{font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-secondary)}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center}
+.actions input{max-width:220px}
+.panel form{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;align-items:start}
+.panel form>button{justify-self:start;grid-column:1/-1}
+.panel form>.muted,.panel form>.check,.panel form>.actions,.panel form>textarea{grid-column:1/-1}
+.file-picker{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;min-height:76px;padding:16px;border:1px dashed var(--border-primary);border-radius:8px;background:var(--bg-main);color:var(--text-secondary);font-weight:400;cursor:pointer}
+.file-picker:hover{background:var(--bg-tertiary)}
+.file-picker:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.file-picker input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;padding:0}
+.panel form>label:has(input[name=query]),.panel form>label:has(select[name=contactId]),.panel form>label:has(textarea),.panel form>label:has(input[type=file]){grid-column:1/-1}
+label{display:grid;gap:7px;font-size:12px;font-weight:500;margin:0;color:var(--text-secondary)}
+input,select,textarea{min-height:34px;border:1px solid var(--border-primary);border-radius:8px;padding:7px 10px;background:var(--bg-main);width:100%;color:var(--text-primary);min-width:0}
+input[type=number]{appearance:textfield}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{appearance:none;margin:0}
+input::placeholder,textarea::placeholder{color:var(--text-tertiary)}
+textarea{min-height:100px;resize:vertical;line-height:1.6}
+label.check{display:flex;align-items:center;gap:8px;font-weight:400}
+label.check input{width:16px;min-height:16px}
+.status{padding:11px 14px;border:1px solid var(--border-primary);border-radius:8px;margin-bottom:16px;background:var(--bg-secondary);font-size:13px;color:var(--text-secondary)}
+.status.error{border-color:#8c4b44;color:#f2b3ab}
+.empty{display:flex;align-items:center;flex-direction:column;gap:13px;text-align:center;padding:46px 20px;max-width:460px;margin:0 auto;color:var(--text-secondary);font-size:13px;line-height:1.65}
+.empty-symbol{display:grid;place-items:center;width:48px;height:48px;border-radius:12px;border:1px solid var(--border-primary);background:var(--bg-main);color:var(--text-secondary)}
+.empty-symbol svg{width:22px;height:22px}
+.pill{display:inline-block;font-size:11px;padding:3px 7px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-primary);border-radius:5px;margin:4px 4px 0 0}
+.sources{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:12px}
+.sources:empty{display:none}
+.sources a{color:var(--text-secondary);text-underline-offset:3px}
+.workspace{min-width:180px;width:auto;max-width:260px}
+.workspace-picker{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary)}
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+.answer{white-space:pre-wrap;line-height:1.8}
+pre{white-space:pre-wrap;font-size:12px;background:var(--bg-main);border:1px solid var(--border-primary);border-radius:8px;padding:14px;overflow-wrap:anywhere;color:var(--text-secondary)}
+[hidden]{display:none!important}
+#content[data-section=drafts],#content[data-section=connections]{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+#content[data-section=drafts]>.panel,#content[data-section=connections]>.panel{margin-bottom:0}
+#content[data-section=connections]>.panel:last-child{grid-column:1/-1}
+#content[data-section=knowledge]{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+#content[data-section=knowledge]>.panel{margin-bottom:0}
+#content[data-section=network],#content[data-section=jobs]{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+#content[data-section=network]>.panel,#content[data-section=jobs]>.panel{margin-bottom:0}
+#content[data-section=network]>.panel:nth-child(5),#content[data-section=network]>.panel:last-child,#content[data-section=jobs]>.panel:last-child{grid-column:1/-1}
+#content[data-section=network] .panel form{grid-template-columns:1fr}
+.panel .item:last-child{padding-bottom:0}
+.panel .empty+.actions{justify-content:center}
+.loading{height:150px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--text-secondary)}
+.loading:before{content:"";width:14px;height:14px;border-radius:50%;border:2px solid var(--border-primary);border-top-color:var(--accent);animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}
+}
+@media(min-width:1500px){#content[data-section=network]{grid-template-columns:repeat(3,minmax(0,1fr))}
+#content[data-section=network]>.panel:nth-child(5){grid-column:auto}
+#content[data-section=network]>.panel:last-child{grid-column:1/-1}
+}
+@media(max-width:1050px){#content[data-section]{grid-template-columns:1fr}
+#content[data-section]>.panel{grid-column:auto}
+.page-header{align-items:flex-start;flex-wrap:wrap}
+.workspace{max-width:220px}
+}
+@media(max-width:760px){.layout{grid-template-columns:1fr}
+aside{position:static;height:auto;padding:12px;border-right:0;border-bottom:1px solid var(--border-primary)}
+.brand{padding:0 8px}
+.sidebar-search,.nav-label,.sidebar-note{display:none}
+nav{display:flex;overflow:auto;margin-top:12px}
+nav button{white-space:nowrap}
+.sidebar-bottom{padding-top:8px;margin-top:0}
+.back{font-size:12px;height:28px}
+.topbar{padding:0 16px}
+.page-header{padding:18px 16px}
+.content-wrap{padding:16px}
+.panel{padding:16px}
+.panel form{grid-template-columns:1fr}
+.workspace-picker{width:100%}
+.workspace{max-width:none;flex:1}
+.topbar-label{font-size:12px}
+.grid{grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){button,a.button{transition:none}
+.loading:before{animation:none}
+}
 
-function assistantClient() {
+</style></head><body><div class="layout"><aside><a class="brand" href="/app"><span class="brand-mark">${icon("bot")}</span>Userorbit CRM</a><button class="sidebar-search" type="button" id="assistant-search">${icon("search")}Ask your CRM<kbd>⌘ K</kbd></button><div class="nav-label">RELATIONSHIP ASSISTANT</div><nav aria-label="Assistant sections" id="navigation"></nav><div class="sidebar-bottom"><a class="back" href="/app">${icon("arrow-left")}Back to CRM</a><div class="sidebar-note">Thoughtful follow-ups.<br>You stay in control of every send.</div></div></aside><div class="workspace-shell"><div class="topbar"><span class="topbar-label">${icon("bot")}Relationship assistant</span><span class="topbar-spacer"></span><button class="icon-button" id="theme-toggle" type="button" aria-label="Change color theme">${icon("sun")}</button><a class="icon-button button" href="/app" aria-label="Open CRM">${icon("external")}</a><span class="avatar" aria-label="Your account">U</span></div><main><header class="page-header"><div><h1 id="heading">Today</h1><p class="muted" id="subtitle">People and promises worth your attention.</p></div><div class="workspace-picker"><label class="visually-hidden" for="workspace">Workspace</label><select class="workspace" id="workspace" aria-label="Workspace"></select></div></header><div class="content-wrap"><div id="status" role="status" aria-live="polite" hidden></div><section id="content" aria-busy="true"></section></div></main></div></div><script>${uiControlsScript}</script><script>function __name(fn) { return fn; } (${assistantClient.toString()})(${JSON.stringify(assistantIcons)});</script></body></html>`;
+
+function assistantClient(icons) {
   const $ = (selector) => document.querySelector(selector);
   const sections = {
     today: ["Today", "People and promises worth your attention."],
@@ -25,6 +158,9 @@ function assistantClient() {
     if (className) el.className = className;
     return el;
   }
+  function symbol(name) { const el = node("span"); el.innerHTML = icons[name] || icons.bot; el.setAttribute("aria-hidden", "true"); return el; }
+  const sectionIcons = { today: "home", commitments: "check", meetings: "calendar", drafts: "mail", knowledge: "book", network: "network", mail: "mail", jobs: "clock", connections: "bot" };
+  function emptyState(message, name = sectionIcons[state.section]) { const el = node("div", null, "empty"); const mark = symbol(name); mark.className = "empty-symbol"; el.append(mark, node("span", message)); return el; }
   function announce(message, error = false) { const el = $("#status"); el.hidden = false; el.className = "status" + (error ? " error" : ""); el.textContent = message; }
   async function api(path, options = {}) {
     const response = await fetch("/api/" + path, { ...options, headers: { "content-type": "application/json", authorization: "Bearer " + state.token, "x-workspace-id": state.workspaceId, ...options.headers } });
@@ -39,13 +175,16 @@ function assistantClient() {
     el.addEventListener("click", async () => { el.disabled = true; try { await action(); } catch (error) { announce(error.message, true); } finally { el.disabled = false; } });
     return el;
   }
-  function panel(title, description) { const el = node("div", null, "panel"); if (title) el.append(node("h2", title)); if (description) el.append(node("p", description, "muted")); return el; }
+  function panel(title, description) { const el = node("div", null, "panel"); if (title) { const heading = node("h2", title); heading.prepend(symbol(sectionIcons[state.section])); el.append(heading); } if (description) el.append(node("p", description, "muted")); return el; }
   function field(form, label, name, type = "text", options = []) {
     const wrap = node("label", label);
     let input;
     if (type === "select") { input = node("select"); for (const [value, text] of options) { const option = node("option", text); option.value = value; input.append(option); } }
     else { input = node(type === "textarea" ? "textarea" : "input"); if (type !== "textarea") input.type = type; }
-    input.name = name; wrap.append(input); form.append(wrap); return input;
+    input.name = name;
+    if (type === "file") { const picker = node("span", null, "file-picker"); const caption = node("span", "Choose a file or drop it here"); picker.append(symbol("plus"), caption, input); input.addEventListener("change", () => { caption.textContent = input.files[0]?.name || "Choose a file or drop it here"; }); wrap.append(picker); }
+    else wrap.append(input);
+    form.append(wrap); return input;
   }
   function formBox(title, description, submit, action) {
     const box = panel(title, description); const form = node("form"); box.append(form);
@@ -53,7 +192,7 @@ function assistantClient() {
     form.addEventListener("submit", async (event) => { event.preventDefault(); submitButton.disabled = true; try { await action(Object.fromEntries(new FormData(form)), form); } catch (error) { announce(error.message, true); } finally { submitButton.disabled = false; } });
     form.finish = () => form.append(submitButton); return { box, form };
   }
-  function list(container, data, render, empty = "Nothing to show yet.") { if (!data.length) container.append(node("p", empty, "empty")); else for (const item of data) container.append(render(item)); }
+  function list(container, data, render, empty = "Nothing to show yet.") { if (!data.length) container.append(emptyState(empty)); else for (const item of data) container.append(render(item)); }
   function array(data, keys = []) { if (Array.isArray(data)) return data; for (const key of keys) if (Array.isArray(data?.[key])) return data[key]; return []; }
   function sources(container, data) {
     const links = node("div", null, "sources");
@@ -88,12 +227,12 @@ function assistantClient() {
     const generation = ++state.generation;
     $("#heading").textContent = sections[state.section][0]; $("#subtitle").textContent = sections[state.section][1];
     for (const el of $("#navigation").children) el.setAttribute("aria-current", el.dataset.section === state.section ? "page" : "false");
-    const content = $("#content"); content.replaceChildren(node("p", "Loading…", "muted")); content.setAttribute("aria-busy", "true");
+    const content = $("#content"); content.dataset.section = state.section; content.replaceChildren(node("div", "Loading your workspace…", "loading")); content.setAttribute("aria-busy", "true");
     const page = node("div");
     try {
       await views[state.section](page);
       if (generation === state.generation) content.replaceChildren(...page.childNodes);
-    } catch (error) { if (generation === state.generation) { content.replaceChildren(node("p", error.message, "empty")); announce(error.message, true); } }
+    } catch (error) { if (generation === state.generation) { content.replaceChildren(emptyState(error.message)); announce(error.message, true); } }
     finally { if (generation === state.generation) content.setAttribute("aria-busy", "false"); }
   }
   const views = {
@@ -134,15 +273,15 @@ function assistantClient() {
     },
     async drafts(page) {
       const { box, form } = formBox("Write a follow-up", "Grounded in CRM context and your own writing samples. Review the draft before using it.", "Prepare draft", async (data) => { output(result, (await post("intelligence/drafts", { contactId: data.contactId, instruction: data.instruction, sampleIds: Array.from(form.querySelectorAll("input[name=sampleId]:checked"), (input) => input.value) })).draft); });
-      field(form, "Contact", "contactId", "select", state.contacts.map((contact) => [contact.id, contact.name + " · " + contact.email]));
+      field(form, "Contact", "contactId", "select", state.contacts.map((contact) => [contact.id, [contact.name, contact.email].filter(Boolean).join(" · ")]));
       const intent = field(form, "What should the note do?", "instruction", "textarea"); intent.required = true; intent.placeholder = "Follow up on our proposal and ask about timing.";
       const samples = await api("assistant/intelligence/writing-samples");
       if (samples.samples?.length) { form.append(node("p", "Choose writing samples to guide the tone (up to five).", "muted")); for (const sample of samples.samples.slice(0, 10)) { const label = node("label", sample.subject || "Sent message", "check"); const input = node("input"); input.type = "checkbox"; input.name = "sampleId"; input.value = sample.messageId || sample.provider_message_id || sample.id; label.prepend(input); form.append(label); } }
-      form.finish(); const result = panel("Your draft"); page.append(box, result);
+      form.finish(); const result = panel("Your draft", "Your prepared follow-up will appear here."); result.append(emptyState("Choose a contact and describe your follow-up to prepare a draft.", "mail")); page.append(box, result);
     },
     async knowledge(page) {
       const { box, form } = formBox("Ask about your history", "Answers link back to the records they use.", "Find answer", async (data) => { output(answer, await post("knowledge/ask", data)); });
-      const query = field(form, "Your question", "query"); query.required = true; query.placeholder = "What did we agree with Acme?"; form.finish(); const answer = panel("Answer"); page.append(box, answer);
+      const query = field(form, "Your question", "query"); query.required = true; query.placeholder = "What did we agree with Acme?"; form.finish(); const answer = panel("Answer", "Grounded in your CRM, with sources attached."); answer.append(emptyState("Ask a question to find answers across your saved conversations and records.", "book")); page.append(box, answer);
       const upload = formBox("Add a document or note", "Use a text note, Markdown, CSV, or supported PDF file.", "Save to knowledge", async (data, form) => {
         const file = form.elements.file.files[0]; const payload = { name: data.title, text: data.text };
         if (file) { if (file.size > 1048576) throw new Error("Choose a file smaller than 1 MiB."); payload.name = file.name; payload.mimeType = file.type; const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; for (const byte of bytes) binary += String.fromCharCode(byte); if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) { payload.mimeType = "application/pdf"; payload.dataBase64 = btoa(binary); delete payload.text; } else { payload.text = new TextDecoder().decode(bytes); payload.mimeType = "text/plain"; } }
@@ -160,18 +299,18 @@ function assistantClient() {
         for (const person of array(preview, ["rows", "people", "items"]).slice(0, 20)) result.append(card(person.name, [person.company, person.title, ...(person.warnings || [])].filter(Boolean).join(" · ")));
         result.append(button("Import connections", async () => { await post("network/imports", { ...payload, confirm: true }); announce("Connections imported."); await show(); }, true));
       });
-      field(importer.form, "LinkedIn export", "file", "file").accept = ".csv,.json"; importer.form.finish(); const result = panel("Import preview"); page.append(importer.box, result);
+      field(importer.form, "LinkedIn export", "file", "file").accept = ".csv,.json"; importer.form.finish(); const result = panel("Import preview", "Review your connections before adding them."); result.append(emptyState("Upload your LinkedIn export to preview the people and relationships it contains.", "network")); page.append(importer.box, result);
       const route = formBox("Find a warm introduction", "Only paths supported by saved relationships are shown.", "Find a route", async (data) => {
         const response = await api("assistant/network/paths?to=" + encodeURIComponent(data.to)); paths.replaceChildren(); list(paths, array(response, ["paths", "routes"]), (path) => card(path.title || path.nodes?.map((entry) => entry === "self" ? "Me" : state.contacts.find((person) => "contact:" + person.id === entry)?.name || imported.find((person) => "import:" + person.id === entry)?.name || "Saved connection").join(" → ") || "Introduction path", path.reason || path.edges?.map((edge) => edge.evidence).join(" → "), path.edges?.map((edge) => ({ title: edge.relationship, url: edge.source_url }))), "No supported introduction path found.");
       });
-      field(route.form, "Person at your target company", "to", "select", state.contacts.map((contact) => ["contact:" + contact.id, contact.name + " · " + contact.account_name])).required = true; route.form.finish(); const paths = panel("Introduction paths"); page.append(route.box, paths);
+      field(route.form, "Person at your target company", "to", "select", state.contacts.map((contact) => ["contact:" + contact.id, [contact.name, contact.account_name].filter(Boolean).join(" · ")])).required = true; route.form.finish(); const paths = panel("Introduction paths"); paths.append(emptyState("Choose a person to discover introductions supported by your saved relationships.", "network")); page.append(route.box, paths);
       const imported = array(await api("assistant/network/imports"), ["items"]);
       const review = panel("Imported connections", "Link an identity to a CRM contact only when you are sure they are the same person."); page.append(review);
       list(review, imported.slice(0, 50), (person) => {
         const el = card(person.name, [person.company, person.title, person.status].filter(Boolean).join(" · "));
         const select = node("select"); select.setAttribute("aria-label", "Match " + person.name + " to contact");
         const empty = node("option", "Choose a matching contact"); empty.value = ""; select.append(empty);
-        for (const contact of state.contacts) { const option = node("option", contact.name + " · " + contact.account_name); option.value = contact.id; select.append(option); }
+        for (const contact of state.contacts) { const option = node("option", [contact.name, contact.account_name].filter(Boolean).join(" · ")); option.value = contact.id; select.append(option); }
         el.append(select, button("Confirm match", async () => { if (!select.value) throw new Error("Choose a contact to match."); await post("network/imports/" + encodeURIComponent(person.id) + "/match", { confirm: true, contact_id: select.value }); await show(); })); return el;
       });
       const capture = formBox("Save a LinkedIn profile", "Capture a profile you have chosen to save. It stays in your review queue.", "Save profile", async (data) => { await post("network/capture", { ...data, confirm: true }); announce("Profile saved for review."); await show(); });
@@ -212,7 +351,7 @@ function assistantClient() {
       field(create.form, "Instructions", "instructions", "textarea"); field(create.form, "Frequency", "frequency", "select", [["daily", "Daily"], ["weekly", "Weekly"]]); const hour = field(create.form, "Hour (your time zone)", "hour", "number"); hour.min = "0"; hour.max = "23"; hour.value = "9"; create.form.finish(); page.append(create.box);
       const jobs = panel("Your jobs"); page.append(jobs);
       list(jobs, array(data, ["jobs", "items"]), (job) => { const el = card(job.name, job.instructions || job.template); const controls = node("div", null, "actions"); controls.append(button("Run now", async () => { await post("automations/jobs/" + encodeURIComponent(job.id) + "/run"); announce("Job queued. Its result will appear in history after the next scheduled run."); await show(); }), button("View history", async () => { const data = await api("assistant/automations/jobs/" + encodeURIComponent(job.id) + "/runs"); history.replaceChildren(); list(history, array(data, ["runs", "items"]), (run) => { const entry = card(run.status, run.summary || run.error_code || "Waiting for execution"); if (Array.isArray(run.result)) for (const item of run.result.slice(0, 10)) entry.append(card(item.title || item.event?.title || item.name || "Review item", item.reason || item.summary || item.evidence || item.quote || item.status, item.sources || (item.source_url ? [{ url: item.source_url, title: "Evidence" }] : []))); else if (run.result?.answer) output(entry, run.result); return entry; }); }), button(job.enabled ? "Pause" : "Resume", async () => { await api("assistant/automations/jobs/" + encodeURIComponent(job.id), { method: "PATCH", body: JSON.stringify({ enabled: !job.enabled }) }); await show(); })); const history = node("div");
-        controls.append(button("Edit instructions", async () => { history.replaceChildren(); const editor = node("textarea"); editor.value = job.instructions; editor.setAttribute("aria-label", "Instructions for " + job.name); history.append(editor, button("Save instructions", async () => { await api("assistant/automations/jobs/" + encodeURIComponent(job.id), { method: "PATCH", body: JSON.stringify({ instructions: editor.value }) }); announce("Instructions updated."); await show(); })); }));
+        controls.append(button("Edit instructions", async () => { history.replaceChildren(); const editor = node("textarea"); editor.value = job.instructions || ""; editor.setAttribute("aria-label", "Instructions for " + job.name); history.append(editor, button("Save instructions", async () => { await api("assistant/automations/jobs/" + encodeURIComponent(job.id), { method: "PATCH", body: JSON.stringify({ instructions: editor.value }) }); announce("Instructions updated."); await show(); })); }));
         el.append(controls, history); return el; });
       const notifications = await api("assistant/automations/notifications"); const inbox = panel("Updates from your assistant"); page.append(inbox);
       list(inbox, notifications.notifications || [], (notice) => { const el = card(notice.title || "Job update", notice.summary || notice.message); if (!notice.read_at) el.append(button("Mark read", async () => { await post("automations/notifications/" + encodeURIComponent(notice.id) + "/read"); await show(); })); return el; });
@@ -222,15 +361,20 @@ function assistantClient() {
         preview.replaceChildren(node("h3", "Draft request"), node("p", "Contact: " + (state.contacts.find((contact) => contact.id === data.contactId)?.name || data.contactId)), node("p", data.instructions));
         preview.append(button("Approve this exact request", async () => { const result = await post("mcp/approvals", { tool: "assistant_prepare_draft", arguments: data }); preview.replaceChildren(node("p", "Share this one-use approval ID with your connected AI client:"), node("pre", result.approval_id), button("Copy approval ID", async () => { await navigator.clipboard.writeText(result.approval_id); announce("Approval ID copied."); })); }, true));
       });
-      field(approval.form, "Contact", "contactId", "select", state.contacts.map((contact) => [contact.id, contact.name + " · " + contact.account_name])); field(approval.form, "Exact drafting instructions", "instructions", "textarea").required = true; approval.form.finish(); const preview = panel("Approval preview"); page.append(approval.box, preview);
+      field(approval.form, "Contact", "contactId", "select", state.contacts.map((contact) => [contact.id, [contact.name, contact.account_name].filter(Boolean).join(" · ")])); field(approval.form, "Exact drafting instructions", "instructions", "textarea").required = true; approval.form.finish(); const preview = panel("Approval preview", "Review before granting access."); preview.append(emptyState("Select a contact and add drafting instructions to review an approval request.", "shield")); page.append(approval.box, preview);
       const box = panel("Connect your AI client", "Use OAuth to let a compatible AI client access your CRM with your permissions."); box.append(node("p", "Add a remote MCP connection using this address:")); const code = node("pre", location.origin + "/mcp"); box.append(code, button("Copy connection address", async () => { await navigator.clipboard.writeText(location.origin + "/mcp"); announce("Connection address copied."); })); box.append(node("p", "You will sign in and review access before a connection is granted. Assistant tools cannot send outreach.", "muted")); page.append(box);
     },
   };
-  for (const [id, [label]] of Object.entries(sections)) { const el = button(label, async () => { state.section = id; location.hash = id; await show(); }); el.dataset.section = id; $("#navigation").append(el); }
+  const navigationLabels = { today: "Today", commitments: "Promises", meetings: "Meeting briefs", drafts: "Drafts", knowledge: "Knowledge", network: "Network", mail: "Mailboxes", jobs: "Jobs", connections: "Connections" };
+  for (const [id, [label]] of Object.entries(sections)) { const el = button(navigationLabels[id] || label, async () => { state.section = id; location.hash = id; await show(); }); el.dataset.section = id; el.prepend(symbol(sectionIcons[id])); $("#navigation").append(el); }
+  $("#assistant-search").addEventListener("click", async () => { state.section = "knowledge"; location.hash = "knowledge"; await show(); document.querySelector('input[name="query"]')?.focus(); });
+  document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "k") { event.preventDefault(); $("#assistant-search").click(); } });
+  $("#theme-toggle").addEventListener("click", () => { const theme = document.documentElement.dataset.theme === "light" ? "dark" : "light"; document.documentElement.dataset.theme = theme; localStorage.setItem("crmTheme", theme); $("#theme-toggle").replaceChildren(symbol(theme === "dark" ? "sun" : "moon")); });
+  const savedTheme = localStorage.getItem("crmTheme"); if (savedTheme === "light" || savedTheme === "dark") { document.documentElement.dataset.theme = savedTheme; $("#theme-toggle").replaceChildren(symbol(savedTheme === "dark" ? "sun" : "moon")); }
   $("#workspace").addEventListener("change", async (event) => { state.workspaceId = event.target.value; localStorage.setItem("crmWorkspaceId", state.workspaceId); await loadContacts(); await show(); });
   async function loadContacts() { const data = await api("assistant/contacts"); state.contacts = data.contacts; }
   async function start() {
-    if (!state.token) { $("#content").replaceChildren(node("p", "Sign in to CRM to open your assistant.", "empty")); const link = node("a", "Sign in", "button"); link.href = "/app"; $("#content").append(link); return; }
+    if (!state.token) { $("#content").replaceChildren(emptyState("Sign in to CRM to open your assistant.", "shield")); const link = node("a", "Sign in", "button"); link.href = "/app"; $("#content").append(link); return; }
     try {
       const tenant = await api("me"); const workspaces = tenant.workspaces || [];
       if (!workspaces.some((workspace) => workspace.id === state.workspaceId)) state.workspaceId = tenant.currentWorkspaceId || workspaces[0]?.id || "";
