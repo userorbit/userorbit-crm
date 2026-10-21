@@ -592,6 +592,12 @@ export async function runScheduled(env, helpers) {
   const results = [];
   for (const c of rows.results) {
     try {
+      const user = await stmt(
+        env,
+        "SELECT id FROM users WHERE id=? AND status='active'",
+        c.user_id,
+      ).first();
+      if (!user) throw fail(403, "Active user required");
       if (!helpers?.requireWorkspaceWrite)
         throw fail(503, "Membership checker required");
       await helpers.requireWorkspaceWrite(

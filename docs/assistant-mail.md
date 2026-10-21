@@ -31,4 +31,4 @@ Gmail does complete paginated history including sent messages, then history.list
 
 Provider references: https://developers.google.com/workspace/gmail/api/guides/sync and https://learn.microsoft.com/en-us/graph/api/user-list-messages.
 
-Scheduling requires helpers.requireWorkspaceWrite; removed members/viewers do not trigger provider calls. Each provider call has a 15s timeout and each message-page API phase has a 55s deadline, within the 120s lease. Backoff is persisted rather than sleeping/retrying inside a Worker invocation.
+Scheduling requires helpers.requireWorkspaceWrite; disabled users and removed members/viewers do not trigger provider calls. Scheduled work checks users.status is active before checking write membership. Each provider call has a 15s timeout and each message-page API phase has a 55s deadline, within the 120s lease. Backoff is persisted rather than sleeping/retrying inside a Worker invocation.

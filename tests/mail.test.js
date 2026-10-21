@@ -309,6 +309,7 @@ test("personal scoping, viewer denial, malformed JSON and disconnect purge", asy
 test("scheduled sync verifies current membership", async () => {
   const f = setup(),
     c = await f.connect();
+  f.calls.length = 0;
   f.setRespond(() => {
     throw Error("should not contact provider");
   });
@@ -319,6 +320,24 @@ test("scheduled sync verifies current membership", async () => {
       },
     }),
   ).toEqual([{ id: c.id, error: "Sync deferred" }]);
+  expect(f.calls).toHaveLength(0);
+});
+test("scheduled sync blocks disabled users even with write membership", async () => {
+  const f = setup();
+  const c = await f.connect();
+  f.sqlite.exec("UPDATE users SET status='disabled' WHERE id='u'");
+  f.calls.length = 0;
+  f.setRespond(() => {
+    throw Error("disabled user must not contact provider");
+  });
+  expect(await runScheduled(f.env, f.context.helpers)).toEqual([
+    { id: c.id, error: "Sync deferred" },
+  ]);
+  expect(f.calls).toHaveLength(0);
+  expect(
+    f.sqlite.query("SELECT lease_until FROM assistant_mail_connections").get()
+      .lease_until,
+  ).toBe(0);
 });
 test("Refresh token rotates once and stays encrypted", async () => {
   const f = setup("microsoft");
