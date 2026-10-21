@@ -1,36 +1,22 @@
+import { designSystemCss, icon } from "./design-system.js";
+import { uiControlsCss, uiControlsScript } from "./ui-controls.js";
+import { crmUiCss } from "./crm-ui-styles.js";
+import { crmUiClientScript } from "./crm-ui-client.js";
 export const landingHtml = String.raw`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>UserOrbit CRM - Open source sales workspace</title>
-    <style>
-      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #18181b; background: #f7f8fa; }
-      * { box-sizing: border-box; }
-      body { margin: 0; }
-      .hero { min-height: 92vh; display: grid; align-items: center; padding: 32px; background: linear-gradient(180deg, rgba(255,255,255,.86), rgba(247,248,250,.96)), url("https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=1800&q=80") center/cover; }
-      .wrap { max-width: 1120px; margin: 0 auto; width: 100%; }
-      nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 72px; }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
-      .mark { width: 30px; height: 30px; border-radius: 7px; background: linear-gradient(135deg, #18181b, #5b5bd6); }
-      h1 { max-width: 760px; font-size: clamp(42px, 7vw, 78px); line-height: .96; letter-spacing: 0; margin: 0; }
-      p { max-width: 690px; color: #52525b; font-size: 19px; line-height: 1.6; }
-      .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
-      a { color: inherit; }
-      .button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 16px; border-radius: 7px; border: 1px solid #d4d4d8; background: #fff; text-decoration: none; font-weight: 650; }
-      .button.primary { background: #18181b; color: #fff; border-color: #18181b; }
-      .strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; border: 1px solid #e4e4e7; background: #e4e4e7; margin-top: 64px; }
-      .item { background: rgba(255,255,255,.92); padding: 18px; min-height: 112px; }
-      .item strong { display: block; margin-bottom: 8px; }
-      .item span { color: #71717a; font-size: 14px; line-height: 1.5; }
-      @media (max-width: 820px) { .strip { grid-template-columns: 1fr; } nav { margin-bottom: 44px; } .hero { padding: 20px; } }
+    <style>${designSystemCss}
+.hero{min-height:100dvh;padding:32px;background:var(--bg-main)}.wrap{max-width:1120px;margin:0 auto}nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:100px}.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:500}.mark{display:none}h1{font-size:clamp(38px,6vw,72px);line-height:1.08;font-weight:500;letter-spacing:-2px;max-width:780px}p{max-width:690px;color:var(--text-tertiary);font-size:18px;line-height:1.6}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:32px}.actions .button{min-height:40px;padding:8px 16px}.strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:80px}.item{border:1px solid var(--border-primary);border-radius:10px;padding:20px;background:var(--bg-primary)}.item strong{display:block;font-size:14px;font-weight:500;margin-bottom:10px}.item span{font-size:12px;line-height:20px;color:var(--text-tertiary)}@media(max-width:720px){.hero{padding:24px}.strip{grid-template-columns:1fr 1fr;margin-top:48px}nav{margin-bottom:64px}h1{letter-spacing:-1px}.item{padding:16px}}
     </style>
   </head>
   <body>
     <section class="hero">
       <div class="wrap">
         <nav>
-          <div class="brand"><span class="mark"></span><span>UserOrbit CRM</span></div>
+          <div class="brand">${icon("orbit",26)}<span>Userorbit CRM</span></div>
           <a class="button" href="/app">Open app</a>
         </nav>
         <h1>Open source CRM for founder-led outbound.</h1>
@@ -57,569 +43,32 @@ export const appHtml = String.raw`<!doctype html>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>UserOrbit CRM</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --sidebar-width: 240px;
-        --navbar-height: 56px;
-        --bg-main: #fcfcfc;
-        --bg-primary: #ffffff;
-        --bg-secondary: #fcfcfc;
-        --bg-tertiary: #f5f5f5;
-        --bg-quaternary: #f0f0f0;
-        --bg-button: #ffffff;
-        --bg-primary-action: #171717;
-        --bg-primary-action-hover: #313131;
-        --text-primary: #171717;
-        --text-secondary: #525252;
-        --text-tertiary: #737373;
-        --text-quaternary: #a3a3a3;
-        --text-primary-action: #ffffff;
-        --border-primary: rgba(0, 0, 0, 0.1);
-        --border-primary-opaque: #e5e5e5;
-        --border-secondary: rgba(0, 0, 0, 0.07);
-        --border-tertiary: rgba(0, 0, 0, 0.04);
-        --brand-primary: #ff591e;
-        --brand-secondary: #fb432c;
-        --blue: #2563eb;
-        --green: #16a34a;
-        --amber: #d97706;
-        --red: #dc2626;
-        --bg: var(--bg-main);
-        --panel: var(--bg-primary);
-        --panel-subtle: var(--bg-secondary);
-        --text: var(--text-primary);
-        --muted: var(--text-tertiary);
-        --border: var(--border-primary);
-        --border-strong: var(--border-primary-opaque);
-        --accent: var(--brand-primary);
-        --accent-dark: var(--brand-secondary);
-        --base-shadow-color: rgb(0 0 0 / 0.05);
-        --button-shadow: 0px 1px 1px -1px rgb(0 0 0 / 0.08), 0px 2px 2px -1px rgb(0 0 0 / 0.08), 0px 0px 0px 1px rgb(0 0 0 / 0.06), inset 0px 1px 0px #fff, inset 0px 1px 2px 1px #fff, inset 0px 1px 2px rgb(0 0 0 / 0.06);
-        --panel-shadow: 0px 3px 6px -3px var(--base-shadow-color), 0px 2px 4px -2px var(--base-shadow-color), 0px 1px 2px -1px var(--base-shadow-color), 0px 1px 1px -1px var(--base-shadow-color);
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      [hidden] {
-        display: none !important;
-      }
-
-      body {
-        margin: 0;
-        background: var(--bg-main);
-        color: var(--text-primary);
-        font-size: 14px;
-        line-height: 1.45;
-        -webkit-font-smoothing: antialiased;
-      }
-
-      button,
-      input,
-      select,
-      textarea {
-        font: inherit;
-      }
-
-      .shell {
-        display: grid;
-        grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-        min-height: 100vh;
-        background: var(--bg-main);
-      }
-
-      .sidebar {
-        position: sticky;
-        top: 0;
-        height: 100vh;
-        border-right: 1px solid var(--border-primary);
-        background: var(--bg-secondary);
-        padding: 10px 8px;
-        overflow-y: auto;
-      }
-
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        min-height: 40px;
-        padding: 3px 6px 12px;
-        color: var(--text-primary);
-        font-size: 14px;
-        font-weight: 650;
-      }
-
-      .mark {
-        width: 28px;
-        height: 28px;
-        flex: 0 0 auto;
-        border-radius: 8px;
-        background: linear-gradient(135deg, var(--brand-secondary), var(--brand-primary));
-        box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.32);
-      }
-
-      .nav {
-        display: grid;
-        gap: 4px;
-      }
-
-      .nav button {
-        border: 0;
-        background: transparent;
-        color: var(--text-tertiary);
-        text-align: left;
-        min-height: 30px;
-        padding: 6px 8px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 550;
-        line-height: 18px;
-      }
-
-      .nav button.active,
-      .nav button:hover {
-        background: var(--bg-quaternary);
-        color: var(--text-primary);
-      }
-
-      main {
-        min-width: 0;
-        padding: 0;
-      }
-
-      .topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        min-height: var(--navbar-height);
-        margin: 0;
-        padding: 0 20px;
-        border-bottom: 1px solid var(--border-primary);
-        background: var(--bg-primary);
-      }
-
-      h1 {
-        margin: 0;
-        font-size: 15px;
-        line-height: 20px;
-        font-weight: 700;
-        letter-spacing: 0;
-      }
-
-      .subtitle {
-        margin-top: 4px;
-        color: var(--text-tertiary);
-        font-size: 13px;
-        line-height: 18px;
-      }
-
-      #view > .grid,
-      #view > .columns {
-        margin: 16px;
-      }
-
-      #view > .grid[style*="overflow:auto"] {
-        padding-bottom: 4px;
-      }
-
-      .grid {
-        display: grid;
-        gap: 12px;
-      }
-
-      .metrics {
-        grid-template-columns: repeat(5, minmax(130px, 1fr));
-      }
-
-      .columns {
-        display: grid;
-        grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.8fr);
-        gap: 12px;
-      }
-
-      .panel {
-        background: var(--bg-primary);
-        border: 1px solid var(--border-primary);
-        border-radius: 10px;
-        box-shadow: var(--panel-shadow);
-        overflow: hidden;
-      }
-
-      .panel-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        min-height: 42px;
-        padding: 9px 12px;
-        border-bottom: 1px solid var(--border-secondary);
-        background: var(--bg-primary);
-      }
-
-      .panel-title {
-        font-size: 14px;
-        line-height: 18px;
-        font-weight: 700;
-      }
-
-      .metric {
-        padding: 12px;
-      }
-
-      .metric-label {
-        color: var(--text-tertiary);
-        font-size: 12px;
-        font-weight: 550;
-      }
-
-      .metric-value {
-        margin-top: 6px;
-        font-size: 22px;
-        line-height: 28px;
-        font-weight: 750;
-      }
-
-      .toolbar {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-
-      input,
-      select,
-      textarea {
-        width: 100%;
-        border: 1px solid var(--border-primary);
-        border-radius: 6px;
-        background: var(--bg-primary);
-        padding: 7px 9px;
-        color: var(--text-primary);
-        outline: none;
-        font-size: 14px;
-        line-height: 20px;
-        box-shadow: inset 0 1px 1px rgb(0 0 0 / 0.03);
-      }
-
-      textarea {
-        min-height: 94px;
-        resize: vertical;
-      }
-
-      input:focus,
-      select:focus,
-      textarea:focus {
-        border-color: var(--blue);
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
-      }
-
-      .button {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 30px;
-        border: 0;
-        background: var(--bg-button);
-        color: var(--text-primary);
-        padding: 6px 10px;
-        border-radius: 6px;
-        cursor: pointer;
-        white-space: nowrap;
-        font-size: 14px;
-        font-weight: 600;
-        line-height: 18px;
-        box-shadow: var(--button-shadow);
-      }
-
-      .button.primary {
-        background: var(--bg-primary-action);
-        color: var(--text-primary-action);
-        box-shadow: 0px 0px 0px 1px rgb(0 0 0 / 0.06), 0px 1px 1px -1px rgb(0 0 0 / 0.08), inset 0px 1px 0px rgb(255 255 255 / 0.12);
-      }
-
-      .button.primary:hover {
-        background: var(--bg-primary-action-hover);
-      }
-
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-      }
-
-      .report-drilldowns {
-        border-top: 1px solid var(--border-secondary);
-        padding: 10px 12px 12px;
-      }
-
-      .report-drilldowns details {
-        border: 1px solid var(--border-secondary);
-        border-radius: 6px;
-        margin-top: 8px;
-        overflow: auto;
-      }
-
-      .report-drilldowns summary {
-        cursor: pointer;
-        padding: 8px 10px;
-        font-size: 13px;
-        font-weight: 650;
-      }
-
-      th,
-      td {
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--border-secondary);
-        text-align: left;
-        vertical-align: top;
-      }
-
-      th {
-        color: var(--text-tertiary);
-        font-size: 12px;
-        font-weight: 650;
-        background: var(--bg-secondary);
-      }
-
-      tr:hover td {
-        background: var(--bg-secondary);
-      }
-
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        border: 1px solid var(--border-secondary);
-        border-radius: 999px;
-        padding: 1px 7px;
-        color: var(--text-tertiary);
-        background: var(--bg-tertiary);
-        font-size: 12px;
-        font-weight: 550;
-        line-height: 18px;
-      }
-
-      .pill.green {
-        border-color: rgba(15, 138, 95, 0.18);
-        color: var(--green);
-        background: #ecfdf5;
-      }
-
-      .pill.amber {
-        border-color: rgba(161, 98, 7, 0.2);
-        color: var(--amber);
-        background: #fffbeb;
-      }
-
-      .pill.red {
-        border-color: rgba(180, 35, 24, 0.2);
-        color: var(--red);
-        background: #fef2f2;
-      }
-
-      .progress {
-        height: 7px;
-        border-radius: 999px;
-        background: var(--bg-quaternary);
-        overflow: hidden;
-      }
-
-      .progress span {
-        display: block;
-        height: 100%;
-        background: linear-gradient(90deg, var(--brand-secondary), var(--brand-primary));
-      }
-
-      .stack {
-        display: grid;
-        gap: 10px;
-        padding: 14px;
-      }
-
-      .form-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-      }
-
-      .full {
-        grid-column: 1 / -1;
-      }
-
-      label {
-        display: grid;
-        gap: 5px;
-        color: var(--text-tertiary);
-        font-size: 12px;
-        font-weight: 600;
-      }
-
-      .empty {
-        padding: 24px;
-        color: var(--text-tertiary);
-        text-align: center;
-      }
-
-      .message {
-        position: fixed;
-        left: calc(var(--sidebar-width) + 16px);
-        bottom: 16px;
-        z-index: 20;
-        padding: 8px 10px;
-        border: 1px solid var(--border-primary);
-        border-radius: 8px;
-        background: var(--bg-primary);
-        color: var(--text-primary);
-        box-shadow: var(--panel-shadow);
-        font-size: 13px;
-        display: none;
-      }
-
-      .message.show {
-        display: block;
-      }
-
-      .auth {
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 24px;
-        background: var(--bg-main);
-      }
-
-      .auth-card {
-        width: min(420px, 100%);
-        background: var(--bg-primary);
-        border: 1px solid var(--border-primary);
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: var(--panel-shadow);
-      }
-
-      .workspace-switcher {
-        margin: 0 8px 16px;
-      }
-
-      .pipeline-card {
-        border: 1px solid var(--border-secondary);
-        border-radius: 8px;
-        padding: 10px;
-        background: var(--bg-primary);
-        box-shadow: var(--panel-shadow);
-      }
-
-      .pipeline-card[draggable="true"] {
-        cursor: grab;
-      }
-
-      .pipeline-card.dragging {
-        opacity: .55;
-      }
-
-      .pipeline-dropzone {
-        min-height: 96px;
-        border-radius: 8px;
-        transition: background .16s ease, box-shadow .16s ease;
-      }
-
-      .pipeline-dropzone.drag-over {
-        background: var(--bg-secondary);
-        box-shadow: inset 0 0 0 1px var(--accent);
-      }
-
-      .api {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 12px;
-        white-space: pre-wrap;
-        background: #171717;
-        color: #f5f5f5;
-        padding: 14px;
-        border-radius: 8px;
-        overflow: auto;
-      }
-
-      @media (max-width: 980px) {
-        .shell {
-          grid-template-columns: 1fr;
-        }
-
-        .sidebar {
-          position: static;
-          height: auto;
-          border-right: 0;
-          border-bottom: 1px solid var(--border-primary);
-        }
-
-        .metrics,
-        .columns,
-        .form-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .message {
-          left: 16px;
-        }
-
-        table {
-          display: block;
-          max-width: 100%;
-          overflow-x: auto;
-          white-space: nowrap;
-        }
-      }
-    </style>
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem('crmTheme')||'dark'}catch{}</script>
+    <style>${designSystemCss}
+${uiControlsCss}
+${crmUiCss}</style>
   </head>
   <body>
     <div id="auth" class="auth" hidden>
       <form id="loginForm" class="auth-card">
-        <div class="brand"><span class="mark"></span><span>UserOrbit CRM</span></div>
+        <div class="brand">${icon("orbit",26)}<span>Userorbit CRM</span></div>
         <h1>Sign in</h1>
-        <p class="subtitle">Sign in with your user password, or paste a bootstrap/invitation token for setup.</p>
-        <label>Email<input name="email" type="email" autocomplete="username" placeholder="admin@localhost" /></label>
+        <p class="subtitle">Welcome back. Sign in to your workspace.</p>
+        <label>Email<input name="email" type="email" autocomplete="username" placeholder="you@company.com" /></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" /></label>
-        <label>API token<input name="token" type="password" autocomplete="off" placeholder="Optional setup token" /></label>
+        <details class="auth-setup"><summary>Use an invitation or setup token</summary><label>API token<input name="token" type="password" autocomplete="off" placeholder="Paste your token" /></label></details>
         <button class="button primary" style="width:100%; margin-top:14px">Continue</button>
-        <a class="button" style="width:100%; margin-top:10px; text-align:center" href="/api/auth/oauth/start">Continue with OAuth</a>
+        <a class="button" style="width:100%; margin-top:10px; text-align:center" href="/api/auth/oauth/start" __CRM_OAUTH_LINK_STATE__>Continue with OAuth</a>
       </form>
     </div>
     <div id="appShell" class="shell" hidden>
-      <aside class="sidebar">
-        <div class="brand"><span class="mark"></span><span>UserOrbit CRM</span></div>
-        <div class="workspace-switcher">
-          <label>Workspace<select id="workspaceSelect"></select></label>
-        </div>
-        <nav class="nav">
-          <button class="active" data-view="dashboard">Dashboard</button>
-          <button data-view="accounts">Accounts</button>
-          <button data-view="pipeline">Pipeline</button>
-          <button data-view="reports">Reports</button>
-          <button data-view="sequences">Sequences</button>
-          <button data-view="warmup">Warmup</button>
-          <button data-view="tasks">Tasks</button>
-          <button data-view="communications">Comms</button>
-          <button data-view="calendar">Calendar</button>
-          <button data-view="forms">Forms</button>
-          <button data-view="api">Agent API</button>
-          <button data-view="settings">Settings</button>
-          <a class="button" style="margin-top:8px" href="/assistant">Relationship assistant</a>
-          <a class="button" style="margin-top:8px" href="/migration-history">Migrated history</a>
-          <a class="button" style="margin-top:8px" href="https://gtm.userorb.com" target="_blank" rel="noopener noreferrer">Original CRM workflows</a>
-        </nav>
-      </aside>
-      <main>
-        <div id="message" class="message"></div>
-        <section id="view"></section>
-      </main>
-    </div>
-
+      <aside class="sidebar"><div class="brand">${icon("orbit",24)}<span>Userorbit</span><button id="collapseSidebar" class="icon-button collapse-sidebar" aria-label="Collapse sidebar">${icon("menu")}</button></div><nav class="nav" aria-label="Main navigation"><button data-view="dashboard">${icon("home")}<span>Home</span></button><a href="/assistant">${icon("bot")}<span>AI Assistant</span></a><div class="nav-group-label">${icon("search")}<span>Prospect</span>${icon("chevron-down")}</div><button data-view="accounts">${icon("building")}<span>Companies</span></button><div class="nav-group-label">${icon("mail")}<span>Engage</span>${icon("chevron-down")}</div><button data-view="sequences">${icon("mail")}<span>Sequences</span></button><button data-view="communications">${icon("phone")}<span>Conversations</span></button><button data-view="tasks">${icon("check")}<span>Tasks</span></button><button data-view="warmup">${icon("shield")}<span>Email health</span></button><div class="nav-group-label">${icon("chart")}<span>Win deals</span>${icon("chevron-down")}</div><button data-view="pipeline">${icon("chart")}<span>Deals</span></button><button data-view="calendar">${icon("calendar")}<span>Meetings</span></button><div class="nav-group-label">${icon("list")}<span>Tools</span>${icon("chevron-down")}</div><button data-view="reports">${icon("chart")}<span>Analytics</span></button><button data-view="forms">${icon("list")}<span>Forms</span></button><button data-view="api">${icon("network")}<span>Developer API</span></button><a href="/migration-history">${icon("clock")}<span>Migrated history</span></a><div class="nav-footer"><button data-view="settings">${icon("settings")}<span>Settings</span></button><a href="https://gtm.userorb.com" target="_blank" rel="noopener noreferrer">${icon("external")}<span>Original CRM</span></a></div></nav></aside><div class="workspace-main"><header class="app-topbar"><button id="mobileMenu" class="icon-button mobile-menu" aria-label="Open navigation">${icon("menu")}</button><div class="workspace-switcher"><label><span class="visually-hidden">Workspace</span><select id="workspaceSelect"></select></label></div><form class="global-search" id="globalSearchForm" role="search">${icon("search")}<input id="globalSearchInput" aria-label="Search companies" placeholder="Search companies" autocomplete="off"><kbd>⌘ K</kbd></form><a class="button topbar-assistant" href="/assistant">${icon("bot")}<span>AI Assistant</span></a><button id="themeButton" class="icon-button" aria-label="Switch appearance"></button><button id="profileButton" class="icon-button" aria-label="Your profile"><span id="profileAvatar" class="avatar">U</span></button></header><main><div id="message" class="message" role="status" aria-live="polite"></div><section id="view"></section></main></div></div>
+    <script>${uiControlsScript}</script>
     <script>
+      const uiIcons = ${JSON.stringify(Object.fromEntries(["home","search","building","users","list","mail","phone","check","calendar","chart","settings","chevron-down","chevron-right","plus","arrow-left","arrow-right","external","bot","book","network","clock","shield","upload","filter","close","menu","more","sun","moon","bell","help","logout","orbit"].map(name => [name,icon(name)])))};
+      function uiIcon(name) { return uiIcons[name] || uiIcons.list; }
       const state = {
-        view: "dashboard",
+        view: ["dashboard","accounts","account","contact","pipeline","reports","sequences","warmup","tasks","communications","calendar","forms","api","settings"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "dashboard",
         token: storageGet("crmApiToken") || "",
         tenant: null,
         workspaceId: storageGet("crmWorkspaceId") || "",
@@ -710,6 +159,7 @@ export const appHtml = String.raw`<!doctype html>
 
       function notice(text) {
         const node = $("#message");
+        delete node.dataset.error;
         node.textContent = text;
         node.classList.add("show");
         setTimeout(() => node.classList.remove("show"), 4200);
@@ -806,6 +256,7 @@ export const appHtml = String.raw`<!doctype html>
           state.selectedReportViewId = "";
           storageRemove("crmReportViewId");
         }
+        state.noMoreTasks = false;
         Object.assign(state, { tenant, summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
         state.accountHasNext = accounts.length === 100 && (await api("accounts" + accountListQuery(state.accountOffset + 100, 1))).length > 0;
         if (state.view === "account" && state.selectedAccountId) {
@@ -840,8 +291,13 @@ export const appHtml = String.raw`<!doctype html>
           api: renderApi,
           settings: renderSettings,
         };
+        const previousView = $("#view").dataset.view;
         $("#view").innerHTML = views[state.view]();
+        if (previousView !== state.view) window.scrollTo(0, 0);
+        applyPageLayout();
         bind();
+        window.CrmControls?.sync();
+        history.replaceState(null, "", "#" + state.view);
       }
 
       function renderWorkspaceSelect() {
@@ -853,7 +309,7 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function header(title, subtitle, action = "") {
-        return '<div class="topbar"><div><h1>' + title + '</h1><div class="subtitle">' + subtitle + '</div></div>' + action + '</div>';
+        return '<div class="topbar"><div><h1>' + title + '</h1><div class="subtitle">' + subtitle + '</div></div><div class="header-actions">' + action + editorAction() + '</div></div>';
       }
 
       function canManageCurrentWorkspace(tenant = state.tenant, workspaceId = state.workspaceId) {
@@ -887,7 +343,7 @@ export const appHtml = String.raw`<!doctype html>
       function renderDashboard() {
         const s = state.summary || {};
         const widgets = dashboardWidgets();
-        return header("Founder-led outreach", "Manage targeted accounts, personalized sequences, and follow-up tasks.") + \`
+        return header("Home", "Your pipeline, priorities, and next steps in one place.") + \`
           \${widgets.includes("metrics") ? \`<div class="grid metrics">
             \${metric("Accounts", s.accounts || 0)}
             \${metric("Contacts", s.contacts || 0)}
@@ -964,7 +420,7 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderAccounts() {
-        return header("Accounts", "Target 20-30 high-fit SaaS accounts each week.", '<button id="exportAccounts" class="button">Export CSV</button>') + \`
+        return header("Companies", "Find and manage the companies in your workspace.", '<button id="exportAccounts" class="button">Export CSV</button>') + \`
           <div class="columns">
             <div class="panel">
               <div class="panel-header">
@@ -976,23 +432,16 @@ export const appHtml = String.raw`<!doctype html>
                   </select>
                 </div>
               </div>
-              <div class="stack" style="border-bottom:1px solid var(--border)">
-                <div class="form-grid">
-                  <label>Search<input id="accountSearch" placeholder="Search accounts" value="\${escapeHtml(state.accountFilters.q)}" /></label>
-                  <label>Segment<select id="accountSegment"><option value="">All segments</option><option value="product">Product</option><option value="growth">Growth</option><option value="success">Success</option></select></label>
-                  <label>Status<select id="accountStatus"><option value="">All statuses</option><option value="target">Target</option><option value="researching">Researching</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="qualified">Qualified</option><option value="disqualified">Disqualified</option></select></label>
-                  \${customFieldFilterInputs()}
-                  <label>View name<input id="savedViewName" placeholder="Product targets" /></label>
-                </div>
-                <div class="toolbar">
-                  <button id="applyAccountFilters" class="button primary">Apply filters</button>
-                  <button id="clearAccountFilters" class="button">Clear</button>
-                  <button id="saveAccountView" class="button">Save view</button>
-                  \${state.selectedSavedViewId ? '<button id="deleteAccountView" class="button">Delete view</button>' : ""}
-                </div>
+              <div class="account-filter-bar">
+                <label>Search<input id="accountSearch" placeholder="Search companies" value="\${escapeHtml(state.accountFilters.q)}" /></label>
+                <label>Segment<select id="accountSegment"><option value="">All segments</option><option value="product">Product</option><option value="growth">Growth</option><option value="success">Success</option></select></label>
+                <label>Status<select id="accountStatus"><option value="">All statuses</option><option value="target">Target</option><option value="researching">Researching</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="qualified">Qualified</option><option value="disqualified">Disqualified</option></select></label>
+                \${customFieldFilterInputs()}
+                <div class="filter-actions"><button id="applyAccountFilters" class="button">Apply filters</button><button id="clearAccountFilters" class="button">Clear</button></div>
               </div>
+              <details class="saved-view-setup"><summary>Save this view</summary><div class="toolbar"><input id="savedViewName" aria-label="View name" placeholder="Name your view" /><button id="saveAccountView" class="button">Save view</button>\${state.selectedSavedViewId ? '<button id="deleteAccountView" class="button">Delete view</button>' : ""}</div></details>
               \${accountsTable(state.accounts)}
-              <div class="toolbar" style="padding:16px" aria-label="Account pages">
+              <div class="toolbar account-pagination" aria-label="Account pages">
                 <button id="previousAccountPage" class="button" \${state.accountOffset === 0 ? "disabled" : ""}>Previous</button>
                 <span>Page \${Math.floor(state.accountOffset / 100) + 1} · \${state.accounts.length ? "Showing " + (state.accountOffset + 1) + "–" + (state.accountOffset + state.accounts.length) : "No matching accounts"}</span>
                 <button id="nextAccountPage" class="button" \${state.accountHasNext ? "" : "disabled"}>Next</button>
@@ -1043,13 +492,13 @@ export const appHtml = String.raw`<!doctype html>
 
       function accountsTable(accounts) {
         if (!accounts.length) return '<div class="empty">No accounts yet.</div>';
-        return \`<table>
+        return \`<table class="accounts-table">
           <thead><tr><th>Account</th><th>Segment</th><th>Status</th><th>Contacts</th><th>Pipeline</th><th></th></tr></thead>
           <tbody>\${accounts.map((a) => \`
             <tr>
-              <td><strong>\${escapeHtml(a.name)}</strong><div class="subtitle">\${escapeHtml(a.domain || a.observation || "")}</div></td>
+              <td><div class="table-company"><span class="company-monogram">\${escapeHtml(initials(a.name))}</span><div><strong>\${escapeHtml(a.name)}</strong><div class="company-domain">\${escapeHtml(a.domain || "No website")}</div></div></div></td>
               <td><span class="pill">\${escapeHtml(a.segment)}</span></td>
-              <td>\${escapeHtml(a.status)}</td>
+              <td><span class="pill">\${escapeHtml(a.status)}</span></td>
               <td>\${a.contacts_count || (a.contacts ? a.contacts.length : 0)}</td>
               <td>\${money(a.pipeline_cents || 0)}</td>
               <td><button class="button" data-account-id="\${escapeHtml(a.id)}">Open</button></td>
@@ -1256,8 +705,7 @@ export const appHtml = String.raw`<!doctype html>
         const overdueTasks = reports.taskStatus.reduce((total, row) => total + Number(row.overdue || 0), 0);
         const emails = reports.activity || {};
         return header("Reports", "Track pipeline health, forecast, outbound activity, and stalled deals.") + \`
-          <div class="panel" style="margin:16px">
-            <div class="panel-header"><div class="panel-title">Report view</div></div>
+          <div class="report-options">
             <form id="reportViewForm" class="stack" style="padding:0">
               <div class="toolbar">
                 <select id="reportViewSelect">
@@ -1268,9 +716,9 @@ export const appHtml = String.raw`<!doctype html>
                 <button class="button primary">Save view</button>
                 \${state.selectedReportViewId ? '<button type="button" class="button" id="deleteReportView">Delete view</button>' : ""}
               </div>
-              <div class="form-grid">
+              <details class="report-section-disclosure"><summary>Customize report</summary><div class="form-grid report-section-list">
                 \${reportSectionOptions().map((section) => '<label><input name="sections" type="checkbox" value="' + escapeHtml(section.key) + '"' + (sections.includes(section.key) ? " checked" : "") + " /> " + escapeHtml(section.label) + '</label>').join("")}
-              </div>
+              </div></details>
             </form>
           </div>
           \${sections.includes("metrics") ? \`<div class="grid metrics">
@@ -1370,7 +818,7 @@ export const appHtml = String.raw`<!doctype html>
                 <div class="stack" style="border-bottom:1px solid var(--border)">
                   <strong>\${escapeHtml(s.name)}</strong>
                   <span class="subtitle">\${escapeHtml(s.description || "")}</span>
-                  \${s.steps.map((step) => '<span class="pill">Day +' + step.delay_days + " · " + escapeHtml(step.template_name) + "</span>").join(" ")}
+                  \${s.steps.map((step) => '<span class="pill sequence-step">Day +' + step.delay_days + " · " + escapeHtml(step.template_name) + "</span>").join(" ")}
                 </div>\`).join("")}
             </div>
             <div class="panel">
@@ -1392,11 +840,14 @@ export const appHtml = String.raw`<!doctype html>
       }
 
       function renderTasks() {
-        return header("Tasks", "Track research, Loom teardown, and follow-up work.") + \`
+        const filter = state.taskFilter || 'all';
+        const tasks = state.tasks.filter(task => filter === 'all' || (filter === 'overdue' ? task.status !== 'done' && task.due_at && new Date(task.due_at) < new Date() : task.status === filter));
+        return header("Tasks", "Stay on top of your follow-ups and daily work.") + \`
+          <div class="section-tabs" role="tablist" aria-label="Task status">\${[['all','All tasks'],['open','Open'],['done','Completed'],['overdue','Overdue']].map(([key,label]) => '<button role="tab" type="button" data-task-filter="' + key + '" aria-selected="' + (filter === key) + '">' + label + '</button>').join('')}</div>
           <div class="columns">
             <div class="panel">
-              <div class="panel-header"><div class="panel-title">Open work</div></div>
-              \${taskList(state.tasks)}
+              <div class="panel-header"><div class="panel-title">Your tasks <span class="pill">\${tasks.length}</span></div></div>
+              \${taskList(tasks)}\${state.tasks.length >= 100 && !state.noMoreTasks ? '<div class="stack"><button type="button" class="button" id="loadMoreTasks">Load more tasks</button></div>' : ""}
             </div>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">New task</div></div>
@@ -1671,11 +1122,12 @@ export const appHtml = String.raw`<!doctype html>
 
       function taskList(tasks) {
         if (!tasks.length) return '<div class="empty">No tasks yet.</div>';
-        return \`<table><tbody>\${tasks.map((t) => \`
+        return \`<table><thead><tr><th>Task</th><th>Status</th><th>Due date</th><th>Complete</th></tr></thead><tbody>\${tasks.map((t) => \`
           <tr>
             <td><strong>\${escapeHtml(t.title)}</strong><div class="subtitle">\${escapeHtml(t.account_name || t.kind || "")}</div></td>
             <td><span class="pill">\${escapeHtml(t.status)}</span></td>
-            <td>\${escapeHtml(t.due_at || "")}</td>
+            <td>\${escapeHtml(t.due_at ? formatDateTime(t.due_at) : "No due date")}</td>
+            <td>\${canWriteCurrentWorkspace() ? '<input type="checkbox" aria-label="Complete ' + escapeHtml(t.title) + '" data-complete-task="' + escapeHtml(t.id) + '"' + (t.status === 'done' ? ' checked' : '') + '>' : ''}</td>
         </tr>\`).join("")}</tbody></table>\`;
       }
 
@@ -1757,7 +1209,7 @@ export const appHtml = String.raw`<!doctype html>
             <div class="panel">
               <div class="panel-header"><div class="panel-title">Current browser token</div></div>
               <div class="stack">
-                <label>Bearer token<input id="tokenInput" value="\${escapeHtml(state.token)}" placeholder="Paste bootstrap or workspace API token" /></label>
+                <label>Bearer token<input id="tokenInput" type="password" autocomplete="off" value="\${escapeHtml(state.token)}" placeholder="Paste bootstrap or workspace API token" /></label>
                 <button id="saveToken" class="button primary">Save token</button>
               </div>
             </div>
@@ -2417,7 +1869,7 @@ Content-Type: application/json
         });
 
         document.querySelectorAll("[data-dismiss-next-best-action-id]").forEach((node) => node.addEventListener("click", async () => {
-          const reason = window.prompt("Dismiss reason", "Not relevant right now");
+          const reason = await window.CrmControls.prompt("Dismiss reason", "Not relevant right now");
           if (reason === null) return;
           await api("next-best-actions/" + encodeURIComponent(node.dataset.dismissNextBestActionId) + "/dismiss", {
             method: "POST",
@@ -3573,6 +3025,8 @@ Content-Type: application/json
         }
       }
 
+      ${crmUiClientScript}
+      installShellActions();
       if (state.token) {
         refresh().catch(showAuth);
       } else {
