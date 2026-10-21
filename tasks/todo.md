@@ -213,3 +213,21 @@ Added report alert acknowledge and resolve controls: members can acknowledge act
 Reconciled the Close-style CRM gap tracker with the implemented native integration, email governance, reporting incident, and warehouse/export depth. The remaining integration notes are now framed as optional future provider-specific presets rather than a blocking product gap.
 
 Ran a broad product sanity pass after tracker reconciliation: local migrations had no pending work, Worker syntax checks passed, landing page exposed Cloudflare deploy and GitHub links, unauthenticated `/app` showed the sign-in gate, authenticated `/app` showed the shell and recent controls, `/api/me` returned user/team/workspace context, `/api/reports` returned pipeline/forecast/owner/source/custom-field sections, `/api/integrations` returned native integrations and deliveries, `/api/email/templates` returned approval-aware default/workspace templates, `/api/report-alerts` returned lifecycle-aware alerts/deliveries, and README/agent skill references were present.
+
+## Relationship assistant (YouSpot comparison)
+
+- [x] Confirm repository is userorbit/userorbit-crm and protect dirty primary checkout.
+- [x] Establish isolated branches, shared contracts, and baseline regression suite.
+- [x] Mail OAuth, full history, and recurring synchronization.
+- [x] Commitment detection, attention, meeting briefs, and writing voice.
+- [x] Cited conversational retrieval and document ingestion.
+- [x] LinkedIn imports, capture, referral graph, and change signals.
+- [x] Recurring jobs with bounded execution, run history, and notifications.
+- [x] OAuth MCP connection and permissioned tools.
+- [x] Integrate usable assistant interface without replacing existing screens.
+- [x] Verify additive migrations, workspace isolation, viewer denial, old workflows, and Worker build.
+- [x] Review final diff, commit, and push verified integration branch.
+
+### Review
+
+Implemented all twelve additions across six isolated feature chats and integrated their committed changes. Verification: 120 Bun tests, 668 assertions, populated-database upgrade preservation, Worker dry-run build, scoped MCP dispatch, and browser smoke checks for existing sign-in/dashboard plus knowledge citations, meeting briefs, drafts, and jobs. Security review fixes cover disabled-user access and mailbox scheduling starvation. Live providers were mocked; their deployment credentials and consent remain setup requirements. No production deployment or remote database changes ran. Original dirty checkout remains untouched.
