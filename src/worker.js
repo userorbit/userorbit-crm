@@ -4,6 +4,9 @@ import { assistantHtml } from "./assistant/ui.js";
 import { mailboxCallbackHtml } from "./assistant/oauth-ui.js";
 import { configureAssistantHelpers, handleAssistantRequest, handleAssistantPublicRequest, runAssistantScheduled } from "./assistant/router.js";
 import { readBody } from "./assistant/shared.js";
+import { isLegacyPasswordHash, verifyLegacyPassword } from "./legacy-password.js";
+import { enforceMigrationPolicy } from "./migration-policy.js";
+import { handleMigrationHistory } from "./migration-history.js";
 
 const assistantHelpers = configureAssistantHelpers({
   json, readJson: readBody, httpError, requireAuth, resolveWorkspaceId, requireWorkspaceRole,
@@ -65,6 +68,9 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (url.pathname === "/migration-history" || url.pathname === "/api/migration-history" || url.pathname.startsWith("/api/migration-history/")) {
+        return await handleMigrationHistory(request, env, { requireAuth });
+      }
       const assistantPublic = await handleAssistantPublicRequest(request, env, assistantHelpers);
       if (assistantPublic) return assistantPublic;
       if (request.method === "OPTIONS") return new Response(null, { headers: JSON_HEADERS });
@@ -151,6 +157,7 @@ export default {
 async function routeApi(request, env, url, auth) {
   const path = url.pathname.replace(/^\/api\/?/, "");
   const workspaceId = await resolveWorkspaceId(env, request, auth);
+  request = await enforceMigrationPolicy(request, env, path, workspaceId, auth);
 
   if (path.startsWith("assistant/")) {
     const response = await handleAssistantRequest(request, env, { path: path.slice(10), workspaceId, auth, helpers: assistantHelpers });
@@ -2699,6 +2706,10 @@ async function getCustomFieldBreakdowns(env, workspaceId, auth = null) {
 }
 
 async function listAccounts(env, url, workspaceId, auth) {
+  const pageLimit = Number(url.searchParams.get("limit") || 100);
+  const pageOffset = Number(url.searchParams.get("offset") || 0);
+  const limit = Number.isFinite(pageLimit) ? Math.max(1, Math.min(100, Math.floor(pageLimit))) : 100;
+  const offset = Number.isFinite(pageOffset) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(pageOffset))) : 0;
   const filters = await resolveAccountFilters(env, url, workspaceId, auth);
   await assertReadableCustomFieldFilters(env, workspaceId, filters.customFields || {}, auth);
   const search = `%${filters.q || ""}%`;
@@ -2743,10 +2754,10 @@ async function listAccounts(env, url, workspaceId, auth) {
     LEFT JOIN email_events e ON e.account_id = a.id
     ${where}
     GROUP BY a.id
-    ORDER BY a.updated_at DESC
-    LIMIT 100
+    ORDER BY a.updated_at DESC, a.id ASC
+    LIMIT ? OFFSET ?
   `)
-    .bind(...params)
+    .bind(...params, limit, offset)
     .all();
 
   return rows.results;
@@ -5783,7 +5794,8 @@ async function getTenantContext(env, workspaceId, auth) {
     ORDER BY t.created_at ASC
   `).bind(auth.user.id).all();
   const workspaces = await env.DB.prepare(`
-    SELECT w.*, t.name AS team_name, COALESCE(wm.role, tm.role) AS workspace_role
+    SELECT w.*, t.name AS team_name, COALESCE(wm.role, tm.role) AS workspace_role,
+      (SELECT lm.role FROM legacy_memberships lm WHERE lm.team_id = w.team_id AND lm.user_id = tm.user_id LIMIT 1) AS migration_role
     FROM workspaces w
     JOIN teams t ON t.id = w.team_id
     JOIN team_members tm ON tm.team_id = t.id
@@ -5806,6 +5818,11 @@ async function loginWithPassword(env, input) {
   const user = await env.DB.prepare("SELECT * FROM users WHERE email = ? AND status = 'active'").bind(cleanEmail(input.email)).first();
   if (!user?.password_hash || !(await verifyPassword(input.password, user.password_hash))) {
     throw httpError(401, "Invalid email or password");
+  }
+  if (isLegacyPasswordHash(user.password_hash)) {
+    const upgradedHash = await hashPassword(input.password);
+    await env.DB.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash = ?")
+      .bind(upgradedHash, new Date().toISOString(), user.id, user.password_hash).run();
   }
   return createUserSession(env, user);
 }
@@ -7817,6 +7834,7 @@ async function hashPassword(password) {
 }
 
 async function verifyPassword(password, encoded) {
+  if (isLegacyPasswordHash(encoded)) return verifyLegacyPassword(password, encoded);
   const [scheme, iterationsText, saltText, keyText] = String(encoded || "").split("$");
   if (scheme !== "pbkdf2_sha256") return false;
   const iterations = Number(iterationsText);

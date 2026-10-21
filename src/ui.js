@@ -607,6 +607,8 @@ export const appHtml = String.raw`<!doctype html>
           <button data-view="api">Agent API</button>
           <button data-view="settings">Settings</button>
           <a class="button" style="margin-top:8px" href="/assistant">Relationship assistant</a>
+          <a class="button" style="margin-top:8px" href="/migration-history">Migrated history</a>
+          <a class="button" style="margin-top:8px" href="https://gtm.userorb.com" target="_blank" rel="noopener noreferrer">Original CRM workflows</a>
         </nav>
       </aside>
       <main>
@@ -623,6 +625,8 @@ export const appHtml = String.raw`<!doctype html>
         workspaceId: storageGet("crmWorkspaceId") || "",
         summary: null,
         accounts: [],
+        accountOffset: 0,
+        accountHasNext: false,
         accountFilters: { q: "", segment: "", status: "", customFields: {} },
         savedViews: [],
         reportViews: [],
@@ -753,11 +757,13 @@ export const appHtml = String.raw`<!doctype html>
         const tenant = await api("me");
         if (!state.workspaceId || !tenant.workspaces.some((workspace) => workspace.id === state.workspaceId)) {
           state.workspaceId = tenant.currentWorkspaceId || tenant.workspaces[0]?.id || "";
+          state.accountOffset = 0;
           storageSet("crmWorkspaceId", state.workspaceId);
         }
         const canManage = canManageCurrentWorkspace(tenant, state.workspaceId);
         const accountQuery = accountListQuery();
         const canWrite = canWriteCurrentWorkspace(tenant, state.workspaceId);
+        const migratedContributor = tenant.workspaces.find((item) => item.id === state.workspaceId)?.migration_role === "ic";
         const [summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs] = await Promise.all([
           api("summary"),
           api("next-best-actions"),
@@ -771,8 +777,8 @@ export const appHtml = String.raw`<!doctype html>
           api("opportunities"),
           api("opportunity-stages"),
           api("duplicates/accounts"),
-          api("sequences"),
-          api("warmup"),
+          migratedContributor ? Promise.resolve([]) : api("sequences"),
+          migratedContributor ? Promise.resolve({ summary: {}, plans: [], mailboxes: [], recentMessages: [] }) : api("warmup"),
           api("tasks"),
           api("communications"),
           api("dialer/sessions"),
@@ -801,6 +807,7 @@ export const appHtml = String.raw`<!doctype html>
           storageRemove("crmReportViewId");
         }
         Object.assign(state, { tenant, summary, nextBestActions, accounts, savedViews, reportViews, dashboardPreferences, notificationPreferences, customFields, reports, opportunities, opportunityStages, accountDuplicates, sequences, warmup, tasks, communications, dialerSessions, messageChannels, calendarEvents, calendarSources, emailSettings, emailTemplates, emailSenders, emailInboundSources, emailSyncSources, leadForms, integrations, enrichmentProviders, nativeImportSources, workspaceTokens, teamInvitations, exportSchedules, reportAlerts, dashboardShares, webhooks, auditLogs });
+        state.accountHasNext = accounts.length === 100 && (await api("accounts" + accountListQuery(state.accountOffset + 100, 1))).length > 0;
         if (state.view === "account" && state.selectedAccountId) {
           state.selectedAccount = await api("accounts/" + encodeURIComponent(state.selectedAccountId));
         }
@@ -859,8 +866,10 @@ export const appHtml = String.raw`<!doctype html>
         return ["owner", "admin", "member"].includes(workspace?.workspace_role);
       }
 
-      function accountListQuery() {
+      function accountListQuery(offset = state.accountOffset, limit = 100) {
         const params = new URLSearchParams();
+        params.set("offset", offset);
+        params.set("limit", limit);
         if (state.selectedSavedViewId) {
           params.set("viewId", state.selectedSavedViewId);
         } else {
@@ -983,6 +992,11 @@ export const appHtml = String.raw`<!doctype html>
                 </div>
               </div>
               \${accountsTable(state.accounts)}
+              <div class="toolbar" style="padding:16px" aria-label="Account pages">
+                <button id="previousAccountPage" class="button" \${state.accountOffset === 0 ? "disabled" : ""}>Previous</button>
+                <span>Page \${Math.floor(state.accountOffset / 100) + 1} · \${state.accounts.length ? "Showing " + (state.accountOffset + 1) + "–" + (state.accountOffset + state.accounts.length) : "No matching accounts"}</span>
+                <button id="nextAccountPage" class="button" \${state.accountHasNext ? "" : "disabled"}>Next</button>
+              </div>
               \${duplicateAccountsPanel()}
             </div>
             <div class="panel">
@@ -2496,7 +2510,19 @@ Content-Type: application/json
           await refresh();
         });
 
+        $("#previousAccountPage")?.addEventListener("click", async () => {
+          state.accountOffset = Math.max(0, state.accountOffset - 100);
+          await refresh();
+        });
+
+        $("#nextAccountPage")?.addEventListener("click", async () => {
+          if (!state.accountHasNext) return;
+          state.accountOffset += 100;
+          await refresh();
+        });
+
         $("#savedViewSelect")?.addEventListener("change", async (event) => {
+          state.accountOffset = 0;
           state.selectedSavedViewId = event.currentTarget.value;
           storageSet("crmSavedViewId", state.selectedSavedViewId);
           const view = state.savedViews.find((item) => item.id === state.selectedSavedViewId);
@@ -2505,6 +2531,7 @@ Content-Type: application/json
         });
 
         $("#applyAccountFilters")?.addEventListener("click", async () => {
+          state.accountOffset = 0;
           state.selectedSavedViewId = "";
           storageRemove("crmSavedViewId");
           state.accountFilters = {
@@ -2517,6 +2544,7 @@ Content-Type: application/json
         });
 
         $("#clearAccountFilters")?.addEventListener("click", async () => {
+          state.accountOffset = 0;
           state.selectedSavedViewId = "";
           storageRemove("crmSavedViewId");
           state.accountFilters = { q: "", segment: "", status: "", customFields: {} };
@@ -2536,6 +2564,7 @@ Content-Type: application/json
           state.selectedSavedViewId = view.id;
           storageSet("crmSavedViewId", view.id);
           state.accountFilters = filters;
+          state.accountOffset = 0;
           notice("Saved view created.");
           await refresh();
         });
@@ -2544,6 +2573,7 @@ Content-Type: application/json
           if (!state.selectedSavedViewId) return;
           await api("saved-views/" + encodeURIComponent(state.selectedSavedViewId), { method: "DELETE" });
           state.selectedSavedViewId = "";
+          state.accountOffset = 0;
           storageRemove("crmSavedViewId");
           notice("Saved view deleted.");
           await refresh();
@@ -2843,6 +2873,7 @@ Content-Type: application/json
         });
 
         $("#workspaceSelect")?.addEventListener("change", async (event) => {
+          state.accountOffset = 0;
           state.workspaceId = event.currentTarget.value;
           storageSet("crmWorkspaceId", state.workspaceId);
           await refresh();
@@ -2867,6 +2898,7 @@ Content-Type: application/json
           const form = new FormData(event.currentTarget);
           const created = await api("teams", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           state.workspaceId = created.defaultWorkspace.id;
+          state.accountOffset = 0;
           storageSet("crmWorkspaceId", state.workspaceId);
           notice("Team created.");
           await refresh();
@@ -2877,6 +2909,7 @@ Content-Type: application/json
           const form = new FormData(event.currentTarget);
           const workspace = await api("workspaces", { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
           state.workspaceId = workspace.id;
+          state.accountOffset = 0;
           storageSet("crmWorkspaceId", state.workspaceId);
           notice("Workspace created.");
           await refresh();
