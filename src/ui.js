@@ -304,7 +304,11 @@ ${crmUiCss}</style>
         const select = $("#workspaceSelect");
         if (!select) return;
         const workspaces = state.tenant?.workspaces || [];
-        select.innerHTML = workspaces.map((workspace) => '<option value="' + workspace.id + '">' + escapeHtml(workspace.team_name + " / " + workspace.name) + "</option>").join("");
+        select.innerHTML = workspaces.map((workspace) => {
+          const duplicate = workspaces.some((other) => other.id !== workspace.id && other.team_name === workspace.team_name && other.name === workspace.name);
+          const countLabel = duplicate ? " · " + Number(workspace.account_count || 0) + " companies" : "";
+          return '<option value="' + escapeHtml(workspace.id) + '">' + escapeHtml(workspace.team_name + " / " + workspace.name + countLabel) + "</option>";
+        }).join("");
         select.value = state.workspaceId;
       }
 

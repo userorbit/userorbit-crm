@@ -383,7 +383,7 @@ function assistantClient(icons) {
     try {
       const tenant = await api("me"); const workspaces = tenant.workspaces || [];
       if (!workspaces.some((workspace) => workspace.id === state.workspaceId)) state.workspaceId = tenant.currentWorkspaceId || workspaces[0]?.id || "";
-      const select = $("#workspace"); for (const workspace of workspaces) { const option = node("option", workspace.name); option.value = workspace.id; select.append(option); } select.value = state.workspaceId; localStorage.setItem("crmWorkspaceId", state.workspaceId);
+      const select = $("#workspace"); for (const workspace of workspaces) { const duplicate = workspaces.some((other) => other.id !== workspace.id && other.team_id === workspace.team_id && other.name === workspace.name); const option = node("option", workspace.name + (duplicate ? " · " + Number(workspace.account_count || 0) + " companies" : "")); option.value = workspace.id; select.append(option); } select.value = state.workspaceId; localStorage.setItem("crmWorkspaceId", state.workspaceId);
       await loadContacts(); await show();
     } catch (error) { announce(error.message, true); $("#content").replaceChildren(node("a", "Return to CRM to sign in again.")); $("#content a").href = "/app"; }
   }
