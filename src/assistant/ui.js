@@ -5,7 +5,7 @@ const assistantIcons = Object.fromEntries(["home", "check", "calendar", "mail", 
 
 // Serialized callbacks need the name helper that Wrangler adds when bundling.
 export const assistantHtml = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relationship assistant · Userorbit CRM</title><style>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relationship assistant · Userorbit CRM</title><script>try { document.documentElement.dataset.theme = localStorage.getItem("crmTheme") === "light" ? "light" : "dark"; } catch { document.documentElement.dataset.theme = "dark"; }</script><style>
 ${designSystemCss}
 ${uiControlsCss}
 *{box-sizing:border-box}
@@ -23,9 +23,9 @@ aside{background:var(--bg-main);border-right:1px solid var(--border-primary);pad
 .brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;height:32px;padding:0 8px;text-decoration:none}
 .brand-mark{display:grid;place-items:center;width:25px;height:25px;border-radius:7px;background:var(--accent);color:#171714}
 .brand-mark svg{width:16px;height:16px}
-.sidebar-search{margin:16px 0 20px;justify-content:flex-start;color:var(--text-secondary);height:32px;width:100%}
-.sidebar-search kbd{margin-left:auto;font-size:11px;font-family:inherit;color:var(--text-tertiary)}
-.nav-label{padding:0 10px;margin-bottom:8px;color:var(--text-tertiary);font-size:11px;font-weight:500}
+.global-search{justify-content:flex-start;color:var(--text-secondary);height:30px;width:340px;max-width:55%;background:var(--bg-primary);font-weight:400;font-size:12px}
+.global-search kbd{margin-left:auto;font-size:11px;font-family:inherit;color:var(--text-tertiary)}
+.nav-label{padding:0 10px;margin:24px 0 8px;color:var(--text-tertiary);font-size:11px;font-weight:500}
 nav{display:grid;gap:3px}
 nav button{height:35px;padding:0 10px;justify-content:flex-start;border-color:transparent;background:transparent;color:var(--text-secondary);font-weight:400}
 nav button svg{flex-shrink:0;color:var(--text-secondary)}
@@ -51,7 +51,7 @@ p{line-height:1.6;margin:6px 0}
 .page-header .muted{font-size:13px;margin:0}
 .content-wrap{padding:20px 24px 32px;max-width:1600px;margin:auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
-.panel{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:10px;padding:20px;margin-bottom:16px;min-width:0}
+.panel{background:var(--bg-primary);border:1px solid var(--border-primary);border-radius:10px;padding:20px;margin-bottom:16px;min-width:0}
 .panel>p.muted{margin:0 0 18px;color:var(--text-secondary)}
 .panel>h2+.muted{margin-top:0}
 .item{border-top:1px solid var(--border-primary);padding:16px 0;margin-top:16px;min-width:0}
@@ -116,7 +116,7 @@ pre{white-space:pre-wrap;font-size:12px;background:var(--bg-main);border:1px sol
 @media(max-width:760px){.layout{grid-template-columns:1fr}
 aside{position:static;height:auto;padding:12px;border-right:0;border-bottom:1px solid var(--border-primary)}
 .brand{padding:0 8px}
-.sidebar-search,.nav-label,.sidebar-note{display:none}
+.nav-label,.sidebar-note{display:none}
 nav{display:flex;overflow:auto;margin-top:12px}
 nav button{white-space:nowrap}
 .sidebar-bottom{padding-top:8px;margin-top:0}
@@ -128,14 +128,14 @@ nav button{white-space:nowrap}
 .panel form{grid-template-columns:1fr}
 .workspace-picker{width:100%}
 .workspace{max-width:none;flex:1}
-.topbar-label{font-size:12px}
+.global-search{max-width:none;flex:1;width:auto}.global-search kbd{display:none}
 .grid{grid-template-columns:1fr}
 }
 @media(prefers-reduced-motion:reduce){button,a.button{transition:none}
 .loading:before{animation:none}
 }
 
-</style></head><body><div class="layout"><aside><a class="brand" href="/app"><span class="brand-mark">${icon("bot")}</span>Userorbit CRM</a><button class="sidebar-search" type="button" id="assistant-search">${icon("search")}Ask your CRM<kbd>⌘ K</kbd></button><div class="nav-label">RELATIONSHIP ASSISTANT</div><nav aria-label="Assistant sections" id="navigation"></nav><div class="sidebar-bottom"><a class="back" href="/app">${icon("arrow-left")}Back to CRM</a><div class="sidebar-note">Thoughtful follow-ups.<br>You stay in control of every send.</div></div></aside><div class="workspace-shell"><div class="topbar"><span class="topbar-label">${icon("bot")}Relationship assistant</span><span class="topbar-spacer"></span><button class="icon-button" id="theme-toggle" type="button" aria-label="Change color theme">${icon("sun")}</button><a class="icon-button button" href="/app" aria-label="Open CRM">${icon("external")}</a><span class="avatar" aria-label="Your account">U</span></div><main><header class="page-header"><div><h1 id="heading">Today</h1><p class="muted" id="subtitle">People and promises worth your attention.</p></div><div class="workspace-picker"><label class="visually-hidden" for="workspace">Workspace</label><select class="workspace" id="workspace" aria-label="Workspace"></select></div></header><div class="content-wrap"><div id="status" role="status" aria-live="polite" hidden></div><section id="content" aria-busy="true"></section></div></main></div></div><script>${uiControlsScript}</script><script>function __name(fn) { return fn; } (${assistantClient.toString()})(${JSON.stringify(assistantIcons)});</script></body></html>`;
+</style></head><body><div class="layout"><aside><a class="brand" href="/app"><span class="brand-mark">${icon("bot")}</span>Userorbit CRM</a><div class="nav-label">RELATIONSHIP ASSISTANT</div><nav aria-label="Assistant sections" id="navigation"></nav><div class="sidebar-bottom"><a class="back" href="/app">${icon("arrow-left")}Back to CRM</a><div class="sidebar-note">Thoughtful follow-ups.<br>You stay in control of every send.</div></div></aside><div class="workspace-shell"><div class="topbar"><button class="global-search" type="button" id="assistant-search">${icon("search")}Search or ask your CRM<kbd>⌘ K</kbd></button><span class="topbar-spacer"></span><button class="icon-button" id="theme-toggle" type="button" aria-label="Change color theme">${icon("sun")}</button><a class="icon-button button" href="/app" aria-label="Open CRM">${icon("external")}</a><span class="avatar" aria-label="Your account">U</span></div><main><header class="page-header"><div><h1 id="heading">Today</h1><p class="muted" id="subtitle">People and promises worth your attention.</p></div><div class="workspace-picker"><label class="visually-hidden" for="workspace">Workspace</label><select class="workspace" id="workspace" aria-label="Workspace"></select></div></header><div class="content-wrap"><div id="status" role="status" aria-live="polite" hidden></div><section id="content" aria-busy="true"></section></div></main></div></div><script>${uiControlsScript}</script><script>function __name(fn) { return fn; } (${assistantClient.toString()})(${JSON.stringify(assistantIcons)});</script></body></html>`;
 
 function assistantClient(icons) {
   const $ = (selector) => document.querySelector(selector);
