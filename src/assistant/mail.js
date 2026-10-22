@@ -101,9 +101,11 @@ export function config(env, provider) {
 export async function http(env, url, options = {}) {
   const response = await (env.MAIL_FETCH || fetch)(url, {
     ...options,
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(15000),
   });
+  if (response.status >= 300 && response.status < 400)
+    throw fail(502, "Mail provider unexpectedly redirected the request");
   if (!response.ok)
     throw fail(
       response.status,
@@ -770,7 +772,7 @@ export async function handleRequest(request, env, context) {
       if (c?.provider === "gmail") {
         try {
           const credentials = await unseal(env, c.credentials);
-          await (env.MAIL_FETCH || fetch)(
+          const response = await (env.MAIL_FETCH || fetch)(
             "https://oauth2.googleapis.com/revoke",
             {
               method: "POST",
@@ -778,10 +780,12 @@ export async function handleRequest(request, env, context) {
               body: new URLSearchParams({
                 token: credentials.refresh_token || credentials.access_token,
               }),
-              redirect: "error",
+              redirect: "manual",
               signal: AbortSignal.timeout(10000),
             },
           );
+          if (response.status >= 300 && response.status < 400)
+            throw fail(502, "Mail provider unexpectedly redirected the request");
         } catch {}
       }
       await env.DB.batch([

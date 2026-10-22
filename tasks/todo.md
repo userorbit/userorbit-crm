@@ -278,3 +278,11 @@ Live verification: PR5 deployed 6d5d574; PR6 disambiguates duplicate workspace n
 Scope excludes Content Studio, campaign planning, content approvals and other unused GTM wishlist features. Reuse existing CRM records, duplicates, roles, sequences, briefs, promises, drafts and jobs. Live Google consent and OpenAI execution require user-supplied provider credentials; never infer successful external connectivity from mocked tests.
 
 Verification: 186 Bun tests / 1,082 assertions, four importer regressions and Worker dry-run pass. Local browser verifies private inbox/thread reading, canonical reply-all preview, mocked explicit send, accepted CRM update, blocked task creation/editing, structured qualification and original history. Production snapshot upgrade verified 84 existing tables / 36,420 rows with zero unexpected changes; 55 untouched tasks recover original in-progress/blocked status. No live Google consent, OpenAI request or real email was performed.
+
+## Cloudflare OAuth redirect compatibility
+
+- [x] Replace unsupported redirect:error in provider HTTP and revocation with manual redirect handling.
+- [x] Reject provider redirect responses without following them or forwarding credentials.
+- [ ] Verify mailbox regressions and actual Workers runtime, merge, deploy and preserve configured secrets.
+
+Redirect verification: 33 mailbox tests / 264 assertions and all 187 tests / 1,169 assertions pass. The actual Workers runtime reached Google token validation with an intentionally invalid client (expected provider401), without a redirect-mode runtime error. Worker dry-run passes. No credentials or database schema changed.
