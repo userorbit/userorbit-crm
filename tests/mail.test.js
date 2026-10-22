@@ -6,6 +6,7 @@ import {
   startOAuth,
   syncConnection,
   runScheduled,
+  http,
 } from "../src/assistant/mail.js";
 const fixtures = [];
 afterEach(() => {
@@ -35,6 +36,7 @@ function setup(provider = "gmail") {
   const calls = [];
   let responder;
   env.MAIL_FETCH = async (url, options) => {
+    expect(options.redirect).toBe("manual");
     calls.push({ url: String(url), options });
     const result = await responder(String(url), options);
     return result instanceof Response ? result : Response.json(result);
@@ -563,4 +565,18 @@ test("revoked and inactive connections cannot starve a later valid mailbox", asy
   ]);
   expect(f.calls).toHaveLength(2);
   expect(checked).toEqual(["other", "other", "u"]);
+});
+
+
+test("mail provider requests use edge-supported manual redirects and never follow token redirects", async () => {
+  const calls = [];
+  const env = { MAIL_FETCH: async (url, options) => {
+    if (!["follow", "manual"].includes(options.redirect)) throw new TypeError("Unsupported edge redirect mode");
+    calls.push({ url, options });
+    return new Response(null, { status: 302, headers: { location: "https://untrusted.test/collect" } });
+  } };
+  await expect(http(env, "https://oauth2.googleapis.com/token", { method: "POST", headers: { authorization: "Bearer private-test-only" }, body: "secret=test" })).rejects.toMatchObject({ status: 502, message: "Mail provider unexpectedly redirected the request" });
+  expect(calls).toHaveLength(1);
+  expect(calls[0].url).toBe("https://oauth2.googleapis.com/token");
+  expect(calls[0].options.redirect).toBe("manual");
 });

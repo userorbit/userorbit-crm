@@ -3,3 +3,5 @@
 - A successful API smoke check does not establish UI quality. Capture and inspect every routed view at desktop and narrow widths before calling a UI release verified. Check form controls independently: global input width/padding and grid-label rules must never stretch checkboxes or radio controls.
 
 - A reference defines layout and component treatment; retain Userorbit branding. Use the owner-supplied mark and brand colors instead of carrying over Apollo’s yellow.
+
+- Cloudflare Workers supports fetch redirect modes follow and manual, not error. Provider clients must use manual, reject redirect responses explicitly, and be verified in the Workers runtime as well as Bun mocks.
